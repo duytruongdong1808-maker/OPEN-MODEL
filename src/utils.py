@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_MODEL = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful, concise assistant."
 DEFAULT_MAX_NEW_TOKENS = 256
+DEFAULT_RUNTIME_PRESET = "rtx4060ti_8gb"
 
 
 def str_to_bool(value: str | bool) -> bool:
@@ -29,6 +31,26 @@ def str_to_bool(value: str | bool) -> bool:
 
 def ensure_parent_dir(path: str | Path) -> None:
     Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
+def coerce_required_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"Each row must contain a string '{field_name}'.")
+
+    text = value.strip()
+    if not text:
+        raise ValueError(f"Each row must contain a non-empty '{field_name}'.")
+
+    return text
+
+
+def coerce_optional_text(value: Any, field_name: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"Each row must contain a string '{field_name}'.")
+
+    return value.strip()
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -105,14 +127,9 @@ def render_training_record(
     row: dict[str, Any],
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
 ) -> dict[str, str]:
-    instruction = str(row.get("instruction", "")).strip()
-    input_text = str(row.get("input", "")).strip()
-    output_text = str(row.get("output", "")).strip()
-
-    if not instruction:
-        raise ValueError("Each row must contain a non-empty 'instruction'.")
-    if not output_text:
-        raise ValueError("Each row must contain a non-empty 'output'.")
+    instruction = coerce_required_text(row.get("instruction"), "instruction")
+    input_text = coerce_optional_text(row.get("input", ""), "input")
+    output_text = coerce_required_text(row.get("output"), "output")
 
     messages = build_messages(
         instruction=instruction,
@@ -150,17 +167,61 @@ def get_model_input_device(model) -> torch.device:
     return next(model.parameters()).device
 
 
+def should_default_to_4bit() -> bool:
+    return torch.cuda.is_available() and platform.system() != "Windows"
+
+
+def get_runtime_preset_names() -> list[str]:
+    return [DEFAULT_RUNTIME_PRESET]
+
+
+def resolve_runtime_preset(
+    preset_name: str | None,
+    scope: str,
+    fallback_defaults: dict[str, Any],
+) -> dict[str, Any]:
+    preset_defaults: dict[str, dict[str, Any]] = {
+        DEFAULT_RUNTIME_PRESET: {
+            "train": {
+                "max_length": 512,
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 8,
+                "load_in_4bit": should_default_to_4bit(),
+            },
+            "eval": {
+                "max_new_tokens": 160,
+                "load_in_4bit": should_default_to_4bit(),
+            },
+            "chat": {
+                "max_new_tokens": 192,
+                "load_in_4bit": should_default_to_4bit(),
+            },
+        }
+    }
+
+    resolved = dict(fallback_defaults)
+    if not preset_name:
+        return resolved
+
+    if preset_name not in preset_defaults:
+        raise ValueError(f"Unknown preset: {preset_name}")
+
+    resolved.update(preset_defaults[preset_name].get(scope, {}))
+    return resolved
+
+
 def load_model_and_tokenizer(
     base_model: str = DEFAULT_BASE_MODEL,
     adapter_path: str | None = None,
-    load_in_4bit: bool = True,
+    load_in_4bit: bool | None = None,
 ):
     tokenizer = load_tokenizer(base_model)
     model_kwargs: dict[str, Any] = {"trust_remote_code": False}
     compute_dtype = get_compute_dtype()
+    use_4bit = should_default_to_4bit() if load_in_4bit is None else load_in_4bit
 
     if torch.cuda.is_available():
-        if load_in_4bit:
+        if use_4bit:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",

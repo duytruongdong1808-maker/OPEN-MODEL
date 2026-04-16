@@ -130,7 +130,9 @@ This will:
 
 - load the processed dataset
 - load the base model
-- enable 4-bit QLoRA by default when CUDA is available
+- use `HuggingFaceTB/SmolLM2-1.7B-Instruct`
+- default to `max_length=512`, which is a safer starting point for 8 GB GPUs
+- enable 4-bit QLoRA by default only on supported non-Windows CUDA setups
 - train LoRA adapters
 - save checkpoints under `outputs/`
 - save the final adapter to:
@@ -139,11 +141,25 @@ This will:
 outputs/smollm2_1.7b_lora/final_adapter
 ```
 
+Preset for your current GPU target:
+
+```bash
+python src/train_lora.py --preset rtx4060ti_8gb
+```
+
+This preset is tuned for `SmolLM2-1.7B-Instruct` on GPUs like the RTX 4060 Ti 8 GB and currently applies:
+
+- `max_length=512`
+- `per_device_train_batch_size=1`
+- `gradient_accumulation_steps=8`
+- environment-aware `load_in_4bit`
+
 Example with a few explicit overrides:
 
 ```bash
 python src/train_lora.py ^
   --num_train_epochs 1 ^
+  --max_length 512 ^
   --per_device_train_batch_size 1 ^
   --gradient_accumulation_steps 8 ^
   --learning_rate 1e-4
@@ -154,6 +170,7 @@ On macOS or Linux shells:
 ```bash
 python src/train_lora.py \
   --num_train_epochs 1 \
+  --max_length 512 \
   --per_device_train_batch_size 1 \
   --gradient_accumulation_steps 8 \
   --learning_rate 1e-4
@@ -165,7 +182,7 @@ If you want to disable 4-bit loading:
 python src/train_lora.py --load_in_4bit false
 ```
 
-That is mainly useful for debugging or environments where `bitsandbytes` is not available. For real low-VRAM training, use the default 4-bit path on a CUDA GPU.
+That is mainly useful for debugging or environments where `bitsandbytes` is not available. On native Windows, this starter now defaults to full-precision loading unless you explicitly opt into 4-bit yourself.
 
 ## Evaluation
 
@@ -176,6 +193,13 @@ python src/eval.py
 ```
 
 This loads the base model plus the saved adapter and prints a few sample generations to the terminal.
+Like training, 4-bit loading only turns on by default when the local environment supports it.
+
+If you want the matching evaluation preset:
+
+```bash
+python src/eval.py --preset rtx4060ti_8gb
+```
 
 If your adapter is saved somewhere else:
 
@@ -196,6 +220,13 @@ This v1 chat loop is intentionally simple:
 - it loads the base model plus adapter
 - it treats each turn as a fresh instruction
 - it is useful for quick local testing, not production serving
+- it follows the same environment-aware 4-bit default as the training and eval scripts
+
+If you want the matching chat preset:
+
+```bash
+python src/chat.py --preset rtx4060ti_8gb
+```
 
 Type `exit` or `quit` to stop.
 
@@ -217,7 +248,7 @@ python src/train_lora.py --load_in_4bit false
 - Lower `--max_length`.
 - Keep `--per_device_train_batch_size 1`.
 - Increase `--gradient_accumulation_steps`.
-- Use the default 4-bit mode.
+- On 8 GB GPUs, start with the default `--max_length 512` and only raise it after a successful run.
 
 ### Tokenizer or prompt mismatch after changing models
 

@@ -6,9 +6,13 @@ from pathlib import Path
 
 from utils import (
     DEFAULT_BASE_MODEL,
+    DEFAULT_RUNTIME_PRESET,
     ROOT_DIR,
     generate_response,
+    get_runtime_preset_names,
     load_model_and_tokenizer,
+    resolve_runtime_preset,
+    should_default_to_4bit,
     str_to_bool,
 )
 
@@ -32,22 +36,44 @@ DEFAULT_SAMPLE_PROMPTS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a quick local inference check with the fine-tuned adapter.")
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=get_runtime_preset_names(),
+        default=None,
+        help=f"Optional hardware preset, for example {DEFAULT_RUNTIME_PRESET}.",
+    )
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
     parser.add_argument("--adapter_path", type=Path, default=DEFAULT_ADAPTER_PATH)
-    parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument(
         "--load_in_4bit",
         type=str_to_bool,
-        default=True,
+        default=None,
         help="Load the base model in 4-bit when CUDA is available.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    preset_defaults = resolve_runtime_preset(
+        preset_name=args.preset,
+        scope="eval",
+        fallback_defaults={
+            "max_new_tokens": 200,
+            "load_in_4bit": should_default_to_4bit(),
+        },
+    )
+    for field_name, field_value in preset_defaults.items():
+        if getattr(args, field_name) is None:
+            setattr(args, field_name, field_value)
+    return args
 
 
 def main() -> None:
     args = parse_args()
+
+    if args.preset:
+        print(f"Using preset: {args.preset}")
 
     if not args.adapter_path.exists():
         raise FileNotFoundError(

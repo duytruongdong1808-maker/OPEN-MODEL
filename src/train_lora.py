@@ -10,11 +10,22 @@ from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-from utils import DEFAULT_BASE_MODEL, ROOT_DIR, get_compute_dtype, load_tokenizer, str_to_bool
+from utils import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_RUNTIME_PRESET,
+    ROOT_DIR,
+    get_compute_dtype,
+    get_runtime_preset_names,
+    load_tokenizer,
+    resolve_runtime_preset,
+    should_default_to_4bit,
+    str_to_bool,
+)
 
 
 DEFAULT_DATASET_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "smollm2_1.7b_lora"
+DEFAULT_MAX_LENGTH = 512
 DEFAULT_TARGET_MODULES = [
     "q_proj",
     "k_proj",
@@ -31,10 +42,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
     parser.add_argument("--dataset_path", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--output_dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--max_length", type=int, default=1024)
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=get_runtime_preset_names(),
+        default=None,
+        help=f"Optional hardware preset, for example {DEFAULT_RUNTIME_PRESET}.",
+    )
+    parser.add_argument("--max_length", type=int, default=None)
     parser.add_argument("--num_train_epochs", type=float, default=3.0)
-    parser.add_argument("--per_device_train_batch_size", type=int, default=1)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
+    parser.add_argument("--per_device_train_batch_size", type=int, default=None)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=None)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
     parser.add_argument("--logging_steps", type=int, default=10)
@@ -46,8 +64,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--load_in_4bit",
         type=str_to_bool,
-        default=True,
-        help="Use 4-bit QLoRA. Requires CUDA and bitsandbytes.",
+        default=None,
+        help="Use 4-bit QLoRA when the local environment supports it.",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -55,7 +73,21 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional checkpoint path inside outputs/ to resume training.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    preset_defaults = resolve_runtime_preset(
+        preset_name=args.preset,
+        scope="train",
+        fallback_defaults={
+            "max_length": DEFAULT_MAX_LENGTH,
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": 8,
+            "load_in_4bit": should_default_to_4bit(),
+        },
+    )
+    for field_name, field_value in preset_defaults.items():
+        if getattr(args, field_name) is None:
+            setattr(args, field_name, field_value)
+    return args
 
 
 def validate_environment(args: argparse.Namespace) -> None:
@@ -99,6 +131,9 @@ def load_model(args: argparse.Namespace):
 def main() -> None:
     args = parse_args()
     validate_environment(args)
+
+    if args.preset:
+        print(f"Using preset: {args.preset}")
 
     tokenizer = load_tokenizer(args.base_model)
     dataset = load_dataset("json", data_files=str(args.dataset_path), split="train")
