@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+.env
+.env.*
+
+data/processed/*.jsonl
+
+outputs/*
+
+.ipynb_checkpoints/
+.DS_Store
