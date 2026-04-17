@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +9,22 @@ import torch
 from datasets import load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+
+# `trl` reads package template files using the interpreter's default text
+# encoding. On Windows that may be a legacy code page like cp1252, which breaks
+# when those files are UTF-8. Re-exec the script in UTF-8 mode so users can run
+# `python train_lora.py` without extra flags.
+if (
+    __name__ == "__main__"
+    and sys.platform == "win32"
+    and os.environ.get("PYTHONUTF8") != "1"
+):
+    os.execve(
+        sys.executable,
+        [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), *sys.argv[1:]],
+        {**os.environ, "PYTHONUTF8": "1"},
+    )
+
 from trl import SFTConfig, SFTTrainer
 
 from utils import (
