@@ -1,3 +1,5 @@
+![CI](https://github.com/duytruongdong1808-maker/OPEN-MODEL/actions/workflows/ci.yml/badge.svg)
+
 # open-model-v1
 
 A clean, minimal starter repo for supervised fine-tuning a small open-weight language model with LoRA or QLoRA.
@@ -5,15 +7,18 @@ A clean, minimal starter repo for supervised fine-tuning a small open-weight lan
 This v1 project is meant to be easy to read and easy to extend. It focuses on a simple workflow:
 
 1. Start with raw JSONL training data.
-2. Convert it into a processed dataset aligned with the base model tokenizer.
-3. Fine-tune a small instruct model with LoRA or QLoRA.
-4. Save checkpoints and a final adapter.
-5. Run quick evaluation prompts or open a local terminal chat loop.
+2. Optionally download a small open instruction sample.
+3. Curate the raw data into keep/review sets with quality metadata.
+4. Build a balanced chat-core dataset from curated sources.
+5. Convert it into processed train and validation datasets aligned with the base model tokenizer.
+6. Fine-tune a small instruct model with LoRA or QLoRA.
+7. Save checkpoints and a final adapter.
+8. Run quick evaluation prompts or open a local terminal chat loop.
 
 ## What This Repo Does
 
 - Uses Python and Hugging Face tooling.
-- Defaults to `HuggingFaceTB/SmolLM2-1.7B-Instruct` as the base model.
+- Defaults to `Qwen/Qwen2.5-1.5B-Instruct` as the base model.
 - Supports raw training examples in this format:
 
 ```json
@@ -23,7 +28,13 @@ This v1 project is meant to be easy to read and easy to extend. It focuses on a 
 - Prepares a processed training file with:
   - `prompt`
   - `completion`
-  - `text`
+- Adds a curation stage with:
+  - `task_type`
+  - `language`
+  - `quality_score`
+  - `flags`
+  - `source`
+  - `action`
 - Fine-tunes with:
   - `transformers`
   - `datasets`
@@ -35,20 +46,48 @@ This v1 project is meant to be easy to read and easy to extend. It focuses on a 
 
 ```text
 open-model-v1/
+  .github/
+    workflows/
+      ci.yml
+  .pre-commit-config.yaml
+  LICENSE
   data/
+    curated/
+      curation_report.json
+      train_curated.jsonl
+      review_candidates.jsonl
+      chat_vi_en_seed_curated.jsonl
+      chat_core_vi_en_train.jsonl
     raw/
+      chat_vi_en_seed.jsonl
+      sample.jsonl
       train.jsonl
     processed/
+      train_sft.jsonl
+      val_sft.jsonl
+  docs/
+    expected-loss-curve.svg
   src/
+    __init__.py
+    build_dataset.py
+    curate_data.py
+    download_sample_data.py
     prepare_data.py
     train_lora.py
+    merge_adapter.py
     eval.py
     chat.py
     utils.py
+  configs/
+    rtx4060ti_8gb.yaml
+    a100_40gb.yaml
   outputs/
-  requirements.txt
-  README.md
   .gitignore
+  pyproject.toml
+  README.md
+  requirements-dev.txt
+  requirements.lock
+  requirements.txt
 ```
 
 ## Environment Setup
@@ -86,9 +125,29 @@ If you are training on GPU, install the correct PyTorch build for your CUDA vers
 pip install -r requirements.txt
 ```
 
+If you want a fully pinned environment from this repo snapshot:
+
+```bash
+pip install -r requirements.lock
+```
+
+`requirements.lock` is a fully pinned snapshot of the current Python 3.11 development environment. For the most portable install path across machines, keep using `requirements.txt`.
+
+CLI scripts accept `--log_level DEBUG|INFO|WARNING|ERROR|CRITICAL`. The default keeps output terse, while `DEBUG` dumps tokenizer and model config details that are useful when validating a run.
+
+For local automation, this repo also includes optional [pre-commit](https://pre-commit.com/) hooks for `ruff` and `black`.
+
 ## Data Preparation
 
-Put your raw training data in `data/raw/train.jsonl`.
+For a meaningful first fine-tune, download a small public instruction sample into `data/raw/train.jsonl`:
+
+```bash
+python src/download_sample_data.py
+```
+
+By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, while `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior.
+
+Put your raw source data in `data/raw/train.jsonl`. The new default workflow does not train from raw directly.
 
 Expected format per line:
 
@@ -96,7 +155,33 @@ Expected format per line:
 {"instruction":"Explain LoRA simply.", "input":"", "output":"LoRA trains small adapter weights instead of updating the full model."}
 ```
 
-Run:
+Run curation first:
+
+```bash
+python src/curate_data.py
+```
+
+This writes:
+
+```text
+data/curated/train_curated.jsonl
+data/curated/review_candidates.jsonl
+data/curated/curation_report.json
+```
+
+Then build the final chat-core dataset:
+
+```bash
+python src/build_dataset.py
+```
+
+This writes:
+
+```text
+data/curated/chat_core_vi_en_train.jsonl
+```
+
+Then prepare the SFT dataset:
 
 ```bash
 python src/prepare_data.py
@@ -106,9 +191,16 @@ This writes:
 
 ```text
 data/processed/train_sft.jsonl
+data/processed/val_sft.jsonl
 ```
 
-The processed file keeps the original fields and adds model-ready prompt fields built with the base model tokenizer.
+The curated files keep the original fields plus metadata such as `task_type`, `language`, `quality_score`, `flags`, `source`, and `action`. The built dataset balances Vietnamese, English, and mixed-language chat-core tasks with deterministic sampling. The processed files then add model-ready `prompt` and `completion` fields built with the base model tokenizer. Validation splitting is deterministic by hash and defaults to `--val_ratio 0.05`.
+
+If you only want a tiny smoke test on the hand-written examples:
+
+```bash
+python src/prepare_data.py --input_path data/raw/sample.jsonl --val_ratio 0
+```
 
 If you want to prepare data for a different base model:
 
@@ -116,7 +208,9 @@ If you want to prepare data for a different base model:
 python src/prepare_data.py --base_model Qwen/Qwen2.5-0.5B-Instruct
 ```
 
-If you change the base model, rerun data preparation before training.
+If you change the base model, rerun data preparation before training. If you change the curated inputs, rerun both `curate_data.py` and `build_dataset.py` before `prepare_data.py`. Pass `--model_revision` if you want to lock the tokenizer to a specific Hugging Face revision for reproducibility.
+If the tokenizer has no pad token, the repo adds a dedicated `<|pad|>` token and resizes the model embeddings so padding stays distinct from EOS. TRL then masks padded positions to `-100` before loss.
+`prepare_data.py` downloads the tokenizer from Hugging Face on first run, so the first invocation may take longer than later cached runs.
 
 ## Training
 
@@ -126,19 +220,32 @@ Default training command:
 python src/train_lora.py
 ```
 
+If you want a committed YAML to describe the run:
+
+```bash
+python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
+```
+
+CLI arguments still override the file:
+
+```bash
+python src/train_lora.py --config configs/rtx4060ti_8gb.yaml --learning_rate 5e-5
+```
+
 This will:
 
-- load the processed dataset
+- load the processed train and validation datasets
 - load the base model
-- use `HuggingFaceTB/SmolLM2-1.7B-Instruct`
+- use `Qwen/Qwen2.5-1.5B-Instruct`
 - default to `max_length=512`, which is a safer starting point for 8 GB GPUs
 - enable 4-bit QLoRA by default only on supported non-Windows CUDA setups
 - train LoRA adapters
+- evaluate on `data/processed/val_sft.jsonl` every `save_steps`
 - save checkpoints under `outputs/`
 - save the final adapter to:
 
 ```text
-outputs/smollm2_1.7b_lora/final_adapter
+outputs/qwen2.5_1.5b_lora/final_adapter
 ```
 
 Preset for your current GPU target:
@@ -147,7 +254,7 @@ Preset for your current GPU target:
 python src/train_lora.py --preset rtx4060ti_8gb
 ```
 
-This preset is tuned for `SmolLM2-1.7B-Instruct` on GPUs like the RTX 4060 Ti 8 GB and currently applies:
+This preset is tuned for compact instruct models like `Qwen/Qwen2.5-1.5B-Instruct` on GPUs like the RTX 4060 Ti 8 GB and currently applies:
 
 - `max_length=512`
 - `per_device_train_batch_size=1`
@@ -183,6 +290,43 @@ python src/train_lora.py --load_in_4bit false
 ```
 
 That is mainly useful for debugging or environments where `bitsandbytes` is not available. On native Windows, this starter now defaults to full-precision loading unless you explicitly opt into 4-bit yourself.
+When that Windows fallback is chosen implicitly, the script now prints an explicit banner so you can see that the run is not using QLoRA.
+
+Reproducibility knobs:
+
+```bash
+python src/train_lora.py --seed 42
+python src/train_lora.py --model_revision <hf-commit-or-tag>
+```
+
+Metric logging is optional and stays off by default:
+
+```bash
+python src/train_lora.py --report_to tensorboard
+python src/train_lora.py --report_to wandb
+```
+
+If `data/processed/val_sft.jsonl` is missing or empty, training skips evaluation automatically. That keeps `data/raw/sample.jsonl` usable for quick smoke tests.
+
+If you switch to a gated base model, log in first:
+
+```bash
+huggingface-cli login
+```
+
+![Expected loss curve](docs/expected-loss-curve.svg)
+
+## Adapter Merging
+
+Merge the trained adapter into the base model so the result can run with `transformers` alone:
+
+```bash
+python src/merge_adapter.py
+```
+
+By default this reads `outputs/qwen2.5_1.5b_lora/final_adapter` and writes `outputs/qwen2.5_1.5b_lora/merged`.
+
+The `outputs/qwen2.5_1.5b_lora/README.md` file you may see after training is the model card autogenerated by Hugging Face tooling for the adapter/checkpoint artifact.
 
 ## Evaluation
 
@@ -194,6 +338,7 @@ python src/eval.py
 
 This loads the base model plus the saved adapter and prints a few sample generations to the terminal.
 Like training, 4-bit loading only turns on by default when the local environment supports it.
+Evaluation also accepts `--seed` and `--model_revision` for reproducible sampling against the pinned base model snapshot.
 
 If you want the matching evaluation preset:
 
@@ -204,7 +349,7 @@ python src/eval.py --preset rtx4060ti_8gb
 If your adapter is saved somewhere else:
 
 ```bash
-python src/eval.py --adapter_path outputs/smollm2_1.7b_lora/final_adapter
+python src/eval.py --adapter_path outputs/qwen2.5_1.5b_lora/final_adapter
 ```
 
 ## Local Chat
@@ -218,8 +363,10 @@ python src/chat.py
 This v1 chat loop is intentionally simple:
 
 - it loads the base model plus adapter
-- it treats each turn as a fresh instruction
-- it is useful for quick local testing, not production serving
+- it keeps a short multi-turn history in memory
+- it supports `/reset` and `/system <prompt>`
+- it trims older turns automatically with `--max_history_turns`
+- it is still useful for quick local testing, not production serving
 - it follows the same environment-aware 4-bit default as the training and eval scripts
 
 If you want the matching chat preset:
@@ -268,19 +415,23 @@ Each JSONL row must include:
 - `output` as a non-empty string
 - `input` may be empty
 
+If you use the curated pipeline, review rows are written separately and should not be fed directly into training.
+
 ### Very slow CPU inference
 
 - This starter is designed mainly for GPU experimentation.
 - CPU runs can still work for smoke tests, but they will be slow.
 
+## Security Notes
+
+- This repo keeps `trust_remote_code=False` in the model-loading paths.
+- Treat `data/raw/` as sensitive local input. Do not put PII, secrets, or proprietary data there unless you are intentionally working in a secure environment.
+- Review any third-party dataset or base model license before redistribution of derived artifacts.
+
 ## Notes For Extending Later
 
 Good next steps after this v1:
 
-- add a validation split
-- add structured experiment configs
-- log metrics to Weights & Biases or TensorBoard
-- add adapter merging
 - expose inference behind a small FastAPI service
 - support DPO or preference tuning later
 

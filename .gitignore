@@ -2,10 +2,14 @@
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
 
 .env
 .env.*
 
+.cache/
+data/raw/train.jsonl
 data/processed/*.jsonl
 
 outputs/*

@@ -1,0 +1,88 @@
+{
+  "total_rows": 1000,
+  "action_counts": {
+    "keep": 541,
+    "review": 449,
+    "drop": 10
+  },
+  "mojibake_rows": 0,
+  "task_type_distribution": {
+    "qa": 415,
+    "list_extraction": 35,
+    "classification": 66,
+    "generation": 20,
+    "summarize": 5
+  },
+  "language_distribution": {
+    "en": 527,
+    "mixed": 14
+  },
+  "top_review_reasons": [
+    [
+      "possible_factual_drift",
+      211
+    ],
+    [
+      "task_other",
+      136
+    ],
+    [
+      "long_output",
+      128
+    ],
+    [
+      "very_long_output",
+      94
+    ],
+    [
+      "long_input",
+      51
+    ],
+    [
+      "list_format_drift",
+      14
+    ],
+    [
+      "long_list_output",
+      10
+    ]
+  ],
+  "top_drop_reasons": [
+    [
+      "very_long_output",
+      6
+    ],
+    [
+      "possible_factual_drift",
+      4
+    ],
+    [
+      "long_input",
+      4
+    ],
+    [
+      "weak_output_phrase",
+      3
+    ],
+    [
+      "list_format_drift",
+      2
+    ],
+    [
+      "long_list_output",
+      2
+    ],
+    [
+      "task_other",
+      2
+    ],
+    [
+      "underspecified_output",
+      1
+    ],
+    [
+      "long_output",
+      1
+    ]
+  ]
+}

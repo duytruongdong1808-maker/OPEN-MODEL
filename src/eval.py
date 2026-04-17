@@ -1,23 +1,49 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-from utils import (
-    DEFAULT_BASE_MODEL,
-    DEFAULT_RUNTIME_PRESET,
-    ROOT_DIR,
-    generate_response,
-    get_runtime_preset_names,
-    load_model_and_tokenizer,
-    resolve_runtime_preset,
-    should_default_to_4bit,
-    str_to_bool,
-)
+from transformers import set_seed
+
+try:
+    from .utils import (
+        DEFAULT_BASE_MODEL,
+        DEFAULT_LOG_LEVEL,
+        DEFAULT_RUNTIME_PRESET,
+        LOG_LEVEL_NAMES,
+        ROOT_DIR,
+        configure_logging,
+        format_missing_dependency_error,
+        generate_response,
+        get_logger,
+        get_runtime_preset_names,
+        load_model_and_tokenizer,
+        log_runtime_mode,
+        resolve_runtime_preset,
+        should_default_to_4bit,
+        str_to_bool,
+    )
+except ImportError:
+    from utils import (
+        DEFAULT_BASE_MODEL,
+        DEFAULT_LOG_LEVEL,
+        DEFAULT_RUNTIME_PRESET,
+        LOG_LEVEL_NAMES,
+        ROOT_DIR,
+        configure_logging,
+        format_missing_dependency_error,
+        generate_response,
+        get_logger,
+        get_runtime_preset_names,
+        load_model_and_tokenizer,
+        log_runtime_mode,
+        resolve_runtime_preset,
+        should_default_to_4bit,
+        str_to_bool,
+    )
 
 
-DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "smollm2_1.7b_lora" / "final_adapter"
+DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
 DEFAULT_SAMPLE_PROMPTS = [
     {
         "instruction": "Summarize the value of LoRA in one sentence.",
@@ -48,13 +74,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--model_revision",
+        type=str,
+        default=None,
+        help="Optional Hugging Face revision override for the base model.",
+    )
     parser.add_argument(
         "--load_in_4bit",
         type=str_to_bool,
         default=None,
         help="Load the base model in 4-bit when CUDA is available.",
     )
+    parser.add_argument(
+        "--log_level",
+        type=str.upper,
+        choices=LOG_LEVEL_NAMES,
+        default=DEFAULT_LOG_LEVEL,
+        help="Logging verbosity.",
+    )
     args = parser.parse_args()
+    args.load_in_4bit_was_set = args.load_in_4bit is not None
     preset_defaults = resolve_runtime_preset(
         preset_name=args.preset,
         scope="eval",
@@ -69,44 +110,70 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> None:
-    args = parse_args()
+def main() -> int:
+    logger = configure_logging()
 
-    if args.preset:
-        print(f"Using preset: {args.preset}")
+    try:
+        args = parse_args()
+        logger = configure_logging(args.log_level)
+        set_seed(args.seed)
+        if args.preset:
+            logger.info("Using preset: %s", args.preset)
+        log_runtime_mode(logger, args.load_in_4bit, args.load_in_4bit_was_set)
 
-    if not args.adapter_path.exists():
-        raise FileNotFoundError(
-            f"Adapter path not found: {args.adapter_path}. Train the model first or pass --adapter_path."
+        if not args.adapter_path.exists():
+            raise FileNotFoundError(
+                f"Adapter path not found: {args.adapter_path}. Train the model first or pass --adapter_path."
+            )
+
+        model, tokenizer = load_model_and_tokenizer(
+            base_model=args.base_model,
+            model_revision=args.model_revision,
+            adapter_path=str(args.adapter_path),
+            load_in_4bit=args.load_in_4bit,
+        )
+        logger.debug("eval args: %s", vars(args))
+        logger.debug(
+            "Tokenizer config: %s",
+            {
+                "pad_token": tokenizer.pad_token,
+                "pad_token_id": tokenizer.pad_token_id,
+                "padding_side": tokenizer.padding_side,
+                "model_revision": args.model_revision,
+            },
+        )
+        logger.debug(
+            "Model config: %s",
+            {
+                "model_type": getattr(model.config, "model_type", None),
+                "pad_token_id": getattr(model.config, "pad_token_id", None),
+                "vocab_size": getattr(model.config, "vocab_size", None),
+            },
         )
 
-    model, tokenizer = load_model_and_tokenizer(
-        base_model=args.base_model,
-        adapter_path=str(args.adapter_path),
-        load_in_4bit=args.load_in_4bit,
-    )
-
-    for index, sample in enumerate(DEFAULT_SAMPLE_PROMPTS, start=1):
-        response = generate_response(
-            model=model,
-            tokenizer=tokenizer,
-            instruction=sample["instruction"],
-            input_text=sample["input"],
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-        )
-
-        print(f"\n=== Sample {index} ===")
-        print(f"Instruction: {sample['instruction']}")
-        if sample["input"]:
-            print(f"Input: {sample['input']}")
-        print(f"Response: {response}")
+        for index, sample in enumerate(DEFAULT_SAMPLE_PROMPTS, start=1):
+            response = generate_response(
+                model=model,
+                tokenizer=tokenizer,
+                instruction=sample["instruction"],
+                input_text=sample["input"],
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+            )
+            logger.info("=== Sample %s ===", index)
+            logger.info("Instruction: %s", sample["instruction"])
+            if sample["input"]:
+                logger.info("Input: %s", sample["input"])
+            logger.info("Response: %s", response)
+        return 0
+    except ModuleNotFoundError as exc:
+        get_logger().error("[eval] Error: %s", format_missing_dependency_error(exc))
+        return 1
+    except Exception as exc:
+        get_logger().error("[eval] Error: %s", exc)
+        return 1
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        print(f"[eval] Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    raise SystemExit(main())

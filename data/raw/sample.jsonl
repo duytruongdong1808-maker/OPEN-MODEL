@@ -1,0 +1,3 @@
+{"instruction":"Summarize the text in one sentence.","input":"Open-source models give teams more control over deployment, cost, and customization.","output":"Open-source models help teams keep control over how they deploy, customize, and pay for AI systems."}
+{"instruction":"Rewrite the message to sound more professional.","input":"hey, can you send me the file today? i need it asap","output":"Hi, could you please send me the file today? I need it as soon as possible."}
+{"instruction":"Answer the question clearly.","input":"What is LoRA in machine learning?","output":"LoRA is a parameter-efficient fine-tuning method that trains small adapter weights instead of updating every parameter in the base model."}

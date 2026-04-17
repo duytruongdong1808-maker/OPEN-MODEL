@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420" fill="none">
+  <rect width="900" height="420" fill="#fbfaf6"/>
+  <rect x="56" y="44" width="796" height="312" rx="16" fill="#fffdfa" stroke="#d9d0c3"/>
+  <path d="M112 302C162 274 204 250 244 230C284 211 322 196 360 181C398 167 434 154 472 142C510 130 548 121 588 111C628 102 668 96 708 90C748 85 784 80 812 74" stroke="#1f5c4a" stroke-width="6" stroke-linecap="round"/>
+  <path d="M112 308C162 294 204 285 244 276C284 267 322 262 360 254C398 246 434 240 472 235C510 230 548 224 588 220C628 216 668 214 708 210C748 207 784 205 812 202" stroke="#d58f31" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 10"/>
+  <path d="M112 84V326" stroke="#756b5d" stroke-width="2"/>
+  <path d="M112 326H820" stroke="#756b5d" stroke-width="2"/>
+  <g fill="#4f473c" font-family="Segoe UI, Arial, sans-serif" font-size="16">
+    <text x="64" y="88">loss</text>
+    <text x="760" y="352">steps</text>
+    <text x="128" y="70" font-size="24" font-weight="700">Expected Loss Curve</text>
+    <text x="128" y="98" font-size="16">Training loss should trend down over multiple optimizer steps.</text>
+    <text x="128" y="119" font-size="16">Validation loss usually drops more slowly and may flatten earlier.</text>
+  </g>
+  <g fill="#4f473c" font-family="Segoe UI, Arial, sans-serif" font-size="14">
+    <text x="70" y="112">2.2</text>
+    <text x="70" y="174">1.8</text>
+    <text x="70" y="236">1.4</text>
+    <text x="70" y="298">1.0</text>
+    <text x="106" y="350">0</text>
+    <text x="252" y="350">50</text>
+    <text x="398" y="350">100</text>
+    <text x="544" y="350">150</text>
+    <text x="690" y="350">200</text>
+    <text x="796" y="350">250</text>
+  </g>
+  <circle cx="682" cy="98" r="6" fill="#1f5c4a"/>
+  <text x="698" y="103" fill="#4f473c" font-family="Segoe UI, Arial, sans-serif" font-size="15">train_loss</text>
+  <circle cx="682" cy="126" r="6" fill="#d58f31"/>
+  <text x="698" y="131" fill="#4f473c" font-family="Segoe UI, Arial, sans-serif" font-size="15">eval_loss</text>
+</svg>

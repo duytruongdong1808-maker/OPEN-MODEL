@@ -1,0 +1,8 @@
+base_model: Qwen/Qwen2.5-1.5B-Instruct
+preset: rtx4060ti_8gb
+output_dir: outputs/qwen2.5_1.5b_lora
+num_train_epochs: 1
+learning_rate: 1.0e-4
+save_steps: 50
+logging_steps: 10
+report_to: none

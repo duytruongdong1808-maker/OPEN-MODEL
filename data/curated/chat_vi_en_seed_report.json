@@ -1,0 +1,22 @@
+{
+  "total_rows": 18,
+  "action_counts": {
+    "keep": 18
+  },
+  "mojibake_rows": 0,
+  "task_type_distribution": {
+    "generation": 7,
+    "qa": 4,
+    "rewrite": 2,
+    "summarize": 2,
+    "list_extraction": 2,
+    "classification": 1
+  },
+  "language_distribution": {
+    "vi": 13,
+    "en": 4,
+    "mixed": 1
+  },
+  "top_review_reasons": [],
+  "top_drop_reasons": []
+}
