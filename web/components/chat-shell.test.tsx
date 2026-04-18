@@ -43,7 +43,7 @@ const baseConversation: ConversationDetail = {
   messages: [],
 };
 
-test("chat shell streams optimistic messages and updates the source panel", async () => {
+test("chat shell streams optimistic messages and updates the runtime panel", async () => {
   const user = userEvent.setup();
   const apiClient = new FakeApiClient(baseConversation, [
     {
@@ -132,10 +132,10 @@ test("chat shell streams optimistic messages and updates the source panel", asyn
   expect(screen.getAllByText("Summarize the latest").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Here is a concise briefing.").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Reuters item").length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: /hide sources panel/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /hide runtime panel/i })).toBeInTheDocument();
 });
 
-test("chat shell toggles the sources panel", async () => {
+test("chat shell toggles the runtime panel", async () => {
   const user = userEvent.setup();
   const apiClient = new FakeApiClient(baseConversation, []);
 
@@ -151,6 +151,6 @@ test("chat shell toggles the sources panel", async () => {
     expect(screen.getByRole("heading", { name: /daily workspace/i })).toBeInTheDocument(),
   );
 
-  await user.click(screen.getByRole("button", { name: /show sources panel/i }));
-  expect(screen.getAllByText(/live reasoning surface/i).length).toBeGreaterThan(0);
+  await user.click(screen.getByRole("button", { name: /show runtime panel/i }));
+  expect(screen.getAllByText(/runtime panel/i).length).toBeGreaterThan(0);
 });

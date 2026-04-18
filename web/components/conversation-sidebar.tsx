@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import { formatConversationTime, truncatePreview } from "@/lib/format";
 import type { ConversationSummary } from "@/lib/types";
 
@@ -11,7 +13,7 @@ interface ConversationSidebarProps {
   onSelectConversation: (conversationId: string) => void;
 }
 
-export function ConversationSidebar({
+function ConversationSidebarImpl({
   conversations,
   activeConversationId,
   isCreatingConversation,
@@ -28,21 +30,27 @@ export function ConversationSidebar({
     <>
       <div
         aria-hidden={!open}
-        className={`fixed inset-0 z-20 bg-shell-900/20 backdrop-blur-sm transition lg:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        className={`fixed inset-0 z-20 bg-overlay transition lg:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
         onClick={onClose}
       />
+
       <aside
-        className={`app-shell-scrollbar fixed inset-y-4 left-4 z-30 flex w-[min(19rem,calc(100vw-2rem))] flex-col overflow-y-auto rounded-[2rem] border border-black/5 bg-[var(--panel-bg)] p-5 shadow-shell backdrop-blur lg:static lg:inset-auto lg:w-[18rem] lg:translate-x-0 lg:opacity-100 ${sidebarClasses}`}
+        aria-label="Conversations"
+        className={`app-shell-scrollbar app-surface fixed inset-y-3 left-3 z-30 flex w-[min(19rem,calc(100vw-1.5rem))] flex-col overflow-y-auto rounded-[24px] p-5 transition lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:w-full lg:translate-x-0 lg:opacity-100 ${sidebarClasses}`}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-accent-700">Open Model</p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-shell-900">Chat workspace</h1>
+            <p className="app-meta text-content-secondary">Open Model</p>
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-content-primary">Workspace</h1>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">
+              Manage threads and reopen recent context without leaving the main surface.
+            </p>
           </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-black/5 px-3 py-2 text-xs font-medium text-shell-600 transition hover:border-shell-300 hover:text-shell-900 lg:hidden"
+            className="app-button app-button-secondary app-focus-ring px-3 py-2 text-xs font-medium lg:hidden"
           >
             Close
           </button>
@@ -51,23 +59,21 @@ export function ConversationSidebar({
         <button
           type="button"
           onClick={onNewConversation}
-          className="mt-6 rounded-3xl bg-accent-500 px-4 py-3 text-left text-sm font-semibold text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-700"
+          className="app-button app-button-primary app-focus-ring mt-6 w-full justify-center px-4 py-3 text-sm font-semibold"
         >
-          {isCreatingConversation ? "Creating a new thread…" : "New chat"}
+          {isCreatingConversation ? "Creating thread..." : "New chat"}
         </button>
 
-        <div className="mt-8">
+        <div className="mt-8 border-t border-stroke-subtle pt-6">
           <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm font-semibold text-shell-900">Recent conversations</p>
-            <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-shell-500">
-              {conversations.length}
-            </span>
+            <p className="text-sm font-semibold text-content-primary">Recent conversations</p>
+            <span className="app-meta text-content-secondary">{conversations.length}</span>
           </div>
 
           <div className="space-y-2">
             {conversations.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-shell-300/80 bg-white/40 px-4 py-5 text-sm text-shell-600">
-                Start a thread to build your workspace history.
+              <div className="rounded-[16px] border border-dashed border-stroke-strong bg-interactive-hover px-4 py-5 text-sm leading-6 text-content-secondary">
+                No conversation history yet. Start a thread to create a persistent workspace log.
               </div>
             ) : (
               conversations.map((conversation) => {
@@ -77,20 +83,21 @@ export function ConversationSidebar({
                   <button
                     key={conversation.id}
                     type="button"
+                    aria-current={isActive ? "page" : undefined}
                     onClick={() => onSelectConversation(conversation.id)}
-                    className={`w-full rounded-3xl px-4 py-4 text-left transition ${
+                    className={`app-focus-ring w-full rounded-[18px] border px-4 py-4 text-left transition ${
                       isActive
-                        ? "border border-accent-500/20 bg-accent-100/70 shadow-sm"
-                        : "border border-transparent bg-white/45 hover:border-black/5 hover:bg-white/70"
+                        ? "border-interactive-border bg-interactive-active"
+                        : "border-transparent bg-transparent hover:border-stroke-subtle hover:bg-interactive-hover"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-medium text-shell-900">{conversation.title}</p>
-                      <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-shell-500">
+                      <p className="font-medium text-content-primary">{conversation.title}</p>
+                      <span className="text-xs uppercase tracking-[0.18em] text-content-secondary">
                         {formatConversationTime(conversation.updated_at)}
                       </span>
                     </div>
-                    <p className="mt-2 text-sm leading-6 text-shell-600">
+                    <p className="mt-2 text-sm leading-6 text-content-secondary">
                       {truncatePreview(conversation.last_message_preview)}
                     </p>
                   </button>
@@ -103,3 +110,5 @@ export function ConversationSidebar({
     </>
   );
 }
+
+export const ConversationSidebar = memo(ConversationSidebarImpl);

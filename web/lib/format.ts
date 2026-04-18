@@ -41,5 +41,5 @@ export function truncatePreview(value: string | null, length = 68): string {
   if (value.length <= length) {
     return value;
   }
-  return `${value.slice(0, length - 1).trimEnd()}…`;
+  return `${value.slice(0, length - 3).trimEnd()}...`;
 }

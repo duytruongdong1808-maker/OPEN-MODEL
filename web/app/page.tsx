@@ -42,16 +42,32 @@ export default function HomePage() {
   }, [router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="max-w-md rounded-[2rem] border border-black/5 bg-white/80 p-8 text-center shadow-shell backdrop-blur">
-        <p className="font-mono text-xs uppercase tracking-[0.35em] text-accent-700">Open Model</p>
-        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-shell-900">
+    <main className="flex min-h-screen items-center justify-center px-4 py-6 sm:px-6">
+      <section className="app-surface w-full max-w-2xl rounded-[24px] px-6 py-8 sm:px-8 sm:py-10">
+        <div className="flex items-center gap-3">
+          <span className="h-2.5 w-2.5 rounded-full bg-action" aria-hidden="true" />
+          <p className="app-meta text-content-secondary">Open Model</p>
+        </div>
+
+        <h1 className="mt-6 max-w-xl text-3xl font-semibold tracking-tight text-content-primary sm:text-4xl">
           Preparing your workspace
         </h1>
-        <p className="mt-3 text-sm leading-6 text-shell-700">
-          {error ?? "Loading the latest conversation or creating a fresh thread for you."}
+
+        <p className="mt-3 max-w-xl text-sm leading-6 text-content-secondary sm:text-base">
+          {error ?? "Loading the latest conversation or creating a fresh thread."}
         </p>
-      </div>
+
+        <div className="mt-8 grid gap-3 border-t border-stroke-subtle pt-5 text-sm text-content-secondary sm:grid-cols-2">
+          <div className="rounded-[16px] border border-stroke-subtle bg-surface-strong px-4 py-4">
+            <p className="app-meta text-content-secondary">State</p>
+            <p className="mt-2 font-medium text-content-primary">{error ? "Startup issue" : "Bootstrapping"}</p>
+          </div>
+          <div className="rounded-[16px] border border-stroke-subtle bg-surface-strong px-4 py-4">
+            <p className="app-meta text-content-secondary">Flow</p>
+            <p className="mt-2 font-medium text-content-primary">Restore thread or open a new session</p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

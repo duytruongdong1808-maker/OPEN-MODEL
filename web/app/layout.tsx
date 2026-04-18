@@ -1,22 +1,30 @@
-import type { Metadata } from "next";
-import { IBM_Plex_Mono, Manrope } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
 
-const manrope = Manrope({
-  subsets: ["latin"],
-  variable: "--font-manrope",
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-ibm-plex-mono",
-});
-
 export const metadata: Metadata = {
-  title: "Open Model Chat",
-  description: "ChatGPT-style shell for the Open Model news-agent MVP.",
+  title: {
+    default: "Open Model Workspace",
+    template: "%s · Open Model",
+  },
+  description: "Implementation-focused Open Model chat workspace with live steps and citations.",
+  applicationName: "Open Model Workspace",
+  robots: { index: false, follow: false },
+  openGraph: {
+    title: "Open Model Workspace",
+    description: "Threaded chat, live runtime steps, and citations in one focused surface.",
+    type: "website",
+  },
+  formatDetection: { telephone: false, email: false, address: false },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0b0c" },
+  ],
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -26,7 +34,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${manrope.variable} ${ibmPlexMono.variable}`}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

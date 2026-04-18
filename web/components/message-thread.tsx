@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import type { StepUpdate, UiMessage } from "@/lib/types";
 
 interface MessageThreadProps {
@@ -9,18 +11,18 @@ interface MessageThreadProps {
 
 function statusTone(step: StepUpdate): string {
   if (step.status === "active") {
-    return "border-accent-200 bg-accent-100/70 text-accent-700";
+    return "border-interactive-border bg-interactive-active text-content-tertiary";
   }
   if (step.status === "complete") {
-    return "border-emerald-200 bg-emerald-100 text-emerald-700";
+    return "border-success-border bg-success-bg text-success-fg";
   }
   if (step.status === "error") {
-    return "border-rose-200 bg-rose-100 text-rose-700";
+    return "border-error-border bg-error-bg text-error-fg";
   }
-  return "border-shell-200 bg-shell-100 text-shell-700";
+  return "border-stroke-subtle bg-action-muted text-content-secondary";
 }
 
-export function MessageThread({
+function MessageThreadImpl({
   title,
   messages,
   liveSteps,
@@ -30,43 +32,52 @@ export function MessageThread({
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-16">
         <div className="max-w-md text-center">
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-shell-500">Syncing thread</p>
-          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-shell-900">
-            Loading the current conversation
+          <p className="app-meta text-content-secondary">Syncing thread</p>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-content-primary">
+            Loading conversation
           </h2>
-          <p className="mt-3 text-sm leading-6 text-shell-600">
-            We are restoring the message history and source state for this thread.
+          <p className="mt-3 text-sm leading-6 text-content-secondary">
+            Restoring message history, runtime steps, and citations for the current thread.
           </p>
         </div>
       </div>
     );
   }
 
-  const latestAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
+  let latestAssistantId: string | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "assistant") {
+      latestAssistantId = messages[index].id;
+      break;
+    }
+  }
 
   return (
-    <div className="flex flex-1 flex-col px-4 pt-6 sm:px-8">
-      <div className="mb-8">
-        <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-shell-500">Conversation</p>
-        <h2 className="mt-3 text-3xl font-semibold tracking-tight text-shell-900">{title}</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-shell-600">
-          The center column stays quiet and readable so you can focus on what the assistant is saying while the
-          right panel handles live status and citations.
+    <div
+      className="flex flex-1 flex-col px-4 pt-6 sm:px-6 lg:px-8"
+      role="log"
+      aria-label="Conversation messages"
+      aria-live="polite"
+    >
+      <div className="mb-8 border-b border-stroke-subtle pb-6">
+        <p className="app-meta text-content-secondary">Conversation</p>
+        <h2 className="mt-3 text-3xl font-semibold tracking-tight text-content-primary">{title}</h2>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">
+          Messages stay centered and readable while runtime steps and citations update in parallel.
         </p>
       </div>
 
       {messages.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center rounded-[2rem] border border-dashed border-shell-300/80 bg-white/40 px-8 py-16 text-center">
+        <div className="flex flex-1 items-center justify-center rounded-[20px] border border-dashed border-stroke-strong bg-interactive-hover px-8 py-16 text-center">
           <div className="max-w-xl">
-            <h3 className="text-2xl font-semibold text-shell-900">Start with a real task</h3>
-            <p className="mt-3 text-sm leading-6 text-shell-600">
-              Ask for a summary, explore a news topic, or use this shell as the first step toward an agent that can
-              cite live sources.
+            <h3 className="text-2xl font-semibold text-content-primary">Start with a concrete task</h3>
+            <p className="mt-3 text-sm leading-6 text-content-secondary">
+              Ask for a summary, compare sources, or hand the workspace the next step to execute.
             </p>
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-5 pb-8">
           {messages.map((message) => {
             const isUser = message.role === "user";
             const showLiveSteps = !isUser && message.id === latestAssistantId && liveSteps.length > 0;
@@ -74,6 +85,10 @@ export function MessageThread({
             return (
               <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                 <div className="w-full max-w-3xl">
+                  <p className={`app-meta mb-3 text-content-secondary ${isUser ? "text-right" : "text-left"}`}>
+                    {isUser ? "You" : "Open Model"}
+                  </p>
+
                   {showLiveSteps ? (
                     <div className="mb-3 flex flex-wrap gap-2">
                       {liveSteps.map((step) => (
@@ -88,19 +103,19 @@ export function MessageThread({
                   ) : null}
 
                   <div
-                    className={`rounded-[1.8rem] px-5 py-4 shadow-sm ${
+                    className={`rounded-[20px] border px-5 py-4 ${
                       isUser
-                        ? "ml-auto bg-shell-900 text-white"
-                        : "bg-white/85 text-shell-900 backdrop-blur"
+                        ? "border-transparent bg-action text-action-foreground"
+                        : "border-stroke-subtle bg-surface-strong text-content-primary"
                     }`}
                   >
                     <p className="whitespace-pre-wrap text-[15px] leading-7">
-                      {message.content || (message.pending ? "Thinking…" : "")}
+                      {message.content || (message.pending ? "Generating response..." : "")}
                     </p>
                   </div>
 
                   {message.error ? (
-                    <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    <div className="mt-3 rounded-[16px] border border-error-border bg-error-bg px-4 py-3 text-sm text-error-fg">
                       {message.error}
                     </div>
                   ) : null}
@@ -113,3 +128,5 @@ export function MessageThread({
     </div>
   );
 }
+
+export const MessageThread = memo(MessageThreadImpl);

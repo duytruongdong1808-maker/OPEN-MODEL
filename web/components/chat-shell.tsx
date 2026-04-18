@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentStatusPanel } from "@/components/agent-status-panel";
 import { Composer } from "@/components/composer";
@@ -8,7 +8,6 @@ import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { MessageThread } from "@/components/message-thread";
 import type { ApiClient } from "@/lib/api";
 import type {
-  ChatMessage,
   ConversationSummary,
   SourceItem,
   StreamEvent,
@@ -69,8 +68,21 @@ export function ChatShell({
   const [panelOpen, setPanelOpen] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const threadAnchorRef = useRef<HTMLDivElement | null>(null);
+  const draftRef = useRef(draft);
+  const isStreamingRef = useRef(isStreaming);
 
-  const displayedSources = liveSources.length > 0 ? liveSources : latestAssistantSources(messages);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  const displayedSources = useMemo(
+    () => (liveSources.length > 0 ? liveSources : latestAssistantSources(messages)),
+    [liveSources, messages],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +127,7 @@ export function ChatShell({
     threadAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, liveSteps]);
 
-  async function createNewConversation() {
+  const createNewConversation = useCallback(async () => {
     setIsCreatingConversation(true);
     try {
       const conversation = await apiClient.createConversation();
@@ -127,11 +139,11 @@ export function ChatShell({
       setIsCreatingConversation(false);
       setSidebarOpen(false);
     }
-  }
+  }, [apiClient, onNavigateConversation]);
 
-  async function sendMessage(promptOverride?: string) {
-    const prompt = (promptOverride ?? draft).trim();
-    if (!prompt || isStreaming) {
+  const sendMessage = useCallback(async (promptOverride?: string) => {
+    const prompt = (promptOverride ?? draftRef.current).trim();
+    if (!prompt || isStreamingRef.current) {
       return;
     }
 
@@ -255,62 +267,89 @@ export function ChatShell({
         );
       }
     }
-  }
+  }, [apiClient, conversationId]);
 
-  function stopStreaming() {
+  const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
-  }
+  }, []);
+
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const openSidebar = useCallback(() => setSidebarOpen(true), []);
+  const togglePanel = useCallback(() => setPanelOpen((current) => !current), []);
+  const closePanel = useCallback(() => setPanelOpen(false), []);
+  const handleNewConversation = useCallback(() => {
+    void createNewConversation();
+  }, [createNewConversation]);
+  const handleSelectConversation = useCallback(
+    (nextConversationId: string) => {
+      setSidebarOpen(false);
+      onNavigateConversation(nextConversationId);
+    },
+    [onNavigateConversation],
+  );
+  const handleSend = useCallback(() => {
+    void sendMessage();
+  }, [sendMessage]);
+  const handleRetry = useCallback(() => {
+    void sendMessage(lastPrompt ?? undefined);
+  }, [sendMessage, lastPrompt]);
 
   return (
-    <main className="min-h-screen p-4">
-      <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1680px] gap-4">
+    <main className="min-h-screen px-3 py-3 text-content-primary sm:px-4">
+      <div className="mx-auto grid min-h-[calc(100vh-1.5rem)] max-w-[1720px] grid-cols-1 gap-3 lg:grid-cols-[17.5rem_minmax(0,1fr)] xl:grid-cols-[17.5rem_minmax(0,1fr)_22rem]">
         <ConversationSidebar
           activeConversationId={conversationId}
           conversations={conversations}
           isCreatingConversation={isCreatingConversation}
           open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          onNewConversation={() => void createNewConversation()}
-          onSelectConversation={(nextConversationId) => {
-            setSidebarOpen(false);
-            onNavigateConversation(nextConversationId);
-          }}
+          onClose={closeSidebar}
+          onNewConversation={handleNewConversation}
+          onSelectConversation={handleSelectConversation}
         />
 
-        <section className="flex min-w-0 flex-1 flex-col rounded-[2rem] border border-black/5 bg-white/45 shadow-shell backdrop-blur">
-          <header className="flex items-center justify-between gap-3 border-b border-black/5 px-4 py-4 sm:px-8">
-            <div className="flex items-center gap-2">
+        <section className="app-surface flex min-w-0 flex-col overflow-hidden rounded-[24px]">
+          <header className="flex items-start justify-between gap-4 border-b border-stroke-subtle px-4 py-4 sm:px-6 sm:py-5">
+            <div className="flex items-start gap-3">
               <button
                 type="button"
-                onClick={() => setSidebarOpen(true)}
-                className="rounded-full border border-black/5 px-3 py-2 text-sm font-medium text-shell-700 transition hover:border-shell-300 hover:text-shell-900 lg:hidden"
+                onClick={openSidebar}
+                className="app-button app-button-secondary app-focus-ring shrink-0 text-sm font-medium lg:hidden"
               >
                 Threads
               </button>
+
               <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-shell-500">Open Model chat</p>
-                <p className="mt-1 text-sm text-shell-600">
-                  Internal shell for local chat today and a news agent tomorrow.
+                <p className="app-meta text-content-secondary">Open Model</p>
+                <h1 className="mt-3 text-lg font-semibold tracking-tight text-content-primary sm:text-xl">
+                  Local chat workspace
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
+                  Threaded chat, live runtime steps, and citations stay in one focused surface.
                 </p>
               </div>
             </div>
 
             <button
               type="button"
-              onClick={() => setPanelOpen((current) => !current)}
-              className="rounded-full border border-black/5 px-4 py-2 text-sm font-medium text-shell-700 transition hover:border-shell-300 hover:text-shell-900 xl:hidden"
+              onClick={togglePanel}
+              className="app-button app-button-secondary app-focus-ring shrink-0 text-sm font-medium xl:hidden"
+              aria-expanded={panelOpen}
+              aria-controls="runtime-panel"
             >
-              {panelOpen ? "Hide sources panel" : "Show sources panel"}
+              {panelOpen ? "Hide runtime panel" : "Show runtime panel"}
             </button>
           </header>
 
           {banner ? (
-            <div className="mx-4 mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 sm:mx-8">
+            <div
+              role="alert"
+              className="mx-4 mt-4 rounded-[16px] border border-warning-border bg-warning-bg px-4 py-3 text-sm text-warning-fg sm:mx-6"
+            >
               {banner}
             </div>
           ) : null}
 
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className="app-shell-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto">
             <MessageThread
               isLoading={isLoading}
               liveSteps={liveSteps}
@@ -324,21 +363,20 @@ export function ChatShell({
               draft={draft}
               isStreaming={isStreaming}
               onDraftChange={setDraft}
-              onRetry={() => void sendMessage(lastPrompt ?? undefined)}
-              onSend={() => void sendMessage()}
+              onRetry={handleRetry}
+              onSend={handleSend}
               onStop={stopStreaming}
             />
           </div>
         </section>
 
+        <AgentStatusPanel
+          open={panelOpen}
+          onClose={closePanel}
+          sources={displayedSources}
+          steps={liveSteps}
+        />
       </div>
-
-      <AgentStatusPanel
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        sources={displayedSources}
-        steps={liveSteps}
-      />
     </main>
   );
 }

@@ -4,36 +4,63 @@ const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./lib/**/*.{js,ts,jsx,tsx,mdx}"
+    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
       colors: {
-        shell: {
-          50: "#fbfaf7",
-          100: "#f4f0e8",
-          200: "#e8e0d3",
-          300: "#d2c5b1",
-          500: "#8d6e4a",
-          700: "#4a3a2c",
-          900: "#221c18"
+        surface: {
+          base: "var(--color-surface-base)",
+          raised: "var(--color-surface-raised)",
+          strong: "var(--color-surface-strong)",
+          emphasis: "var(--color-surface-emphasis)",
         },
-        accent: {
-          100: "#d7f2ee",
-          500: "#0f766e",
-          700: "#115e59"
-        }
+        content: {
+          primary: "var(--color-text-primary)",
+          secondary: "var(--color-text-secondary)",
+          tertiary: "var(--color-text-tertiary)",
+        },
+        stroke: {
+          subtle: "var(--color-border-subtle)",
+          strong: "var(--color-border-strong)",
+          focus: "var(--color-border-focus)",
+        },
+        interactive: {
+          hover: "var(--color-interactive-hover)",
+          active: "var(--color-interactive-active)",
+          border: "var(--color-interactive-border)",
+        },
+        action: {
+          DEFAULT: "var(--color-action-bg)",
+          foreground: "var(--color-action-fg)",
+          muted: "var(--color-action-muted)",
+        },
+        success: {
+          fg: "var(--color-success-fg)",
+          bg: "var(--color-success-bg)",
+          border: "var(--color-success-border)",
+        },
+        error: {
+          fg: "var(--color-error-fg)",
+          bg: "var(--color-error-bg)",
+          border: "var(--color-error-border)",
+        },
+        warning: {
+          fg: "var(--color-warning-fg)",
+          bg: "var(--color-warning-bg)",
+          border: "var(--color-warning-border)",
+        },
       },
       boxShadow: {
-        shell: "0 22px 65px rgba(35, 28, 22, 0.08)"
+        shell: "var(--shadow-panel)",
       },
       fontFamily: {
-        display: ["var(--font-manrope)", "sans-serif"],
-        mono: ["var(--font-ibm-plex-mono)", "monospace"]
-      }
-    }
+        sans: ["var(--font-sans)"],
+        mono: ["var(--font-mono)"],
+      },
+    },
   },
-  plugins: []
+  plugins: [],
 };
 
 export default config;
