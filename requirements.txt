@@ -8,3 +8,5 @@ bitsandbytes>=0.43.1; platform_system != "Windows"
 sentencepiece>=0.2.0
 safetensors>=0.4.5
 PyYAML>=6.0.0
+fastapi>=0.115.0
+uvicorn>=0.30.0

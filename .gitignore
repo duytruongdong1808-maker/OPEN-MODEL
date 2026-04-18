@@ -13,6 +13,10 @@ data/raw/train.jsonl
 data/processed/*.jsonl
 
 outputs/*
+web/.next/
+web/node_modules/
+web/coverage/
+*.sqlite3
 
 .ipynb_checkpoints/
 .DS_Store

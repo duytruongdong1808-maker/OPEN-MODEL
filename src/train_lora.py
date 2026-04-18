@@ -5,18 +5,21 @@ import os
 import sys
 from pathlib import Path
 
-import torch
-from datasets import load_dataset
-from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig, set_seed
+# Emit an immediate startup banner before importing heavier ML packages so
+# Windows users can see the process has actually started.
+if __name__ == "__main__" and os.environ.get("OPEN_MODEL_STARTUP_BANNER") != "1":
+    print("[train_lora] Starting...", flush=True)
+    os.environ["OPEN_MODEL_STARTUP_BANNER"] = "1"
 
 # `trl` reads package template files using the interpreter's default text
 # encoding. On Windows that may be a legacy code page like cp1252, which breaks
 # when those files are UTF-8. Re-exec the script in UTF-8 mode so users can run
-# `python train_lora.py` without extra flags.
+# `python train_lora.py` without extra flags. If the user already passed
+# `-X utf8`, respect `sys.flags.utf8_mode` and do not restart again.
 if (
     __name__ == "__main__"
     and sys.platform == "win32"
+    and sys.flags.utf8_mode != 1
     and os.environ.get("PYTHONUTF8") != "1"
 ):
     os.execve(
@@ -24,6 +27,11 @@ if (
         [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), *sys.argv[1:]],
         {**os.environ, "PYTHONUTF8": "1"},
     )
+
+import torch
+from datasets import load_dataset
+from peft import LoraConfig, prepare_model_for_kbit_training
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig, set_seed
 
 from trl import SFTConfig, SFTTrainer
 

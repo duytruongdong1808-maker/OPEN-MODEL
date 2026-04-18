@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Iterable
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+from ..utils import DEFAULT_BASE_MODEL, DEFAULT_SYSTEM_PROMPT, ROOT_DIR, configure_logging, str_to_bool
+from .runtime import LocalModelChatService, SupportsStreamingReply
+from .schemas import (
+    AssistantDeltaPayload,
+    ChatStreamRequest,
+    ConversationDetail,
+    ConversationSummary,
+    ErrorPayload,
+    MessageCompletePayload,
+    MessageStartPayload,
+    StepUpdatePayload,
+)
+from .storage import ConversationStore
+
+
+DEFAULT_DB_PATH = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
+DEFAULT_ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+
+def parse_allowed_origins(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return list(DEFAULT_ALLOWED_ORIGINS)
+    return [origin.strip() for origin in raw_value.split(",") if origin.strip()]
+
+
+def sse_event(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def build_steps(mode: str) -> list[tuple[str, str]]:
+    if mode == "news":
+        return [
+            ("search", "Searching sources"),
+            ("compare", "Comparing articles"),
+            ("draft", "Drafting answer"),
+        ]
+    return [
+        ("context", "Reading conversation"),
+        ("draft", "Drafting answer"),
+    ]
+
+
+def get_store(request: Request) -> ConversationStore:
+    return request.app.state.store
+
+
+def get_runtime(request: Request) -> SupportsStreamingReply:
+    return request.app.state.runtime
+
+
+def resolve_runtime() -> LocalModelChatService:
+    adapter_path = os.getenv("OPEN_MODEL_ADAPTER_PATH")
+    load_in_4bit = os.getenv("OPEN_MODEL_LOAD_IN_4BIT")
+    max_new_tokens = int(os.getenv("OPEN_MODEL_MAX_NEW_TOKENS", "256"))
+    temperature = float(os.getenv("OPEN_MODEL_TEMPERATURE", "0.2"))
+    top_p = float(os.getenv("OPEN_MODEL_TOP_P", "0.9"))
+    return LocalModelChatService(
+        base_model=os.getenv("OPEN_MODEL_BASE_MODEL", DEFAULT_BASE_MODEL),
+        adapter_path=adapter_path,
+        model_revision=os.getenv("OPEN_MODEL_MODEL_REVISION"),
+        load_in_4bit=None if load_in_4bit is None else str_to_bool(load_in_4bit),
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )
+
+
+def create_app(
+    *,
+    store: ConversationStore | None = None,
+    runtime: SupportsStreamingReply | None = None,
+) -> FastAPI:
+    configure_logging()
+    app = FastAPI(title="Open Model Chat API", version="1.0.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=parse_allowed_origins(os.getenv("OPEN_MODEL_CORS_ORIGINS")),
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.state.store = store or ConversationStore(Path(os.getenv("OPEN_MODEL_DB_PATH", DEFAULT_DB_PATH)))
+    app.state.runtime = runtime or resolve_runtime()
+
+    @app.get("/health")
+    def health_check() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/conversations", response_model=list[ConversationSummary])
+    def list_conversations_endpoint(
+        conversation_store: ConversationStore = Depends(get_store),
+    ) -> list[ConversationSummary]:
+        return conversation_store.list_conversations()
+
+    @app.post("/conversations", response_model=ConversationSummary)
+    def create_conversation_endpoint(
+        conversation_store: ConversationStore = Depends(get_store),
+    ) -> ConversationSummary:
+        return conversation_store.create_conversation()
+
+    @app.get("/conversations/{conversation_id}", response_model=ConversationDetail)
+    def get_conversation_endpoint(
+        conversation_id: str,
+        conversation_store: ConversationStore = Depends(get_store),
+    ) -> ConversationDetail:
+        try:
+            return conversation_store.get_conversation(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+
+    @app.post("/conversations/{conversation_id}/messages/stream")
+    async def stream_conversation_message(
+        conversation_id: str,
+        payload: ChatStreamRequest,
+        request: Request,
+        conversation_store: ConversationStore = Depends(get_store),
+        chat_runtime: SupportsStreamingReply = Depends(get_runtime),
+    ) -> StreamingResponse:
+        if not conversation_store.conversation_exists(conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        user_message = conversation_store.save_user_message(conversation_id, payload.message)
+        conversation = conversation_store.get_conversation(conversation_id)
+        summary = conversation_store.get_conversation_summary(conversation_id)
+
+        async def event_stream() -> Iterable[str]:
+            yield sse_event(
+                "message_start",
+                MessageStartPayload(conversation=summary, user_message=user_message).model_dump(mode="json"),
+            )
+
+            steps = build_steps(payload.mode)
+            if steps:
+                first_step_id, first_step_label = steps[0]
+                yield sse_event(
+                    "step_update",
+                    StepUpdatePayload(step_id=first_step_id, label=first_step_label, status="active").model_dump(
+                        mode="json"
+                    ),
+                )
+
+            generation = None
+            assistant_chunks: list[str] = []
+            try:
+                for step_id, step_label in steps[:-1]:
+                    yield sse_event(
+                        "step_update",
+                        StepUpdatePayload(step_id=step_id, label=step_label, status="complete").model_dump(
+                            mode="json"
+                        ),
+                    )
+
+                if steps:
+                    draft_step_id, draft_step_label = steps[-1]
+                    yield sse_event(
+                        "step_update",
+                        StepUpdatePayload(step_id=draft_step_id, label=draft_step_label, status="active").model_dump(
+                            mode="json"
+                        ),
+                    )
+
+                generation = chat_runtime.stream_reply(
+                    messages=[message.model_dump() for message in conversation.messages],
+                    system_prompt=(payload.system_prompt or DEFAULT_SYSTEM_PROMPT).strip(),
+                    mode=payload.mode,
+                )
+
+                for chunk in generation.chunks:
+                    if await request.is_disconnected():
+                        generation.cancel()
+                        return
+                    assistant_chunks.append(chunk)
+                    yield sse_event(
+                        "assistant_delta",
+                        AssistantDeltaPayload(delta=chunk).model_dump(mode="json"),
+                    )
+
+                assistant_text = "".join(assistant_chunks).strip()
+                if not assistant_text:
+                    raise RuntimeError("The model returned an empty response.")
+
+                assistant_message = conversation_store.save_assistant_message(
+                    conversation_id,
+                    assistant_text,
+                    sources=[],
+                )
+                updated_summary = conversation_store.get_conversation_summary(conversation_id)
+
+                if len(steps) > 1:
+                    draft_step_id, draft_step_label = steps[-1]
+                    yield sse_event(
+                        "step_update",
+                        StepUpdatePayload(step_id=draft_step_id, label=draft_step_label, status="complete").model_dump(
+                            mode="json"
+                        ),
+                    )
+
+                yield sse_event(
+                    "message_complete",
+                    MessageCompletePayload(
+                        conversation=updated_summary,
+                        assistant_message=assistant_message,
+                    ).model_dump(mode="json"),
+                )
+            except Exception as exc:
+                if generation is not None:
+                    generation.cancel()
+                yield sse_event("error", ErrorPayload(message=str(exc)).model_dump(mode="json"))
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    return app
+
+
+app = create_app()

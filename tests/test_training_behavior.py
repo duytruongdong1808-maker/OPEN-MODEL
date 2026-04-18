@@ -8,6 +8,10 @@ import pytest
 from src.utils import ROOT_DIR
 
 
+def should_reexec_train_script(source: str) -> bool:
+    return "sys.flags.utf8_mode != 1" in source and 'os.environ.get("PYTHONUTF8") != "1"' in source
+
+
 def apply_completion_only_mask(input_ids: list[int], completion_mask: list[int], max_length: int) -> list[int]:
     labels = list(input_ids) + ([-100] * (max_length - len(input_ids)))
     padded_completion_mask = list(completion_mask) + ([0] * (max_length - len(completion_mask)))
@@ -36,3 +40,9 @@ def test_model_loading_paths_keep_trust_remote_code_disabled() -> None:
     for relative_path in ["src/train_lora.py", "src/utils.py", "src/merge_adapter.py"]:
         source = (ROOT_DIR / relative_path).read_text(encoding="utf-8")
         assert '"trust_remote_code": False' in source or "trust_remote_code=False" in source
+
+
+def test_train_script_utf8_restart_respects_python_utf8_flag() -> None:
+    source = (ROOT_DIR / "src/train_lora.py").read_text(encoding="utf-8")
+
+    assert should_reexec_train_script(source)
