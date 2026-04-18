@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -31,17 +33,19 @@ if (
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig, set_seed
+from transformers import AutoModelForCausalLM, set_seed
 
 from trl import SFTConfig, SFTTrainer
 
 try:
     from .utils import (
+        ASSISTANT_RESPONSE_TEMPLATE,
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
         ROOT_DIR,
+        build_bnb_config,
         collect_cli_option_names,
         configure_logging,
         get_compute_dtype,
@@ -58,11 +62,13 @@ try:
     )
 except ImportError:
     from utils import (
+        ASSISTANT_RESPONSE_TEMPLATE,
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
         ROOT_DIR,
+        build_bnb_config,
         collect_cli_option_names,
         configure_logging,
         get_compute_dtype,
@@ -263,10 +269,30 @@ def jsonl_has_rows(path: Path) -> bool:
     return path.exists() and path.stat().st_size > 0
 
 
-def validate_environment(args: argparse.Namespace) -> None:
+def count_jsonl_rows(path: Path) -> int:
+    with path.expanduser().resolve().open("r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def estimate_optimizer_steps(args: argparse.Namespace, dataset_size: int) -> int:
+    steps_per_epoch = math.ceil(dataset_size / args.per_device_train_batch_size)
+    total_micro_batches = steps_per_epoch * args.num_train_epochs
+    return max(1, math.ceil(total_micro_batches / args.gradient_accumulation_steps))
+
+
+def validate_environment(args: argparse.Namespace, logger) -> int:
     if not jsonl_has_rows(args.dataset_path):
         raise FileNotFoundError(
             f"Processed dataset not found: {args.dataset_path}. Run src/prepare_data.py first."
+        )
+
+    dataset_size = count_jsonl_rows(args.dataset_path)
+    optimizer_steps = estimate_optimizer_steps(args, dataset_size)
+    if optimizer_steps < 10:
+        logger.warning(
+            "Sanity warning: dataset has %s rows, which yields only %s optimizer steps with the current settings.",
+            dataset_size,
+            optimizer_steps,
         )
 
     if args.load_in_4bit and not torch.cuda.is_available():
@@ -274,6 +300,7 @@ def validate_environment(args: argparse.Namespace) -> None:
             "4-bit QLoRA requires a CUDA-enabled GPU. On Windows, use WSL/Linux for the cleanest setup. "
             "If you still want to test the script flow, rerun with --load_in_4bit false."
         )
+    return dataset_size
 
 
 def load_model(args: argparse.Namespace, tokenizer):
@@ -282,12 +309,7 @@ def load_model(args: argparse.Namespace, tokenizer):
     model_revision = resolve_model_revision(args.base_model, args.model_revision)
 
     if args.load_in_4bit:
-        model_kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_use_double_quant=True,
-        )
+        model_kwargs["quantization_config"] = build_bnb_config(compute_dtype)
         model_kwargs["device_map"] = "auto"
     else:
         model_kwargs["torch_dtype"] = compute_dtype
@@ -307,6 +329,63 @@ def load_model(args: argparse.Namespace, tokenizer):
     return model
 
 
+def assert_response_template_present(dataset, logger) -> None:
+    prompt = str(dataset[0]["prompt"])
+    if ASSISTANT_RESPONSE_TEMPLATE not in prompt:
+        raise ValueError(
+            "Training prompts do not contain the expected assistant response template. "
+            f"Expected marker: {ASSISTANT_RESPONSE_TEMPLATE!r}"
+        )
+    logger.debug("Verified assistant response template marker in training prompt.")
+
+
+def assert_label_masking(trainer: SFTTrainer, logger) -> None:
+    sample_count = min(4, len(trainer.train_dataset))
+    samples = [trainer.train_dataset[index] for index in range(sample_count)]
+    if not all("completion_mask" in sample for sample in samples):
+        raise ValueError(
+            "TRL did not produce completion masks for the training dataset. "
+            "Check that the dataset still uses prompt/completion columns."
+        )
+
+    batch = trainer.data_collator(samples)
+    labels = batch["labels"]
+    masked_tokens = int((labels == -100).sum().item())
+    total_tokens = int(labels.numel())
+    supervised_tokens = total_tokens - masked_tokens
+
+    logger.info("Label mask check: masked %s/%s tokens", masked_tokens, total_tokens)
+    if masked_tokens <= 0 or supervised_tokens <= 0:
+        raise ValueError(
+            "completion_only_loss did not produce a mixed prompt/completion label mask. "
+            "Expected both masked prompt tokens and unmasked completion tokens."
+        )
+
+
+def save_training_config(
+    output_dir: Path,
+    args: argparse.Namespace,
+    training_args: SFTConfig,
+    dataset_size: int,
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    config_path = output_dir / "training_config.json"
+    payload = {
+        "cli_args": {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in vars(args).items()
+        },
+        "training_args": training_args.to_dict(),
+        "resolved": {
+            "dataset_size": dataset_size,
+            "model_revision": resolve_model_revision(args.base_model, args.model_revision),
+            "assistant_response_template": ASSISTANT_RESPONSE_TEMPLATE,
+        },
+    }
+    config_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return config_path
+
+
 def main() -> int:
     args = parse_args()
     logger = configure_logging(args.log_level)
@@ -315,11 +394,12 @@ def main() -> int:
         if args.preset:
             logger.info("Using preset: %s", args.preset)
         log_runtime_mode(logger, args.load_in_4bit, args.load_in_4bit_was_set)
-        validate_environment(args)
+        dataset_size = validate_environment(args, logger)
         set_seed(args.seed)
 
         tokenizer = load_tokenizer(args.base_model, model_revision=args.model_revision)
         dataset = load_dataset("json", data_files=str(args.dataset_path), split="train")
+        assert_response_template_present(dataset, logger)
         eval_dataset = None
         if jsonl_has_rows(args.eval_dataset_path):
             eval_dataset = load_dataset("json", data_files=str(args.eval_dataset_path), split="train")
@@ -383,6 +463,7 @@ def main() -> int:
             load_best_model_at_end=eval_enabled,
             metric_for_best_model="eval_loss" if eval_enabled else None,
             gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             bf16=bf16_enabled,
             fp16=fp16_enabled,
             per_device_eval_batch_size=args.per_device_train_batch_size,
@@ -405,16 +486,19 @@ def main() -> int:
         )
 
         trainer.model.print_trainable_parameters()
+        assert_label_masking(trainer, logger)
         trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
         final_adapter_dir = args.output_dir / "final_adapter"
         final_adapter_dir.mkdir(parents=True, exist_ok=True)
         trainer.model.save_pretrained(str(final_adapter_dir))
         tokenizer.save_pretrained(str(final_adapter_dir))
+        training_config_path = save_training_config(args.output_dir, args, training_args, dataset_size)
 
         logger.info("Training finished.")
         logger.info("Checkpoints saved under: %s", args.output_dir.resolve())
         logger.info("Final adapter saved to: %s", final_adapter_dir.resolve())
+        logger.info("Training config saved to: %s", training_config_path.resolve())
         return 0
     except Exception as exc:
         get_logger().error("[train_lora] Error: %s", exc)

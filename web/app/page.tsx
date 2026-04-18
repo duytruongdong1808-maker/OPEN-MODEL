@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { createBrowserApiClient } from "@/lib/api";
+import { createBrowserApiClient, formatApiError } from "@/lib/api";
 
 export default function HomePage() {
   const router = useRouter();
@@ -29,7 +29,7 @@ export default function HomePage() {
         }
       } catch (cause) {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "Unable to connect to the chat API.");
+          setError(formatApiError(cause));
         }
       }
     }

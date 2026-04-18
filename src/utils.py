@@ -23,6 +23,7 @@ DEFAULT_BUILT_DATASET_PATH = CURATED_DATA_DIR / "chat_core_vi_en_train.jsonl"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 DEFAULT_BASE_MODEL_REVISION = None
 DEFAULT_SYSTEM_PROMPT = "You are a helpful, concise assistant."
+ASSISTANT_RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
 DEFAULT_MAX_NEW_TOKENS = 256
 DEFAULT_RUNTIME_PRESET = "rtx4060ti_8gb"
 DEFAULT_LOG_LEVEL = "INFO"
@@ -300,6 +301,17 @@ def get_compute_dtype():
     return torch.float16
 
 
+def build_bnb_config(compute_dtype):
+    from transformers import BitsAndBytesConfig
+
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=compute_dtype,
+        bnb_4bit_use_double_quant=True,
+    )
+
+
 def get_model_input_device(model):
     return next(model.parameters()).device
 
@@ -360,7 +372,7 @@ def load_model_and_tokenizer(
 ):
     import torch
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM
 
     resolved_revision = resolve_model_revision(base_model, model_revision)
     tokenizer = load_tokenizer(base_model, model_revision=resolved_revision)
@@ -370,12 +382,7 @@ def load_model_and_tokenizer(
 
     if torch.cuda.is_available():
         if use_4bit:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=compute_dtype,
-                bnb_4bit_use_double_quant=True,
-            )
+            model_kwargs["quantization_config"] = build_bnb_config(compute_dtype)
         else:
             model_kwargs["torch_dtype"] = compute_dtype
 
@@ -409,6 +416,7 @@ def generate_response(
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     temperature: float = 0.2,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.1,
 ) -> str:
     messages = build_messages(
         instruction=instruction,
@@ -422,6 +430,7 @@ def generate_response(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         top_p=top_p,
+        repetition_penalty=repetition_penalty,
     )
 
 
@@ -432,6 +441,7 @@ def generate_response_from_messages(
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     temperature: float = 0.2,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.1,
 ) -> str:
     import torch
 
@@ -451,6 +461,7 @@ def generate_response_from_messages(
             "do_sample": do_sample,
             "pad_token_id": tokenizer.pad_token_id,
             "eos_token_id": tokenizer.eos_token_id,
+            "repetition_penalty": repetition_penalty,
         }
         if do_sample:
             generate_kwargs["temperature"] = temperature

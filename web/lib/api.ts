@@ -22,15 +22,26 @@ export interface ApiClient {
   ): Promise<void>;
 }
 
-function resolveApiBaseUrl(): string {
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+
+export function resolveApiBaseUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (configured) {
     return configured.replace(/\/$/, "");
   }
-  if (typeof window === "undefined") {
-    return "http://127.0.0.1:8000";
+  return DEFAULT_API_BASE_URL;
+}
+
+export function formatApiError(cause: unknown): string {
+  if (!(cause instanceof Error)) {
+    return `Unable to connect to the chat API at ${resolveApiBaseUrl()}.`;
   }
-  return `${window.location.protocol}//${window.location.hostname}:8000`;
+
+  if (cause.message === "Failed to fetch") {
+    return `Unable to connect to the chat API at ${resolveApiBaseUrl()}. Make sure the FastAPI server is running or set NEXT_PUBLIC_API_BASE_URL.`;
+  }
+
+  return cause.message;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
