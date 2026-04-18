@@ -16,6 +16,7 @@ outputs/*
 web/.next/
 web/node_modules/
 web/coverage/
+web/*.tsbuildinfo
 *.sqlite3
 
 .ipynb_checkpoints/

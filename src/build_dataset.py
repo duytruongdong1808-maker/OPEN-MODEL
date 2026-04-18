@@ -9,6 +9,7 @@ try:
     from .curate_data import CORE_CHAT_TASK_TYPES
     from .utils import (
         DEFAULT_BUILT_DATASET_PATH,
+        DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH,
         DEFAULT_CURATED_SEED_PATH,
         DEFAULT_CURATED_TRAIN_PATH,
         DEFAULT_LOG_LEVEL,
@@ -22,6 +23,7 @@ except ImportError:
     from curate_data import CORE_CHAT_TASK_TYPES
     from utils import (
         DEFAULT_BUILT_DATASET_PATH,
+        DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH,
         DEFAULT_CURATED_SEED_PATH,
         DEFAULT_CURATED_TRAIN_PATH,
         DEFAULT_LOG_LEVEL,
@@ -38,9 +40,16 @@ TARGET_PROFILES = {
         "vi_core": 0.50,
         "en_core": 0.30,
         "mixed_utility": 0.20,
-    }
+    },
+    "chat_core_vi_en_mail": {
+        "vi_core": 0.35,
+        "en_core": 0.20,
+        "mixed_utility": 0.15,
+        "email_triage": 0.30,
+    },
 }
 MIXED_UTILITY_TASK_TYPES = {"summarize", "classification", "list_extraction", "generation"}
+EMAIL_TRIAGE_SOURCE = "seed_mail_triage_vi_en"
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +60,11 @@ def parse_args() -> argparse.Namespace:
         "--inputs",
         nargs="+",
         type=Path,
-        default=[DEFAULT_CURATED_TRAIN_PATH, DEFAULT_CURATED_SEED_PATH],
+        default=[
+            DEFAULT_CURATED_TRAIN_PATH,
+            DEFAULT_CURATED_SEED_PATH,
+            DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH,
+        ],
         help="Curated JSONL inputs to mix into the final training dataset.",
     )
     parser.add_argument(
@@ -64,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         "--target_profile",
         type=str,
         choices=sorted(TARGET_PROFILES),
-        default="chat_core_vi_en",
+        default="chat_core_vi_en_mail",
         help="Sampling profile to use when balancing the dataset.",
     )
     parser.add_argument(
@@ -125,6 +138,10 @@ def is_mixed_utility(row: dict[str, Any]) -> bool:
     return language == "mixed" or (task_type in MIXED_UTILITY_TASK_TYPES and language in {"vi", "en", "unknown"})
 
 
+def is_email_triage(row: dict[str, Any]) -> bool:
+    return row.get("source") == EMAIL_TRIAGE_SOURCE
+
+
 def distribute_counts(total_rows: int, profile: dict[str, float]) -> dict[str, int]:
     counts = {bucket: int(total_rows * ratio) for bucket, ratio in profile.items()}
     assigned = sum(counts.values())
@@ -171,7 +188,7 @@ def annotate_rows(rows: list[dict[str, Any]], bucket_name: str, profile_name: st
 def build_dataset_rows(
     rows: list[dict[str, Any]],
     *,
-    target_profile: str = "chat_core_vi_en",
+    target_profile: str = "chat_core_vi_en_mail",
     total_rows: int | None = None,
     seed: int = 42,
 ) -> list[dict[str, Any]]:
@@ -188,6 +205,7 @@ def build_dataset_rows(
         "vi_core": [row for row in keep_rows if is_vi_core(row)],
         "en_core": [row for row in keep_rows if is_en_core(row)],
         "mixed_utility": [row for row in keep_rows if is_mixed_utility(row)],
+        "email_triage": [row for row in keep_rows if is_email_triage(row)],
     }
     target_counts = distribute_counts(resolved_total_rows, profile)
 

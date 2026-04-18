@@ -150,6 +150,46 @@ QUESTION_WORDS = (
     "do ",
     "does ",
 )
+EMAIL_TRIAGE_GENERATION_MARKERS = (
+    "email triage",
+    "triage this email",
+    "triage the email",
+    "triage this message",
+    "triage the message",
+    "read this email and return a triage block",
+    "read the email and return a triage block",
+    "đọc email sau và trả về bản triage",
+    "đọc email sau và tạo bản triage",
+    "đọc email sau và đưa ra bản triage",
+    "triage email này",
+)
+EMAIL_SUMMARIZE_MARKERS = (
+    "summarize this email",
+    "summarize the email",
+    "summarize the following email",
+    "tóm tắt email",
+    "tóm tắt nội dung email",
+)
+EMAIL_PRIORITY_MARKERS = (
+    "priority of this email",
+    "priority of the email",
+    "classify the priority",
+    "needs a reply",
+    "reply required",
+    "mức ưu tiên",
+    "độ ưu tiên",
+    "cần phản hồi",
+)
+EMAIL_ACTION_MARKERS = (
+    "action items",
+    "action item",
+    "deadlines",
+    "deadline",
+    "next steps",
+    "việc cần làm",
+    "hạn chót",
+    "hạn cuối",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -239,6 +279,14 @@ def classify_task_type(instruction: str, input_text: str, output: str) -> str:
 
     if any(keyword in instruction_lower for keyword in ("rewrite", "rephrase", "sound more professional", "viết lại")):
         return TASK_TYPE_REWRITE
+    if any(keyword in instruction_lower for keyword in EMAIL_TRIAGE_GENERATION_MARKERS):
+        return TASK_TYPE_GENERATION
+    if any(keyword in instruction_lower for keyword in EMAIL_SUMMARIZE_MARKERS):
+        return TASK_TYPE_SUMMARIZE
+    if any(keyword in instruction_lower for keyword in EMAIL_PRIORITY_MARKERS):
+        return TASK_TYPE_CLASSIFICATION
+    if any(keyword in instruction_lower for keyword in EMAIL_ACTION_MARKERS):
+        return TASK_TYPE_LIST_EXTRACTION
     if any(keyword in instruction_lower for keyword in ("summarize", "summary", "tóm tắt", "briefly summarize")):
         return TASK_TYPE_SUMMARIZE
     if any(

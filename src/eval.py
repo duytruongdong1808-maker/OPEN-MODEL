@@ -46,16 +46,34 @@ except ImportError:
 DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
 DEFAULT_SAMPLE_PROMPTS = [
     {
-        "instruction": "Summarize the value of LoRA in one sentence.",
-        "input": "",
+        "instruction": "Tóm tắt email sau trong một câu ngắn.",
+        "input": (
+            "Chủ đề: Dời lịch họp triển khai\n\n"
+            "Chào cả nhóm,\n\n"
+            "Khách hàng vừa báo họ chưa chốt xong dữ liệu đầu vào nên buổi họp triển khai ngày mai lúc 9h "
+            "cần dời sang 14h cùng ngày. Nhờ Lan cập nhật lại lịch trên calendar và Minh xác nhận phòng họp trước 11h.\n\n"
+            "Cảm ơn."
+        ),
     },
     {
-        "instruction": "Rewrite the message to sound more professional.",
-        "input": "can you send me the report today? i need it before lunch",
+        "instruction": "Classify the priority of this email as high, medium, or low.",
+        "input": (
+            "Subject: Login outage affecting customer renewals\n\n"
+            "Hi support,\n\n"
+            "Our sales team cannot log in to the billing portal and two customer renewals are blocked. "
+            "Please confirm whether engineering is already investigating and share the next update within 30 minutes.\n\n"
+            "Thanks."
+        ),
     },
     {
-        "instruction": "Explain QLoRA simply.",
-        "input": "",
+        "instruction": "Extract the action items and deadlines from this email as a short bullet list.",
+        "input": (
+            "Subject: Demo follow-up tasks\n\n"
+            "Team,\n\n"
+            "Before Friday's client demo, please make sure An updates the slides by Thursday 3 PM, "
+            "Bao verifies the staging build by Thursday 5 PM, and the account lead sends the meeting link by Friday 9 AM.\n\n"
+            "Best,\nOperations"
+        ),
     },
 ]
 

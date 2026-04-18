@@ -57,9 +57,11 @@ open-model-v1/
       train_curated.jsonl
       review_candidates.jsonl
       chat_vi_en_seed_curated.jsonl
+      mail_triage_vi_en_seed_curated.jsonl
       chat_core_vi_en_train.jsonl
     raw/
       chat_vi_en_seed.jsonl
+      mail_triage_vi_en_seed.jsonl
       sample.jsonl
       train.jsonl
     processed/
@@ -72,6 +74,7 @@ open-model-v1/
     build_dataset.py
     curate_data.py
     download_sample_data.py
+    generate_mail_triage_seed.py
     prepare_data.py
     train_lora.py
     merge_adapter.py
@@ -161,7 +164,7 @@ On Windows PowerShell, the equivalent is:
 .\.venv\Scripts\python.exe -X utf8 src\download_sample_data.py
 ```
 
-By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, while `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior.
+By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` now contains 1,000 bilingual email-triage seed samples for summary, priority, action-item extraction, and full triage formatting.
 
 Put your raw source data in `data/raw/train.jsonl`. The new default workflow does not train from raw directly.
 
@@ -185,6 +188,23 @@ data/curated/review_candidates.jsonl
 data/curated/curation_report.json
 ```
 
+To regenerate the committed email-triage raw seed:
+
+```bash
+python src/generate_mail_triage_seed.py --total_rows 1000
+```
+
+Then curate it:
+
+```bash
+python src/curate_data.py \
+  --input_path data/raw/mail_triage_vi_en_seed.jsonl \
+  --output_path data/curated/mail_triage_vi_en_seed_curated.jsonl \
+  --review_path data/curated/mail_triage_vi_en_seed_review.jsonl \
+  --report_path data/curated/mail_triage_vi_en_seed_report.json \
+  --source seed_mail_triage_vi_en
+```
+
 Then build the final chat-core dataset:
 
 ```bash
@@ -196,6 +216,8 @@ This writes:
 ```text
 data/curated/chat_core_vi_en_train.jsonl
 ```
+
+By default the builder now mixes the general curated train set, the bilingual chat seed, and the bilingual email-triage seed with the `chat_core_vi_en_mail` profile.
 
 Then prepare the SFT dataset:
 
