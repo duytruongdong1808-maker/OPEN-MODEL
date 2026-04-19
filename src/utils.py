@@ -484,12 +484,22 @@ def generate_response_from_messages(
             tokenize=False,
             add_generation_prompt=True,
         )
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            padding=False,
-            truncation=False,
-        )
+        try:
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                padding=False,
+                truncation=False,
+            )
+        except TypeError as exc:
+            # Some test doubles or lightweight tokenizer wrappers do not expose
+            # the full Hugging Face tokenizer signature. Fall back only for the
+            # explicit padding/truncation kwargs we added for real tokenizers.
+            if "unexpected keyword argument" not in str(exc) or not any(
+                arg_name in str(exc) for arg_name in ("padding", "truncation")
+            ):
+                raise
+            inputs = tokenizer(prompt, return_tensors="pt")
         device = get_model_input_device(model)
         inputs = {key: value.to(device) for key, value in inputs.items()}
         do_sample = temperature > 0
