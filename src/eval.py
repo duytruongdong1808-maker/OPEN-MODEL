@@ -11,6 +11,7 @@ try:
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
+        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
         get_default_adapter_path,
@@ -19,6 +20,7 @@ try:
         get_runtime_preset_names,
         load_model_and_tokenizer,
         log_runtime_mode,
+        read_jsonl,
         resolve_runtime_preset,
         should_default_to_4bit,
         str_to_bool,
@@ -29,6 +31,7 @@ except ImportError:
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
+        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
         get_default_adapter_path,
@@ -37,42 +40,28 @@ except ImportError:
         get_runtime_preset_names,
         load_model_and_tokenizer,
         log_runtime_mode,
+        read_jsonl,
         resolve_runtime_preset,
         should_default_to_4bit,
         str_to_bool,
     )
-DEFAULT_SAMPLE_PROMPTS = [
-    {
-        "instruction": "Tóm tắt email sau trong một câu ngắn.",
-        "input": (
-            "Chủ đề: Dời lịch họp triển khai\n\n"
-            "Chào cả nhóm,\n\n"
-            "Khách hàng vừa báo họ chưa chốt xong dữ liệu đầu vào nên buổi họp triển khai ngày mai lúc 9h "
-            "cần dời sang 14h cùng ngày. Nhờ Lan cập nhật lại lịch trên calendar và Minh xác nhận phòng họp trước 11h.\n\n"
-            "Cảm ơn."
-        ),
-    },
-    {
-        "instruction": "Classify the priority of this email as high, medium, or low.",
-        "input": (
-            "Subject: Login outage affecting customer renewals\n\n"
-            "Hi support,\n\n"
-            "Our sales team cannot log in to the billing portal and two customer renewals are blocked. "
-            "Please confirm whether engineering is already investigating and share the next update within 30 minutes.\n\n"
-            "Thanks."
-        ),
-    },
-    {
-        "instruction": "Extract the action items and deadlines from this email as a short bullet list.",
-        "input": (
-            "Subject: Demo follow-up tasks\n\n"
-            "Team,\n\n"
-            "Before Friday's client demo, please make sure An updates the slides by Thursday 3 PM, "
-            "Bao verifies the staging build by Thursday 5 PM, and the account lead sends the meeting link by Friday 9 AM.\n\n"
-            "Best,\nOperations"
-        ),
-    },
-]
+
+
+DEFAULT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "smoke.jsonl"
+
+
+def load_eval_prompts(path: Path) -> list[dict[str, str]]:
+    rows = read_jsonl(path)
+    prompts: list[dict[str, str]] = []
+    for index, row in enumerate(rows, start=1):
+        instruction = row.get("instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise ValueError(f"Eval row {index} in {path} is missing a non-empty 'instruction'.")
+        input_text = row.get("input", "") or ""
+        if not isinstance(input_text, str):
+            raise ValueError(f"Eval row {index} in {path} has a non-string 'input'.")
+        prompts.append({"instruction": instruction, "input": input_text})
+    return prompts
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,6 +75,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
     parser.add_argument("--adapter_path", type=Path, default=None)
+    parser.add_argument(
+        "--eval_path",
+        type=Path,
+        default=DEFAULT_EVAL_PATH,
+        help="JSONL file with {instruction, input} rows to evaluate.",
+    )
+    parser.add_argument(
+        "--no_adapter",
+        action="store_true",
+        help="Run the base model only, without loading the LoRA adapter.",
+    )
+    parser.add_argument(
+        "--compare_base",
+        action="store_true",
+        help="For each prompt, print base-model and adapter outputs side by side.",
+    )
     parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
@@ -138,15 +143,22 @@ def main() -> int:
             logger.info("Using preset: %s", args.preset)
         log_runtime_mode(logger, args.load_in_4bit, args.load_in_4bit_was_set)
 
-        if not args.adapter_path.exists():
+        if args.no_adapter and args.compare_base:
+            raise ValueError("--no_adapter and --compare_base cannot be used together.")
+
+        prompts = load_eval_prompts(args.eval_path)
+        logger.info("Loaded %s eval prompts from %s.", len(prompts), args.eval_path)
+
+        load_adapter = not args.no_adapter
+        if load_adapter and not args.adapter_path.exists():
             raise FileNotFoundError(
-                f"Adapter path not found: {args.adapter_path}. Train the model first or pass --adapter_path."
+                f"Adapter path not found: {args.adapter_path}. Train the model first, pass --adapter_path, or use --no_adapter."
             )
 
         model, tokenizer = load_model_and_tokenizer(
             base_model=args.base_model,
             model_revision=args.model_revision,
-            adapter_path=str(args.adapter_path),
+            adapter_path=str(args.adapter_path) if load_adapter else None,
             load_in_4bit=args.load_in_4bit,
         )
         logger.debug("eval args: %s", vars(args))
@@ -168,8 +180,8 @@ def main() -> int:
             },
         )
 
-        for index, sample in enumerate(DEFAULT_SAMPLE_PROMPTS, start=1):
-            response = generate_response(
+        def run_prompt(sample: dict[str, str]) -> str:
+            return generate_response(
                 model=model,
                 tokenizer=tokenizer,
                 instruction=sample["instruction"],
@@ -178,11 +190,22 @@ def main() -> int:
                 temperature=args.temperature,
                 top_p=args.top_p,
             )
+
+        for index, sample in enumerate(prompts, start=1):
             logger.info("=== Sample %s ===", index)
             logger.info("Instruction: %s", sample["instruction"])
             if sample["input"]:
                 logger.info("Input: %s", sample["input"])
-            logger.info("Response: %s", response)
+
+            if args.compare_base:
+                with model.disable_adapter():
+                    base_response = run_prompt(sample)
+                adapter_response = run_prompt(sample)
+                logger.info("[base]    %s", base_response)
+                logger.info("[adapter] %s", adapter_response)
+            else:
+                label = "base" if args.no_adapter else "adapter"
+                logger.info("[%s] %s", label, run_prompt(sample))
         return 0
     except ModuleNotFoundError as exc:
         get_logger().error("[eval] Error: %s", format_missing_dependency_error(exc))

@@ -45,15 +45,15 @@ DEFAULT_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
 DEFAULT_VAL_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
 
 
-def validate_val_ratio(value: str) -> float:
-    ratio = float(value)
-    if not 0.0 <= ratio < 1.0:
-        raise argparse.ArgumentTypeError("--val_ratio must be in the range [0.0, 1.0).")
-    return ratio
+def validate_val_split(value: str) -> float:
+    split = float(value)
+    if not 0.0 <= split < 1.0:
+        raise argparse.ArgumentTypeError("--val_split must be in the range [0.0, 1.0).")
+    return split
 
 
-def should_use_validation_split(row: dict[str, str], seed: int, val_ratio: float) -> bool:
-    if val_ratio <= 0:
+def should_use_validation_split(row: dict[str, str], seed: int, val_split: float) -> bool:
+    if val_split <= 0:
         return False
 
     split_key = json.dumps(
@@ -67,7 +67,7 @@ def should_use_validation_split(row: dict[str, str], seed: int, val_ratio: float
     )
     digest = hashlib.sha256(f"{seed}:{split_key}".encode("utf-8")).digest()
     bucket = int.from_bytes(digest[:8], byteorder="big") / float(1 << 64)
-    return bucket < val_ratio
+    return bucket < val_split
 
 
 def write_dataset_metadata(
@@ -130,8 +130,10 @@ def parse_args() -> argparse.Namespace:
         help="System prompt to bake into processed prompts.",
     )
     parser.add_argument(
+        "--val_split",
         "--val_ratio",
-        type=validate_val_ratio,
+        dest="val_split",
+        type=validate_val_split,
         default=0.05,
         help="Deterministic validation split ratio. Use 0 for train-only smoke tests.",
     )
@@ -181,7 +183,7 @@ def main() -> int:
                 )
             except ValueError as exc:
                 raise ValueError(f"Invalid training row at index {index}: {exc}") from exc
-            if should_use_validation_split(processed_row, seed=args.seed, val_ratio=args.val_ratio):
+            if should_use_validation_split(processed_row, seed=args.seed, val_split=args.val_split):
                 val_rows.append(processed_row)
             else:
                 train_rows.append(processed_row)

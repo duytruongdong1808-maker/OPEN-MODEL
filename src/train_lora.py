@@ -90,12 +90,13 @@ except ImportError:
 
 
 DEFAULT_DATASET_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
-DEFAULT_EVAL_DATASET_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
+DEFAULT_VAL_DATASET_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
 DEFAULT_MAX_LENGTH = 512
 DEFAULT_REPORT_TO = "none"
 TRAIN_CONFIG_FIELDS = {
     "base_model",
     "dataset_path",
+    "val_dataset_path",
     "eval_dataset_path",
     "output_dir",
     "preset",
@@ -132,22 +133,25 @@ def load_training_config(config_path: Path | None) -> dict[str, object]:
         return {}
 
     raw_config = read_yaml_dict(config_path)
+    if "val_dataset_path" in raw_config and "eval_dataset_path" in raw_config:
+        raise ValueError("Use only one of val_dataset_path or eval_dataset_path in the training config.")
     unknown_keys = sorted(set(raw_config) - TRAIN_CONFIG_FIELDS)
     if unknown_keys:
         raise ValueError(f"Unknown training config keys: {', '.join(unknown_keys)}")
 
     normalized_config: dict[str, object] = {}
     for key, value in raw_config.items():
-        if key in {"dataset_path", "eval_dataset_path", "output_dir"} and value is not None:
-            normalized_config[key] = Path(value)
+        normalized_key = "val_dataset_path" if key == "eval_dataset_path" else key
+        if normalized_key in {"dataset_path", "val_dataset_path", "output_dir"} and value is not None:
+            normalized_config[normalized_key] = Path(value)
         elif key == "load_in_4bit" and value is not None:
-            normalized_config[key] = str_to_bool(value)
+            normalized_config[normalized_key] = str_to_bool(value)
         elif key == "log_level" and value is not None:
-            normalized_config[key] = str(value).upper()
+            normalized_config[normalized_key] = str(value).upper()
         elif key == "report_to" and value is not None:
-            normalized_config[key] = str(value).lower()
+            normalized_config[normalized_key] = str(value).lower()
         else:
-            normalized_config[key] = value
+            normalized_config[normalized_key] = value
 
     if normalized_config.get("preset") not in {None, *get_runtime_preset_names()}:
         raise ValueError(f"Unknown preset in config: {normalized_config['preset']}")
@@ -168,9 +172,11 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
         default=config_defaults.get("dataset_path", DEFAULT_DATASET_PATH),
     )
     parser.add_argument(
+        "--val_dataset_path",
         "--eval_dataset_path",
+        dest="val_dataset_path",
         type=Path,
-        default=config_defaults.get("eval_dataset_path", DEFAULT_EVAL_DATASET_PATH),
+        default=config_defaults.get("val_dataset_path", DEFAULT_VAL_DATASET_PATH),
     )
     parser.add_argument(
         "--output_dir",
@@ -323,8 +329,8 @@ def validate_environment(args: argparse.Namespace, logger) -> int:
         )
 
     validate_dataset_metadata("train", args.dataset_path, args.base_model, logger)
-    if jsonl_has_rows(args.eval_dataset_path):
-        validate_dataset_metadata("validation", args.eval_dataset_path, args.base_model, logger)
+    if jsonl_has_rows(args.val_dataset_path):
+        validate_dataset_metadata("validation", args.val_dataset_path, args.base_model, logger)
 
     dataset_size = count_jsonl_rows(args.dataset_path)
     optimizer_steps = estimate_optimizer_steps(args, dataset_size)
@@ -441,10 +447,10 @@ def main() -> int:
         dataset = load_dataset("json", data_files=str(args.dataset_path), split="train")
         assert_response_template_present(dataset, logger)
         eval_dataset = None
-        if jsonl_has_rows(args.eval_dataset_path):
-            eval_dataset = load_dataset("json", data_files=str(args.eval_dataset_path), split="train")
+        if jsonl_has_rows(args.val_dataset_path):
+            eval_dataset = load_dataset("json", data_files=str(args.val_dataset_path), split="train")
         else:
-            logger.warning("Validation dataset not found or empty at: %s. Skipping eval.", args.eval_dataset_path)
+            logger.warning("Validation dataset not found or empty at: %s. Skipping eval.", args.val_dataset_path)
         model = load_model(args, tokenizer)
         logger.debug("train_lora args: %s", vars(args))
         logger.debug(
@@ -456,7 +462,7 @@ def main() -> int:
                 "pad_token_id": tokenizer.pad_token_id,
                 "padding_side": tokenizer.padding_side,
                 "dataset_path": str(args.dataset_path),
-                "eval_dataset_path": str(args.eval_dataset_path),
+                "val_dataset_path": str(args.val_dataset_path),
                 "config": str(args.config) if args.config else None,
             },
         )
@@ -495,8 +501,8 @@ def main() -> int:
             seed=args.seed,
             data_seed=args.seed,
             logging_steps=args.logging_steps,
-            eval_strategy="steps" if eval_enabled else "no",
-            eval_steps=args.save_steps if eval_enabled else None,
+            eval_strategy="epoch" if eval_enabled else "no",
+            eval_steps=None,
             save_steps=args.save_steps,
             save_strategy="steps",
             save_total_limit=args.save_total_limit,

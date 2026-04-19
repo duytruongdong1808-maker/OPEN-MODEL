@@ -19,6 +19,7 @@ from src.curate_data import (
     detect_language,
     normalize_text,
 )
+from src.prepare_data import parse_args as parse_prepare_data_args
 from src.generate_mail_triage_seed import DEFAULT_TOTAL_ROWS, build_rows as build_mail_triage_seed_rows
 from src.utils import (
     DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH,
@@ -309,3 +310,21 @@ def test_render_training_record_accepts_curated_metadata_fields() -> None:
 
     assert rendered["completion"].endswith("<eos>")
     assert "prompt" in rendered
+
+
+def test_prepare_data_accepts_val_split_and_val_ratio_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prepare_data.py", "--val_split", "0.2"],
+    )
+    args = parse_prepare_data_args()
+    assert args.val_split == 0.2
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prepare_data.py", "--val_ratio", "0.3"],
+    )
+    args = parse_prepare_data_args()
+    assert args.val_split == 0.3
