@@ -11,9 +11,9 @@ try:
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
+        get_default_adapter_path,
         generate_response,
         get_logger,
         get_runtime_preset_names,
@@ -29,9 +29,9 @@ except ImportError:
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
+        get_default_adapter_path,
         generate_response,
         get_logger,
         get_runtime_preset_names,
@@ -41,9 +41,6 @@ except ImportError:
         should_default_to_4bit,
         str_to_bool,
     )
-
-
-DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
 DEFAULT_SAMPLE_PROMPTS = [
     {
         "instruction": "Tóm tắt email sau trong một câu ngắn.",
@@ -88,7 +85,7 @@ def parse_args() -> argparse.Namespace:
         help=f"Optional hardware preset, for example {DEFAULT_RUNTIME_PRESET}.",
     )
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
-    parser.add_argument("--adapter_path", type=Path, default=DEFAULT_ADAPTER_PATH)
+    parser.add_argument("--adapter_path", type=Path, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
@@ -125,6 +122,8 @@ def parse_args() -> argparse.Namespace:
     for field_name, field_value in preset_defaults.items():
         if getattr(args, field_name) is None:
             setattr(args, field_name, field_value)
+    if args.adapter_path is None:
+        args.adapter_path = get_default_adapter_path(args.base_model)
     return args
 
 

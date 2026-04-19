@@ -8,9 +8,9 @@ try:
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
+        get_default_adapter_path,
         get_compute_dtype,
         get_logger,
         load_tokenizer,
@@ -22,24 +22,19 @@ except ImportError:
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
+        get_default_adapter_path,
         get_compute_dtype,
         get_logger,
         load_tokenizer,
         resolve_model_revision,
         sync_model_tokenizer_padding,
     )
-
-
-DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge a LoRA adapter into the base model.")
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
-    parser.add_argument("--adapter_path", type=Path, default=DEFAULT_ADAPTER_PATH)
+    parser.add_argument("--adapter_path", type=Path, default=None)
     parser.add_argument("--output_dir", type=Path, default=None)
     parser.add_argument("--model_revision", type=str, default=None)
     parser.add_argument(
@@ -49,7 +44,10 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_LOG_LEVEL,
         help="Logging verbosity.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.adapter_path is None:
+        args.adapter_path = get_default_adapter_path(args.base_model)
+    return args
 
 
 def resolve_output_dir(adapter_path: Path, output_dir: Path | None) -> Path:

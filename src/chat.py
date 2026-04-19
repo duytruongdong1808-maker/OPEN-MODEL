@@ -10,10 +10,10 @@ try:
         DEFAULT_RUNTIME_PRESET,
         DEFAULT_SYSTEM_PROMPT,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_user_message,
         format_missing_dependency_error,
+        get_default_adapter_path,
         generate_response_from_messages,
         get_logger,
         get_runtime_preset_names,
@@ -31,10 +31,10 @@ except ImportError:
         DEFAULT_RUNTIME_PRESET,
         DEFAULT_SYSTEM_PROMPT,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_user_message,
         format_missing_dependency_error,
+        get_default_adapter_path,
         generate_response_from_messages,
         get_logger,
         get_runtime_preset_names,
@@ -45,11 +45,6 @@ except ImportError:
         should_default_to_4bit,
         str_to_bool,
     )
-
-
-DEFAULT_ADAPTER_PATH = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start a basic local chat loop with the fine-tuned model.")
     parser.add_argument(
@@ -60,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         help=f"Optional hardware preset, for example {DEFAULT_RUNTIME_PRESET}.",
     )
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)
-    parser.add_argument("--adapter_path", type=Path, default=DEFAULT_ADAPTER_PATH)
+    parser.add_argument("--adapter_path", type=Path, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
@@ -93,6 +88,8 @@ def parse_args() -> argparse.Namespace:
     for field_name, field_value in preset_defaults.items():
         if getattr(args, field_name) is None:
             setattr(args, field_name, field_value)
+    if args.adapter_path is None:
+        args.adapter_path = get_default_adapter_path(args.base_model)
     return args
 
 

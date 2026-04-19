@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -14,6 +15,7 @@ try:
         LOG_LEVEL_NAMES,
         ROOT_DIR,
         configure_logging,
+        get_dataset_metadata_path,
         get_logger,
         load_tokenizer,
         read_jsonl,
@@ -29,6 +31,7 @@ except ImportError:
         LOG_LEVEL_NAMES,
         ROOT_DIR,
         configure_logging,
+        get_dataset_metadata_path,
         get_logger,
         load_tokenizer,
         read_jsonl,
@@ -65,6 +68,25 @@ def should_use_validation_split(row: dict[str, str], seed: int, val_ratio: float
     digest = hashlib.sha256(f"{seed}:{split_key}".encode("utf-8")).digest()
     bucket = int.from_bytes(digest[:8], byteorder="big") / float(1 << 64)
     return bucket < val_ratio
+
+
+def write_dataset_metadata(
+    dataset_path: Path,
+    *,
+    base_model: str,
+    system_prompt: str,
+    n_examples: int,
+) -> Path:
+    metadata_path = get_dataset_metadata_path(dataset_path)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "base_model": base_model,
+        "system_prompt": system_prompt,
+        "prepared_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "n_examples": n_examples,
+    }
+    metadata_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return metadata_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,12 +188,26 @@ def main() -> int:
 
         write_jsonl(args.output_path, train_rows)
         write_jsonl(args.val_output_path, val_rows)
+        train_metadata_path = write_dataset_metadata(
+            args.output_path,
+            base_model=args.base_model,
+            system_prompt=args.system_prompt,
+            n_examples=len(train_rows),
+        )
+        val_metadata_path = write_dataset_metadata(
+            args.val_output_path,
+            base_model=args.base_model,
+            system_prompt=args.system_prompt,
+            n_examples=len(val_rows),
+        )
 
         logger.info("Processed %s examples.", len(raw_rows))
         logger.info("Training rows: %s", len(train_rows))
         logger.info("Validation rows: %s", len(val_rows))
         logger.info("Saved processed train dataset to: %s", args.output_path.resolve())
         logger.info("Saved processed validation dataset to: %s", args.val_output_path.resolve())
+        logger.info("Saved train metadata to: %s", train_metadata_path)
+        logger.info("Saved validation metadata to: %s", val_metadata_path)
         logger.info("Tokenizer/model template source: %s", args.base_model)
         if args.model_revision:
             logger.info("Tokenizer/model revision override: %s", args.model_revision)

@@ -49,6 +49,8 @@ try:
         collect_cli_option_names,
         configure_logging,
         get_compute_dtype,
+        get_default_lora_output_dir,
+        get_dataset_metadata_path,
         get_logger,
         get_runtime_preset_names,
         load_tokenizer,
@@ -72,6 +74,8 @@ except ImportError:
         collect_cli_option_names,
         configure_logging,
         get_compute_dtype,
+        get_default_lora_output_dir,
+        get_dataset_metadata_path,
         get_logger,
         get_runtime_preset_names,
         load_tokenizer,
@@ -87,7 +91,6 @@ except ImportError:
 
 DEFAULT_DATASET_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
 DEFAULT_EVAL_DATASET_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora"
 DEFAULT_MAX_LENGTH = 512
 DEFAULT_REPORT_TO = "none"
 TRAIN_CONFIG_FIELDS = {
@@ -124,8 +127,6 @@ DEFAULT_TARGET_MODULES = [
     "up_proj",
     "down_proj",
 ]
-
-
 def load_training_config(config_path: Path | None) -> dict[str, object]:
     if config_path is None:
         return {}
@@ -174,7 +175,7 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
     parser.add_argument(
         "--output_dir",
         type=Path,
-        default=config_defaults.get("output_dir", DEFAULT_OUTPUT_DIR),
+        default=config_defaults.get("output_dir"),
     )
     parser.add_argument(
         "--preset",
@@ -262,6 +263,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for field_name, field_value in preset_defaults.items():
         if getattr(args, field_name) is None:
             setattr(args, field_name, field_value)
+    if args.output_dir is None:
+        args.output_dir = get_default_lora_output_dir(args.base_model)
     return args
 
 
@@ -280,11 +283,48 @@ def estimate_optimizer_steps(args: argparse.Namespace, dataset_size: int) -> int
     return max(1, math.ceil(total_micro_batches / args.gradient_accumulation_steps))
 
 
+def load_dataset_metadata(dataset_path: Path) -> tuple[Path, dict[str, object] | None]:
+    metadata_path = get_dataset_metadata_path(dataset_path)
+    if not metadata_path.exists():
+        return metadata_path, None
+
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid dataset metadata JSON: {metadata_path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Dataset metadata must be a JSON object: {metadata_path}")
+    return metadata_path, payload
+
+
+def validate_dataset_metadata(dataset_label: str, dataset_path: Path, expected_base_model: str, logger) -> None:
+    metadata_path, metadata = load_dataset_metadata(dataset_path)
+    if metadata is None:
+        logger.warning(
+            "Metadata sidecar not found for %s dataset: %s. Skipping base-model consistency check.",
+            dataset_label,
+            metadata_path,
+        )
+        return
+
+    prepared_base_model = metadata.get("base_model")
+    if prepared_base_model != expected_base_model:
+        raise ValueError(
+            f"{dataset_label.capitalize()} dataset base_model mismatch: dataset at {dataset_path} "
+            f"was prepared with {prepared_base_model!r}, but training requested {expected_base_model!r}. "
+            "Re-run src/prepare_data.py with the matching --base_model before training."
+        )
+
+
 def validate_environment(args: argparse.Namespace, logger) -> int:
     if not jsonl_has_rows(args.dataset_path):
         raise FileNotFoundError(
             f"Processed dataset not found: {args.dataset_path}. Run src/prepare_data.py first."
         )
+
+    validate_dataset_metadata("train", args.dataset_path, args.base_model, logger)
+    if jsonl_has_rows(args.eval_dataset_path):
+        validate_dataset_metadata("validation", args.eval_dataset_path, args.base_model, logger)
 
     dataset_size = count_jsonl_rows(args.dataset_path)
     optimizer_steps = estimate_optimizer_steps(args, dataset_size)

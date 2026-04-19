@@ -173,6 +173,8 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 def write_jsonl(path: str | Path, rows: list[dict[str, Any]]) -> None:
     ensure_parent_dir(path)
     output_path = Path(path).expanduser().resolve()
+    if output_path.exists():
+        get_logger().warning("Overwriting existing JSONL file: %s", output_path)
 
     with output_path.open("w", encoding="utf-8") as handle:
         for row in rows:
@@ -215,6 +217,26 @@ def trim_chat_messages(messages: list[dict[str, str]], max_history_turns: int) -
     if system_message:
         return [system_message, *trimmed_conversation]
     return trimmed_conversation
+
+
+def get_model_slug(model_name: str) -> str:
+    normalized = model_name.strip().rstrip("/\\").replace("\\", "/")
+    if not normalized:
+        raise ValueError("Model name cannot be empty.")
+    return normalized.split("/")[-1]
+
+
+def get_default_lora_output_dir(base_model: str) -> Path:
+    return ROOT_DIR / "outputs" / get_model_slug(base_model) / "lora"
+
+
+def get_default_adapter_path(base_model: str) -> Path:
+    return get_default_lora_output_dir(base_model) / "final_adapter"
+
+
+def get_dataset_metadata_path(dataset_path: str | Path) -> Path:
+    resolved_path = Path(dataset_path).expanduser().resolve()
+    return resolved_path.with_name(f"{resolved_path.name}.metadata.json")
 
 
 def resolve_model_revision(
@@ -377,10 +399,22 @@ def load_model_and_tokenizer(
     from transformers import AutoModelForCausalLM
 
     resolved_revision = resolve_model_revision(base_model, model_revision)
-    tokenizer = load_tokenizer(base_model, model_revision=resolved_revision)
+    tokenizer_source = base_model
+    tokenizer_revision = resolved_revision
     model_kwargs: dict[str, Any] = {"trust_remote_code": False}
     compute_dtype = get_compute_dtype()
     use_4bit = should_default_to_4bit() if load_in_4bit is None else load_in_4bit
+
+    adapter_dir: Path | None = None
+    if adapter_path:
+        adapter_dir = Path(adapter_path).expanduser().resolve()
+        if not adapter_dir.exists():
+            raise FileNotFoundError(f"Adapter directory not found: {adapter_dir}")
+        if (adapter_dir / "tokenizer_config.json").exists():
+            tokenizer_source = str(adapter_dir)
+            tokenizer_revision = None
+
+    tokenizer = load_tokenizer(tokenizer_source, model_revision=tokenizer_revision)
 
     if torch.cuda.is_available():
         if use_4bit:
@@ -399,10 +433,7 @@ def load_model_and_tokenizer(
     )
     sync_model_tokenizer_padding(model, tokenizer)
 
-    if adapter_path:
-        adapter_dir = Path(adapter_path).expanduser().resolve()
-        if not adapter_dir.exists():
-            raise FileNotFoundError(f"Adapter directory not found: {adapter_dir}")
+    if adapter_dir is not None:
         model = PeftModel.from_pretrained(model, str(adapter_dir))
 
     model.eval()
@@ -453,7 +484,12 @@ def generate_response_from_messages(
             tokenize=False,
             add_generation_prompt=True,
         )
-        inputs = tokenizer(prompt, return_tensors="pt")
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            padding=False,
+            truncation=False,
+        )
         device = get_model_input_device(model)
         inputs = {key: value.to(device) for key, value in inputs.items()}
         do_sample = temperature > 0
