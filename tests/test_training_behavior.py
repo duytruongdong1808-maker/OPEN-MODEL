@@ -48,8 +48,9 @@ def test_train_script_utf8_restart_respects_python_utf8_flag() -> None:
     assert should_reexec_train_script(source)
 
 
-def test_train_script_supports_val_dataset_path_and_epoch_eval() -> None:
+def test_train_script_supports_val_dataset_path_and_step_eval() -> None:
     source = (ROOT_DIR / "src/train_lora.py").read_text(encoding="utf-8")
 
     assert "--val_dataset_path" in source
-    assert 'eval_strategy="epoch" if eval_enabled else "no"' in source
+    assert 'eval_strategy="steps" if eval_enabled else "no"' in source
+    assert 'eval_steps=args.save_steps if eval_enabled else None' in source

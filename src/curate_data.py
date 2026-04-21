@@ -8,6 +8,17 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .email_triage import (
+        MAIL_DOMAINS,
+        ParsedTriage,
+        canonical_priority,
+        contains_bad_mail_pattern,
+        count_summary_sentences,
+        output_tokens_supported_by_input,
+        parse_action_extraction_output,
+        parse_full_triage_output,
+        validate_parsed_triage,
+    )
     from .utils import (
         DEFAULT_CURATION_REPORT_PATH,
         DEFAULT_CURATED_REVIEW_PATH,
@@ -24,6 +35,17 @@ try:
         write_jsonl,
     )
 except ImportError:
+    from email_triage import (
+        MAIL_DOMAINS,
+        ParsedTriage,
+        canonical_priority,
+        contains_bad_mail_pattern,
+        count_summary_sentences,
+        output_tokens_supported_by_input,
+        parse_action_extraction_output,
+        parse_full_triage_output,
+        validate_parsed_triage,
+    )
     from utils import (
         DEFAULT_CURATION_REPORT_PATH,
         DEFAULT_CURATED_REVIEW_PATH,
@@ -190,6 +212,87 @@ EMAIL_ACTION_MARKERS = (
     "hạn chót",
     "hạn cuối",
 )
+
+
+def get_language_override(row: dict[str, Any]) -> str | None:
+    raw_language = row.get("language")
+    if not isinstance(raw_language, str):
+        return None
+    normalized = raw_language.strip().lower()
+    if normalized in {"vi", "en", "mixed", "unknown"}:
+        return normalized
+    return None
+
+
+def get_domain_override(row: dict[str, Any]) -> str | None:
+    raw_domain = row.get("domain")
+    if not isinstance(raw_domain, str):
+        return None
+    normalized = raw_domain.strip().lower()
+    if normalized in MAIL_DOMAINS:
+        return normalized
+    return None
+
+
+def validate_mail_output(
+    instruction: str,
+    input_text: str,
+    output: str,
+) -> tuple[list[str], list[str]]:
+    instruction_lower = instruction.lower()
+    review_flags: list[str] = []
+    drop_flags: list[str] = []
+
+    if contains_bad_mail_pattern(output):
+        drop_flags.append("mail_placeholder_leakage")
+        return review_flags, drop_flags
+
+    if any(keyword in instruction_lower for keyword in EMAIL_TRIAGE_GENERATION_MARKERS):
+        try:
+            parsed = parse_full_triage_output(output)
+        except ValueError:
+            drop_flags.append("mail_malformed_triage_block")
+            return review_flags, drop_flags
+
+        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(parsed, input_text=input_text)
+        review_flags.extend(parsed_review_flags)
+        drop_flags.extend(parsed_drop_flags)
+        return review_flags, drop_flags
+
+    if any(keyword in instruction_lower for keyword in EMAIL_ACTION_MARKERS):
+        try:
+            parsed = parse_action_extraction_output(output)
+        except ValueError:
+            drop_flags.append("mail_malformed_action_output")
+            return review_flags, drop_flags
+
+        proxy_triage = ParsedTriage(
+            summary="mail action validation",
+            priority="medium",
+            action_items=parsed.action_items,
+            deadlines=parsed.deadlines,
+            language=parsed.language,
+        )
+        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(proxy_triage, input_text=input_text)
+        review_flags.extend(flag for flag in parsed_review_flags if flag not in {"mail_summary_not_single_sentence"})
+        drop_flags.extend(parsed_drop_flags)
+        return review_flags, drop_flags
+
+    if any(keyword in instruction_lower for keyword in EMAIL_PRIORITY_MARKERS):
+        if canonical_priority(output) is None:
+            drop_flags.append("mail_invalid_priority")
+        return review_flags, drop_flags
+
+    if any(keyword in instruction_lower for keyword in EMAIL_SUMMARIZE_MARKERS):
+        if "\n" in output:
+            review_flags.append("mail_summary_multiline")
+        if count_summary_sentences(output) != 1:
+            review_flags.append("mail_summary_not_single_sentence")
+        if not output_tokens_supported_by_input([output], input_text):
+            review_flags.append("mail_summary_not_in_input")
+        return review_flags, drop_flags
+
+    return review_flags, drop_flags
 
 
 def parse_args() -> argparse.Namespace:
@@ -403,36 +506,44 @@ def score_row_quality(
 
 def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
     flags: list[str] = []
+    domain_override = get_domain_override(row)
+    language_override = get_language_override(row)
 
     try:
         instruction = coerce_required_text(row.get("instruction"), "instruction")
     except ValueError:
-        return {
+        curated_row = {
             "instruction": normalize_text(str(row.get("instruction", "") or "")),
             "input": normalize_text(str(row.get("input", "") or "")),
             "output": normalize_text(str(row.get("output", "") or "")),
             "task_type": TASK_TYPE_OTHER,
-            "language": "unknown",
+            "language": language_override or "unknown",
             "quality_score": 0,
             "flags": ["missing_instruction"],
             "source": source,
             "action": "drop",
         }
+        if domain_override:
+            curated_row["domain"] = domain_override
+        return curated_row
 
     try:
         output = coerce_required_text(row.get("output"), "output")
     except ValueError:
-        return {
+        curated_row = {
             "instruction": normalize_text(instruction),
             "input": normalize_text(str(row.get("input", "") or "")),
             "output": normalize_text(str(row.get("output", "") or "")),
             "task_type": classify_task_type(instruction, "", ""),
-            "language": detect_language(instruction),
+            "language": language_override or detect_language(instruction),
             "quality_score": 0,
             "flags": ["missing_output"],
             "source": source,
             "action": "drop",
         }
+        if domain_override:
+            curated_row["domain"] = domain_override
+        return curated_row
 
     input_text = coerce_optional_text(row.get("input", ""), "input")
     instruction = normalize_text(instruction)
@@ -447,7 +558,7 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         flags.append("mojibake_detected")
 
     task_type = classify_task_type(instruction, input_text, output)
-    language = detect_language(instruction, input_text, output)
+    language = language_override or detect_language(instruction, input_text, output)
     quality_score, review_flags, drop_flags = score_row_quality(
         instruction=instruction,
         input_text=input_text,
@@ -458,14 +569,22 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
     flags.extend(review_flags)
     flags.extend(drop_flags)
 
-    if drop_flags or quality_score < 45:
+    mail_review_flags, mail_drop_flags = validate_mail_output(
+        instruction=instruction,
+        input_text=input_text,
+        output=output,
+    )
+    flags.extend(mail_review_flags)
+    flags.extend(mail_drop_flags)
+
+    if drop_flags or mail_drop_flags or quality_score < 45:
         action = "drop"
-    elif review_flags or quality_score < 75:
+    elif review_flags or mail_review_flags or quality_score < 75:
         action = "review"
     else:
         action = "keep"
 
-    return {
+    curated_row = {
         "instruction": instruction,
         "input": input_text,
         "output": output,
@@ -476,12 +595,16 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         "source": source,
         "action": action,
     }
+    if domain_override:
+        curated_row["domain"] = domain_override
+    return curated_row
 
 
 def build_report(curated_rows: list[dict[str, Any]]) -> dict[str, Any]:
     action_counts = Counter(row["action"] for row in curated_rows)
     task_counts = Counter(row["task_type"] for row in curated_rows if row["action"] == "keep")
     language_counts = Counter(row["language"] for row in curated_rows if row["action"] == "keep")
+    domain_counts = Counter(row["domain"] for row in curated_rows if row["action"] == "keep" and row.get("domain"))
     mojibake_rows = sum(1 for row in curated_rows if any("mojibake" in flag for flag in row["flags"]))
     review_reason_counts = Counter(
         flag
@@ -503,6 +626,7 @@ def build_report(curated_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mojibake_rows": mojibake_rows,
         "task_type_distribution": dict(task_counts),
         "language_distribution": dict(language_counts),
+        "domain_distribution": dict(domain_counts),
         "top_review_reasons": review_reason_counts.most_common(10),
         "top_drop_reasons": drop_reason_counts.most_common(10),
     }

@@ -6,6 +6,7 @@ from pathlib import Path
 from transformers import set_seed
 
 try:
+    from .email_triage import ParsedTriage, score_triage_output
     from .utils import (
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
@@ -26,6 +27,7 @@ try:
         str_to_bool,
     )
 except ImportError:
+    from email_triage import ParsedTriage, score_triage_output
     from utils import (
         DEFAULT_BASE_MODEL,
         DEFAULT_LOG_LEVEL,
@@ -50,9 +52,40 @@ except ImportError:
 DEFAULT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "smoke.jsonl"
 
 
-def load_eval_prompts(path: Path) -> list[dict[str, str]]:
+def parse_expected_triage(row: dict[str, object], *, index: int, path: Path) -> ParsedTriage:
+    expected = row.get("expected")
+    if not isinstance(expected, dict):
+        raise ValueError(f"Eval row {index} in {path} must include an object 'expected'.")
+
+    summary = expected.get("summary")
+    priority = expected.get("priority")
+    action_items = expected.get("action_items")
+    deadlines = expected.get("deadlines")
+    language = row.get("language", "en")
+
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError(f"Eval row {index} in {path} has an invalid expected.summary.")
+    if not isinstance(priority, str) or not priority.strip():
+        raise ValueError(f"Eval row {index} in {path} has an invalid expected.priority.")
+    if not isinstance(action_items, list) or not all(isinstance(item, str) and item.strip() for item in action_items):
+        raise ValueError(f"Eval row {index} in {path} has an invalid expected.action_items.")
+    if not isinstance(deadlines, list) or not all(isinstance(item, str) and item.strip() for item in deadlines):
+        raise ValueError(f"Eval row {index} in {path} has an invalid expected.deadlines.")
+    if not isinstance(language, str) or not language.strip():
+        raise ValueError(f"Eval row {index} in {path} has an invalid language.")
+
+    return ParsedTriage(
+        summary=summary.strip(),
+        priority=priority.strip(),
+        action_items=[item.strip() for item in action_items],
+        deadlines=[item.strip() for item in deadlines],
+        language=language.strip(),
+    )
+
+
+def load_eval_prompts(path: Path) -> list[dict[str, object]]:
     rows = read_jsonl(path)
-    prompts: list[dict[str, str]] = []
+    prompts: list[dict[str, object]] = []
     for index, row in enumerate(rows, start=1):
         instruction = row.get("instruction")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -60,7 +93,12 @@ def load_eval_prompts(path: Path) -> list[dict[str, str]]:
         input_text = row.get("input", "") or ""
         if not isinstance(input_text, str):
             raise ValueError(f"Eval row {index} in {path} has a non-string 'input'.")
-        prompts.append({"instruction": instruction, "input": input_text})
+        prompt: dict[str, object] = {"instruction": instruction, "input": input_text}
+        if "expected" in row:
+            prompt["expected"] = parse_expected_triage(row, index=index, path=path)
+            prompt["domain"] = row.get("domain")
+            prompt["language"] = row.get("language")
+        prompts.append(prompt)
     return prompts
 
 
@@ -191,6 +229,7 @@ def main() -> int:
                 top_p=args.top_p,
             )
 
+        triage_scores = []
         for index, sample in enumerate(prompts, start=1):
             logger.info("=== Sample %s ===", index)
             logger.info("Instruction: %s", sample["instruction"])
@@ -205,7 +244,34 @@ def main() -> int:
                 logger.info("[adapter] %s", adapter_response)
             else:
                 label = "base" if args.no_adapter else "adapter"
-                logger.info("[%s] %s", label, run_prompt(sample))
+                response = run_prompt(sample)
+                logger.info("[%s] %s", label, response)
+                expected = sample.get("expected")
+                if isinstance(expected, ParsedTriage):
+                    score = score_triage_output(expected=expected, actual_text=response)
+                    triage_scores.append(score)
+                    logger.info(
+                        "[triage-score] parse=%s summary=%s priority=%s actions=%s deadlines=%s",
+                        score.parse_success,
+                        score.summary_match,
+                        score.priority_match,
+                        score.action_items_match,
+                        score.deadlines_match,
+                    )
+
+        if triage_scores:
+            total = len(triage_scores)
+            parse_successes = sum(1 for score in triage_scores if score.parse_success)
+            summary_matches = sum(1 for score in triage_scores if score.summary_match)
+            priority_matches = sum(1 for score in triage_scores if score.priority_match)
+            action_matches = sum(1 for score in triage_scores if score.action_items_match)
+            deadline_matches = sum(1 for score in triage_scores if score.deadlines_match)
+            logger.info("=== Aggregate triage metrics ===")
+            logger.info("Parse success: %s/%s", parse_successes, total)
+            logger.info("Summary match: %s/%s", summary_matches, total)
+            logger.info("Priority match: %s/%s", priority_matches, total)
+            logger.info("Action items match: %s/%s", action_matches, total)
+            logger.info("Deadlines match: %s/%s", deadline_matches, total)
         return 0
     except ModuleNotFoundError as exc:
         get_logger().error("[eval] Error: %s", format_missing_dependency_error(exc))

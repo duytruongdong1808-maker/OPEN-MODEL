@@ -47,9 +47,18 @@ TARGET_PROFILES = {
         "mixed_utility": 0.15,
         "email_triage": 0.30,
     },
+    "mail_triage_en_ops_support": {
+        "mail_en_ops_support": 0.50,
+        "mail_vi_ops_support": 0.20,
+        "mail_other": 0.10,
+        "general_concise": 0.10,
+        "mixed_utility": 0.10,
+    },
 }
 MIXED_UTILITY_TASK_TYPES = {"summarize", "classification", "list_extraction", "generation"}
 EMAIL_TRIAGE_SOURCE = "seed_mail_triage_vi_en"
+PRIORITY_MAIL_DOMAINS = {"ops", "support"}
+GENERAL_CONCISE_TASK_TYPES = {"qa", "rewrite"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,7 +86,7 @@ def parse_args() -> argparse.Namespace:
         "--target_profile",
         type=str,
         choices=sorted(TARGET_PROFILES),
-        default="chat_core_vi_en_mail",
+        default="mail_triage_en_ops_support",
         help="Sampling profile to use when balancing the dataset.",
     )
     parser.add_argument(
@@ -142,6 +151,36 @@ def is_email_triage(row: dict[str, Any]) -> bool:
     return row.get("source") == EMAIL_TRIAGE_SOURCE
 
 
+def is_general_concise(row: dict[str, Any]) -> bool:
+    if is_email_triage(row):
+        return False
+    if row.get("task_type") not in GENERAL_CONCISE_TASK_TYPES:
+        return False
+    output_word_count = len(str(row.get("output", "")).split())
+    input_length = len(str(row.get("input", "")))
+    return output_word_count <= 80 and input_length <= 700
+
+
+def is_mail_en_ops_support(row: dict[str, Any]) -> bool:
+    return (
+        is_email_triage(row)
+        and row.get("language") == "en"
+        and row.get("domain") in PRIORITY_MAIL_DOMAINS
+    )
+
+
+def is_mail_vi_ops_support(row: dict[str, Any]) -> bool:
+    return (
+        is_email_triage(row)
+        and row.get("language") == "vi"
+        and row.get("domain") in PRIORITY_MAIL_DOMAINS
+    )
+
+
+def is_mail_other(row: dict[str, Any]) -> bool:
+    return is_email_triage(row) and row.get("domain") not in PRIORITY_MAIL_DOMAINS
+
+
 def distribute_counts(total_rows: int, profile: dict[str, float]) -> dict[str, int]:
     counts = {bucket: int(total_rows * ratio) for bucket, ratio in profile.items()}
     assigned = sum(counts.values())
@@ -185,10 +224,39 @@ def annotate_rows(rows: list[dict[str, Any]], bucket_name: str, profile_name: st
     return annotated
 
 
+def build_profile_buckets(
+    keep_rows: list[dict[str, Any]],
+    *,
+    target_profile: str,
+) -> dict[str, list[dict[str, Any]]]:
+    if target_profile == "mail_triage_en_ops_support":
+        ordered_buckets = [
+            ("mail_en_ops_support", is_mail_en_ops_support),
+            ("mail_vi_ops_support", is_mail_vi_ops_support),
+            ("mail_other", is_mail_other),
+            ("general_concise", is_general_concise),
+            ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
+        ]
+        buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
+        for row in keep_rows:
+            for bucket_name, predicate in ordered_buckets:
+                if predicate(row):
+                    buckets[bucket_name].append(row)
+                    break
+        return buckets
+
+    return {
+        "vi_core": [row for row in keep_rows if is_vi_core(row)],
+        "en_core": [row for row in keep_rows if is_en_core(row)],
+        "mixed_utility": [row for row in keep_rows if is_mixed_utility(row)],
+        "email_triage": [row for row in keep_rows if is_email_triage(row)],
+    }
+
+
 def build_dataset_rows(
     rows: list[dict[str, Any]],
     *,
-    target_profile: str = "chat_core_vi_en_mail",
+    target_profile: str = "mail_triage_en_ops_support",
     total_rows: int | None = None,
     seed: int = 42,
 ) -> list[dict[str, Any]]:
@@ -201,12 +269,7 @@ def build_dataset_rows(
     if resolved_total_rows <= 0:
         raise ValueError("--total_rows must be greater than 0.")
 
-    buckets = {
-        "vi_core": [row for row in keep_rows if is_vi_core(row)],
-        "en_core": [row for row in keep_rows if is_en_core(row)],
-        "mixed_utility": [row for row in keep_rows if is_mixed_utility(row)],
-        "email_triage": [row for row in keep_rows if is_email_triage(row)],
-    }
+    buckets = build_profile_buckets(keep_rows, target_profile=target_profile)
     target_counts = distribute_counts(resolved_total_rows, profile)
 
     sampled_rows: list[dict[str, Any]] = []

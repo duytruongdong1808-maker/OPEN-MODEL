@@ -11,8 +11,14 @@
     "generation": 250
   },
   "language_distribution": {
-    "vi": 500,
-    "en": 500
+    "en": 680,
+    "vi": 320
+  },
+  "domain_distribution": {
+    "ops": 460,
+    "support": 320,
+    "billing": 140,
+    "product": 80
   },
   "top_review_reasons": [],
   "top_drop_reasons": []

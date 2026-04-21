@@ -164,7 +164,7 @@ On Windows PowerShell, the equivalent is:
 .\.venv\Scripts\python.exe -X utf8 src\download_sample_data.py
 ```
 
-By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` now contains 1,000 bilingual email-triage seed samples for summary, priority, action-item extraction, and full triage formatting.
+By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` now contains 1,000 clean email-triage seed samples generated from gold triage records. The mail seed is English-first, weighted toward ops and support scenarios, and standardizes priority values to `high|medium|low`.
 
 Put your raw source data in `data/raw/train.jsonl`. The new default workflow does not train from raw directly.
 
@@ -194,6 +194,8 @@ To regenerate the committed email-triage raw seed:
 python src/generate_mail_triage_seed.py --total_rows 1000
 ```
 
+`--total_rows` must be a positive multiple of `4`, because each gold record expands into summary, priority, action-extraction, and full-triage tasks.
+
 Then curate it:
 
 ```bash
@@ -217,7 +219,7 @@ This writes:
 data/curated/chat_core_vi_en_train.jsonl
 ```
 
-By default the builder now mixes the general curated train set, the bilingual chat seed, and the bilingual email-triage seed with the `chat_core_vi_en_mail` profile.
+By default the builder now mixes the general curated train set, the bilingual chat seed, and the email-triage seed with the `mail_triage_en_ops_support` profile. That profile uses exclusive buckets and biases sampling toward English ops/support triage while keeping a smaller share of Vietnamese mail, other mail domains, concise general QA/rewrite rows, and mixed utility tasks.
 
 Then prepare the SFT dataset:
 
@@ -401,6 +403,14 @@ Windows PowerShell:
 This loads the base model plus the saved adapter and prints a few sample generations to the terminal.
 Like training, 4-bit loading only turns on by default when the local environment supports it.
 Evaluation also accepts `--seed` and `--model_revision` for reproducible sampling against the pinned base model snapshot.
+
+For the field-level gold evaluation set used by the mail-triage workflow:
+
+```bash
+python src/eval.py --eval_path data/eval/mail_triage_gold.jsonl
+```
+
+When the eval file includes `expected` fields, the script now reports parse success plus normalized matches for summary, priority, action items, and deadlines.
 
 If you want the matching evaluation preset:
 

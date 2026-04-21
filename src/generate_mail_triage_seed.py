@@ -1,563 +1,393 @@
 from __future__ import annotations
 
 import argparse
-import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
+    from .email_triage import format_action_extraction, format_full_triage
     from .utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 except ImportError:
+    from email_triage import format_action_extraction, format_full_triage
     from utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 
 
-ROWS_PER_CASE = 8
+ROWS_PER_RECORD = 4
 DEFAULT_TOTAL_ROWS = 1000
-MAX_CASE_COUNT = 125
+DEFAULT_RECORD_COUNT = DEFAULT_TOTAL_ROWS // ROWS_PER_RECORD
+MAIL_DOMAINS = ("ops", "support", "billing", "product")
 
-VI_SUMMARY = "Tóm tắt email sau trong một câu ngắn."
-EN_SUMMARY = "Summarize this email in one short sentence."
-VI_PRIORITY = "Cho biết mức ưu tiên của email này: cao, trung bình, hay thấp."
-EN_PRIORITY = "Classify the priority of this email as high, medium, or low."
-VI_ACTION = "Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn."
-EN_ACTION = "Extract the action items and deadlines from this email as a short bullet list."
-VI_TRIAGE = "Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót."
-EN_TRIAGE = "Read this email and return a triage block with Summary, Priority, Action items, and Deadlines."
-
-INTERNAL_ITEMS = [
+SUMMARY_INSTRUCTIONS = {
+    "en": "Summarize this email in one short sentence.",
+    "vi": "Tóm tắt email sau trong một câu ngắn.",
+}
+PRIORITY_INSTRUCTIONS = {
+    "en": "Classify the priority of this email as high, medium, or low.",
+    "vi": "Cho biết mức ưu tiên của email này là high, medium, hay low.",
+}
+ACTION_INSTRUCTIONS = {
+    "en": "Extract the action items and deadlines from this email as a short bullet list.",
+    "vi": "Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn.",
+}
+TRIAGE_INSTRUCTIONS = {
+    "en": "Read this email and return a triage block with Summary, Priority, Action items, and Deadlines.",
+    "vi": "Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót.",
+}
+NAME_PAIRS = [
+    ("Lan", "Huy"),
+    ("Minh", "Trang"),
+    ("An", "Bảo"),
+    ("Vy", "Quân"),
+    ("Linh", "Khôi"),
+    ("Mai", "Duy"),
+]
+OPS_RELEASE_ITEMS = [
     {
-        "subject_vi": "Chốt checklist phát hành",
         "subject_en": "Final release checklist",
-        "deliverable_vi": "checklist phát hành",
+        "subject_vi": "Chốt checklist phát hành",
         "deliverable_en": "release checklist",
-        "owner": "Lan",
-        "reviewer": "Huy",
-        "review_task_vi": "xác nhận rollback plan",
-        "review_task_en": "confirm the rollback plan",
+        "deliverable_vi": "checklist phát hành",
+        "review_en": "the rollback notes",
+        "review_vi": "ghi chú rollback",
+        "channel_en": "the release channel",
         "channel_vi": "kênh release",
-        "channel_en": "release channel",
     },
     {
-        "subject_vi": "Rà soát ghi chú bàn giao",
-        "subject_en": "Review the handoff notes",
-        "deliverable_vi": "ghi chú bàn giao",
-        "deliverable_en": "handoff notes",
-        "owner": "Minh",
-        "reviewer": "Trang",
-        "review_task_vi": "kiểm tra danh sách rủi ro còn mở",
-        "review_task_en": "check the list of open risks",
-        "channel_vi": "nhóm vận hành",
-        "channel_en": "operations group",
+        "subject_en": "Staging handoff notes",
+        "subject_vi": "Chốt ghi chú bàn giao staging",
+        "deliverable_en": "staging handoff notes",
+        "deliverable_vi": "ghi chú bàn giao staging",
+        "review_en": "the staging approvals",
+        "review_vi": "phê duyệt staging",
+        "channel_en": "the staging thread",
+        "channel_vi": "luồng staging",
     },
     {
-        "subject_vi": "Hoàn tất bảng xác nhận staging",
-        "subject_en": "Complete the staging validation sheet",
-        "deliverable_vi": "bảng xác nhận staging",
-        "deliverable_en": "staging validation sheet",
-        "owner": "An",
-        "reviewer": "Bảo",
-        "review_task_vi": "xác nhận trạng thái dependency cuối cùng",
-        "review_task_en": "confirm the final dependency status",
-        "channel_vi": "kênh staging",
-        "channel_en": "staging channel",
+        "subject_en": "Cutover runbook check",
+        "subject_vi": "Rà soát runbook cutover",
+        "deliverable_en": "cutover runbook",
+        "deliverable_vi": "runbook cutover",
+        "review_en": "the fallback checklist",
+        "review_vi": "checklist fallback",
+        "channel_en": "the cutover room",
+        "channel_vi": "phòng cutover",
     },
     {
-        "subject_vi": "Cập nhật danh sách quyền truy cập",
-        "subject_en": "Update the access list",
-        "deliverable_vi": "danh sách quyền truy cập",
-        "deliverable_en": "access list",
-        "owner": "Vy",
-        "reviewer": "Quân",
-        "review_task_vi": "kiểm tra danh sách tài khoản đặc biệt",
-        "review_task_en": "review the list of privileged accounts",
-        "channel_vi": "kênh bảo mật",
-        "channel_en": "security channel",
-    },
-    {
-        "subject_vi": "Chốt slide readout nội bộ",
-        "subject_en": "Finalize the internal readout deck",
-        "deliverable_vi": "slide readout nội bộ",
-        "deliverable_en": "internal readout deck",
-        "owner": "Linh",
-        "reviewer": "Khôi",
-        "review_task_vi": "xác nhận số liệu cuối cùng",
-        "review_task_en": "confirm the final metrics",
-        "channel_vi": "nhóm dự án",
-        "channel_en": "project thread",
+        "subject_en": "Launch metrics handoff",
+        "subject_vi": "Bàn giao số liệu launch",
+        "deliverable_en": "launch metrics sheet",
+        "deliverable_vi": "bảng số liệu launch",
+        "review_en": "the anomaly summary",
+        "review_vi": "tóm tắt bất thường",
+        "channel_en": "the launch bridge",
+        "channel_vi": "cầu launch",
     },
 ]
-
-INTERNAL_VARIANTS = [
+OPS_RELEASE_VARIANTS = [
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "first_vi": "trước 15h hôm nay",
-        "first_en": "by 3 PM today",
-        "second_vi": "trước 16h hôm nay",
-        "second_en": "by 4 PM today",
-        "event_vi": "đợt phát hành lúc 18h hôm nay",
+        "priority": "high",
         "event_en": "today's 6 PM release",
+        "event_vi": "đợt phát hành lúc 18h hôm nay",
+        "first_en": "by 2 PM today",
+        "first_vi": "trước 14h hôm nay",
+        "second_en": "by 3 PM today",
+        "second_vi": "trước 15h hôm nay",
     },
     {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "first_vi": "trước 11h ngày mai",
-        "first_en": "by 11 AM tomorrow",
-        "second_vi": "trước 13h ngày mai",
-        "second_en": "by 1 PM tomorrow",
-        "event_vi": "buổi tổng rà soát ngày mai",
-        "event_en": "tomorrow's review session",
+        "priority": "high",
+        "event_en": "tomorrow morning's cutover",
+        "event_vi": "đợt cutover sáng mai",
+        "first_en": "by 5 PM today",
+        "first_vi": "trước 17h hôm nay",
+        "second_en": "by 6 PM today",
+        "second_vi": "trước 18h hôm nay",
     },
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "first_vi": "trong 2 giờ tới",
-        "first_en": "within the next 2 hours",
-        "second_vi": "trước 17h hôm nay",
-        "second_en": "by 5 PM today",
-        "event_vi": "mốc bàn giao cuối ngày",
-        "event_en": "today's end-of-day handoff",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "first_vi": "trước trưa thứ Năm",
-        "first_en": "before Thursday noon",
-        "second_vi": "trước 15h thứ Năm",
-        "second_en": "by 3 PM Thursday",
-        "event_vi": "buổi demo thứ Năm",
-        "event_en": "Thursday's demo",
-    },
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "first_vi": "trước cuối tuần",
-        "first_en": "before the end of the week",
-        "second_vi": "trước thứ Hai tuần sau",
-        "second_en": "by next Monday",
-        "event_vi": "buổi planning đầu tuần sau",
-        "event_en": "next week's planning session",
+        "priority": "medium",
+        "event_en": "Thursday's operations review",
+        "event_vi": "buổi rà soát vận hành thứ Năm",
+        "first_en": "by Thursday 10 AM",
+        "first_vi": "trước 10h thứ Năm",
+        "second_en": "by Thursday noon",
+        "second_vi": "trước 12h trưa thứ Năm",
     },
 ]
-
-SCHEDULING_ITEMS = [
+OPS_SCHEDULE_ITEMS = [
     {
-        "subject_vi": "Dời lịch họp triển khai",
-        "subject_en": "Rescheduled implementation meeting",
-        "meeting_vi": "họp triển khai",
-        "meeting_en": "implementation meeting",
-        "reason_vi": "khách hàng chưa chốt xong dữ liệu đầu vào",
-        "reason_en": "the client has not finalized the input data",
-        "coord": "Lan",
-        "support": "Minh",
-        "support_task_vi": "xác nhận phòng họp",
-        "support_task_en": "confirm the meeting room",
+        "subject_en": "Implementation review moved",
+        "subject_vi": "Dời lịch review triển khai",
+        "meeting_en": "implementation review",
+        "meeting_vi": "review triển khai",
+        "reason_en": "the upstream partner needs more prep time",
+        "reason_vi": "đối tác upstream cần thêm thời gian chuẩn bị",
+        "support_en": "the attendee list",
+        "support_vi": "danh sách người tham gia",
     },
     {
-        "subject_vi": "Dời lịch buổi kickoff",
-        "subject_en": "Kickoff meeting moved",
-        "meeting_vi": "buổi kickoff",
-        "meeting_en": "kickoff meeting",
-        "reason_vi": "đầu mối phía đối tác bị trùng lịch đột xuất",
-        "reason_en": "the partner lead had an unexpected conflict",
-        "coord": "Trang",
-        "support": "An",
-        "support_task_vi": "gửi lại meeting link",
-        "support_task_en": "resend the meeting link",
+        "subject_en": "Migration dry run rescheduled",
+        "subject_vi": "Dời lịch dry run migration",
+        "meeting_en": "migration dry run",
+        "meeting_vi": "dry run migration",
+        "reason_en": "the dependency snapshot is not ready yet",
+        "reason_vi": "ảnh chụp dependency chưa sẵn sàng",
+        "support_en": "the runbook links",
+        "support_vi": "link runbook",
     },
     {
-        "subject_vi": "Cập nhật lịch workshop",
-        "subject_en": "Workshop schedule update",
-        "meeting_vi": "workshop nội bộ",
-        "meeting_en": "internal workshop",
-        "reason_vi": "diễn giả cần thêm thời gian chuẩn bị",
-        "reason_en": "the speaker needs more prep time",
-        "coord": "Bảo",
-        "support": "Vy",
-        "support_task_vi": "cập nhật lịch trên calendar",
-        "support_task_en": "update the calendar entry",
-    },
-    {
-        "subject_vi": "Dời lịch demo khách hàng",
-        "subject_en": "Customer demo rescheduled",
-        "meeting_vi": "demo khách hàng",
-        "meeting_en": "customer demo",
-        "reason_vi": "khách hàng muốn thêm người tham gia",
-        "reason_en": "the customer wants additional attendees",
-        "coord": "Khôi",
-        "support": "Linh",
-        "support_task_vi": "xác nhận lại danh sách tham gia",
-        "support_task_en": "confirm the attendee list again",
-    },
-    {
-        "subject_vi": "Điều chỉnh lịch review định kỳ",
-        "subject_en": "Recurring review time change",
-        "meeting_vi": "review định kỳ",
-        "meeting_en": "recurring review",
-        "reason_vi": "lịch ban điều hành thay đổi",
-        "reason_en": "the leadership schedule changed",
-        "coord": "Quân",
-        "support": "Mai",
-        "support_task_vi": "cập nhật phòng họp và agenda",
-        "support_task_en": "update the room booking and agenda",
+        "subject_en": "Launch sync update",
+        "subject_vi": "Cập nhật lịch launch sync",
+        "meeting_en": "launch sync",
+        "meeting_vi": "launch sync",
+        "reason_en": "the dashboard backfill will finish later than expected",
+        "reason_vi": "backfill dashboard sẽ hoàn tất muộn hơn dự kiến",
+        "support_en": "the room booking",
+        "support_vi": "đặt phòng họp",
     },
 ]
-
-SCHEDULING_VARIANTS = [
+OPS_SCHEDULE_VARIANTS = [
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "day_vi": "chiều nay",
-        "day_en": "this afternoon",
-        "old_vi": "13h",
-        "old_en": "1 PM",
-        "new_vi": "16h",
-        "new_en": "4 PM",
-        "confirm_vi": "trước 12h hôm nay",
-        "confirm_en": "by noon today",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "day_vi": "ngày mai",
-        "day_en": "tomorrow",
-        "old_vi": "9h",
-        "old_en": "9 AM",
-        "new_vi": "14h",
-        "new_en": "2 PM",
-        "confirm_vi": "trước 11h ngày hôm nay",
+        "priority": "medium",
+        "old_en": "9 AM tomorrow",
+        "old_vi": "9h sáng mai",
+        "new_en": "1 PM tomorrow",
+        "new_vi": "13h ngày mai",
         "confirm_en": "by 11 AM today",
+        "confirm_vi": "trước 11h hôm nay",
     },
     {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "day_vi": "thứ Năm",
-        "day_en": "Thursday",
-        "old_vi": "10h",
-        "old_en": "10 AM",
-        "new_vi": "15h",
-        "new_en": "3 PM",
-        "confirm_vi": "trước 17h hôm nay",
+        "priority": "medium",
+        "old_en": "Thursday 10 AM",
+        "old_vi": "10h thứ Năm",
+        "new_en": "Thursday 3 PM",
+        "new_vi": "15h thứ Năm",
         "confirm_en": "by 5 PM today",
+        "confirm_vi": "trước 17h hôm nay",
     },
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "day_vi": "sáng mai",
-        "day_en": "tomorrow morning",
-        "old_vi": "8h30",
-        "old_en": "8:30 AM",
-        "new_vi": "11h",
-        "new_en": "11 AM",
-        "confirm_vi": "trong vòng 1 giờ",
+        "priority": "high",
+        "old_en": "this afternoon at 1 PM",
+        "old_vi": "13h chiều nay",
+        "new_en": "this afternoon at 4 PM",
+        "new_vi": "16h chiều nay",
         "confirm_en": "within the next hour",
-    },
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "day_vi": "tuần sau",
-        "day_en": "next week",
-        "old_vi": "thứ Ba 14h",
-        "old_en": "Tuesday 2 PM",
-        "new_vi": "thứ Tư 10h",
-        "new_en": "Wednesday 10 AM",
-        "confirm_vi": "trước cuối tuần",
-        "confirm_en": "before the end of the week",
+        "confirm_vi": "trong vòng 1 giờ tới",
     },
 ]
-
-SUPPORT_ITEMS = [
+OPS_FYI_ITEMS = [
     {
-        "subject_vi": "Sự cố đăng nhập cổng billing",
-        "subject_en": "Billing portal login outage",
-        "issue_vi": "không đăng nhập được vào cổng billing",
-        "issue_en": "cannot log in to the billing portal",
-        "group_vi": "sales team",
-        "group_en": "the sales team",
-        "follow_up_vi": "cập nhật trạng thái xử lý",
-        "follow_up_en": "share a status update",
-        "workaround_vi": "gửi tạm workaround",
-        "workaround_en": "send a temporary workaround",
+        "subject_en": "Postmortem packet published",
+        "subject_vi": "Đã phát hành bộ tài liệu postmortem",
+        "document_en": "postmortem packet",
+        "document_vi": "bộ tài liệu postmortem",
+        "context_en": "Friday's review",
+        "context_vi": "buổi review thứ Sáu",
     },
     {
-        "subject_vi": "Lỗi export CSV cho khách hàng",
-        "subject_en": "CSV export issue for customer",
-        "issue_vi": "file export CSV bị thiếu cột trạng thái",
-        "issue_en": "the CSV export is missing the status column",
-        "group_vi": "khách hàng Acorn",
-        "group_en": "customer Acorn",
-        "follow_up_vi": "phản hồi kết quả reproduce",
-        "follow_up_en": "reply with the reproduce result",
-        "workaround_vi": "gửi hướng dẫn tạm thời",
-        "workaround_en": "send temporary guidance",
+        "subject_en": "Cutover archive available",
+        "subject_vi": "Đã lưu trữ tài liệu cutover",
+        "document_en": "cutover archive",
+        "document_vi": "tài liệu cutover đã lưu trữ",
+        "context_en": "the next audit",
+        "context_vi": "đợt audit tiếp theo",
+    },
+]
+SUPPORT_INCIDENT_ITEMS = [
+    {
+        "subject_en": "Billing login outage",
+        "subject_vi": "Sự cố đăng nhập billing",
+        "issue_en": "the billing portal login is failing",
+        "issue_vi": "cổng billing đang lỗi đăng nhập",
+        "impact_en": "two renewals are blocked",
+        "impact_vi": "hai hợp đồng gia hạn đang bị chặn",
+        "workaround_en": "share the manual renewal steps",
+        "workaround_vi": "gửi quy trình gia hạn thủ công",
     },
     {
-        "subject_vi": "Chậm đồng bộ webhook",
-        "subject_en": "Webhook sync delay",
-        "issue_vi": "webhook đồng bộ chậm hơn bình thường",
-        "issue_en": "the webhook sync is slower than normal",
-        "group_vi": "khách hàng Orion",
-        "group_en": "customer Orion",
-        "follow_up_vi": "cập nhật nguyên nhân sơ bộ",
-        "follow_up_en": "share a preliminary root cause",
-        "workaround_vi": "đề xuất cách theo dõi tạm thời",
-        "workaround_en": "suggest a temporary monitoring workaround",
-    },
-    {
+        "subject_en": "Attachment download failure",
         "subject_vi": "Lỗi tải file đính kèm",
-        "subject_en": "Attachment download error",
-        "issue_vi": "người dùng tải file đính kèm thất bại",
-        "issue_en": "users are failing to download attachments",
-        "group_vi": "khách hàng GreenLeaf",
-        "group_en": "customer GreenLeaf",
-        "follow_up_vi": "cập nhật tiến độ xử lý",
-        "follow_up_en": "share the handling progress",
+        "issue_en": "customers cannot download attachments",
+        "issue_vi": "khách hàng không tải được file đính kèm",
+        "impact_en": "the onboarding queue is delayed",
+        "impact_vi": "hàng đợi onboarding đang bị chậm",
+        "workaround_en": "send the alternate download link",
         "workaround_vi": "gửi link tải thay thế",
-        "workaround_en": "send an alternate download link",
     },
     {
-        "subject_vi": "Lỗi hiển thị dashboard",
-        "subject_en": "Dashboard display issue",
-        "issue_vi": "dashboard hiển thị sai số liệu ở widget chính",
-        "issue_en": "the dashboard shows incorrect metrics in the main widget",
-        "group_vi": "khách hàng Northwind",
-        "group_en": "customer Northwind",
-        "follow_up_vi": "cập nhật ETA khắc phục",
-        "follow_up_en": "share the mitigation ETA",
-        "workaround_vi": "gửi cách xem số liệu từ báo cáo gốc",
-        "workaround_en": "share how to view the raw report instead",
+        "subject_en": "Dashboard numbers look wrong",
+        "subject_vi": "Dashboard đang hiển thị sai số liệu",
+        "issue_en": "the main dashboard widget shows stale metrics",
+        "issue_vi": "widget chính trên dashboard đang hiển thị số liệu cũ",
+        "impact_en": "the executive readout is at risk",
+        "impact_vi": "buổi readout cho ban điều hành đang bị ảnh hưởng",
+        "workaround_en": "point the customer to the raw report",
+        "workaround_vi": "hướng dẫn khách hàng xem báo cáo gốc",
     },
 ]
-
-SUPPORT_VARIANTS = [
+SUPPORT_INCIDENT_VARIANTS = [
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "impact_vi": "đang chặn hai hợp đồng gia hạn",
-        "impact_en": "is blocking two renewal deals",
-        "reply_vi": "trong vòng 30 phút",
-        "reply_en": "within 30 minutes",
+        "priority": "high",
+        "owner_en": "confirm who owns the investigation within 20 minutes",
+        "owner_vi": "xác nhận người phụ trách điều tra trong 20 phút tới",
+        "update_en": "send the next customer update within 45 minutes",
+        "update_vi": "gửi cập nhật tiếp theo cho khách hàng trong 45 phút tới",
     },
     {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "impact_vi": "ảnh hưởng đến báo cáo khách hàng tuần này",
-        "impact_en": "is affecting this week's customer report",
-        "reply_vi": "trong hôm nay",
-        "reply_en": "today",
+        "priority": "high",
+        "owner_en": "confirm whether engineering is already on it within 30 minutes",
+        "owner_vi": "xác nhận engineering đã nhận việc trong vòng 30 phút",
+        "update_en": "share the next status note by 11 AM today",
+        "update_vi": "chia sẻ bản cập nhật tiếp theo trước 11h hôm nay",
     },
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "impact_vi": "đang làm gián đoạn buổi demo sáng mai",
-        "impact_en": "is disrupting tomorrow morning's demo",
-        "reply_vi": "trước 10h sáng mai",
-        "reply_en": "by 10 AM tomorrow",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "impact_vi": "khiến khách hàng phải thao tác thủ công",
-        "impact_en": "is forcing the customer to use a manual workaround",
-        "reply_vi": "trước 17h hôm nay",
-        "reply_en": "by 5 PM today",
-    },
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "impact_vi": "được ghi nhận nhưng chưa chặn vận hành",
-        "impact_en": "has been reported but is not blocking operations",
-        "reply_vi": "trước cuối tuần",
-        "reply_en": "before the end of the week",
+        "priority": "medium",
+        "owner_en": "capture the current owner by 3 PM today",
+        "owner_vi": "chốt người phụ trách hiện tại trước 15h hôm nay",
+        "update_en": "reply with the mitigation ETA by 5 PM today",
+        "update_vi": "phản hồi ETA khắc phục trước 17h hôm nay",
     },
 ]
-
+SUPPORT_FOLLOWUP_ITEMS = [
+    {
+        "subject_en": "Need a concise RCA update",
+        "subject_vi": "Cần bản cập nhật RCA ngắn gọn",
+        "issue_en": "the webhook delay is still under investigation",
+        "issue_vi": "độ trễ webhook vẫn đang được điều tra",
+        "request_en": "send a concise root-cause update after the debug call",
+        "request_vi": "gửi bản cập nhật nguyên nhân ngắn gọn sau cuộc gọi debug",
+        "workaround_en": "keep the customer on the temporary polling setup",
+        "workaround_vi": "giữ khách hàng ở chế độ polling tạm thời",
+    },
+    {
+        "subject_en": "Prepare the customer-ready summary",
+        "subject_vi": "Chuẩn bị bản tóm tắt gửi khách hàng",
+        "issue_en": "the export bug is mitigated but not fully fixed",
+        "issue_vi": "lỗi export đã được giảm thiểu nhưng chưa sửa xong",
+        "request_en": "draft the customer-ready summary once the patch lands",
+        "request_vi": "soạn bản tóm tắt gửi khách hàng sau khi bản vá hoàn tất",
+        "workaround_en": "keep the workaround note attached to the ticket",
+        "workaround_vi": "tiếp tục đính kèm ghi chú workaround vào ticket",
+    },
+]
+SUPPORT_FYI_ITEMS = [
+    {
+        "subject_en": "Incident review notes posted",
+        "subject_vi": "Đã đăng ghi chú review sự cố",
+        "note_en": "incident review notes",
+        "note_vi": "ghi chú review sự cố",
+        "channel_en": "the support knowledge base",
+        "channel_vi": "knowledge base của support",
+    },
+    {
+        "subject_en": "Customer workaround approved",
+        "subject_vi": "Đã duyệt workaround cho khách hàng",
+        "note_en": "approved workaround details",
+        "note_vi": "chi tiết workaround đã duyệt",
+        "channel_en": "the escalation thread",
+        "channel_vi": "luồng escalation",
+    },
+]
 BILLING_ITEMS = [
     {
-        "subject_vi": "Hóa đơn đến hạn ngày mai",
-        "subject_en": "Invoice due tomorrow",
-        "request_vi": "xác nhận thanh toán hóa đơn INV-204",
-        "request_en": "confirm payment for invoice INV-204",
-        "secondary_vi": "phản hồi cho khách hàng",
-        "secondary_en": "reply to the customer",
-        "customer_vi": "khách hàng Orion",
-        "customer_en": "customer Orion",
+        "subject_en": "Invoice confirmation needed",
+        "subject_vi": "Cần xác nhận hóa đơn",
+        "request_en": "confirm the payment status for invoice INV-204",
+        "request_vi": "xác nhận trạng thái thanh toán của hóa đơn INV-204",
+        "secondary_en": "reply to the customer with the latest status",
+        "secondary_vi": "phản hồi khách hàng với trạng thái mới nhất",
     },
     {
-        "subject_vi": "Gửi renewal quote bản cuối",
-        "subject_en": "Send the final renewal quote",
-        "request_vi": "gửi renewal quote cuối cho GreenLeaf",
+        "subject_en": "Renewal quote follow-up",
+        "subject_vi": "Theo dõi renewal quote",
         "request_en": "send the final renewal quote to GreenLeaf",
-        "secondary_vi": "trả lời câu hỏi về mức discount cũ",
-        "secondary_en": "answer the question about the previous discount level",
-        "customer_vi": "khách hàng GreenLeaf",
-        "customer_en": "customer GreenLeaf",
+        "request_vi": "gửi renewal quote cuối cho GreenLeaf",
+        "secondary_en": "answer the discount question from finance",
+        "secondary_vi": "trả lời câu hỏi về discount từ finance",
     },
     {
+        "subject_en": "Refund request review",
         "subject_vi": "Rà soát yêu cầu hoàn tiền",
-        "subject_en": "Review the refund request",
-        "request_vi": "xác minh yêu cầu hoàn tiền cho đơn hàng tháng 4",
-        "request_en": "verify the refund request for the April order",
-        "secondary_vi": "cập nhật lại timeline xử lý",
+        "request_en": "review the refund request for the April order",
+        "request_vi": "rà soát yêu cầu hoàn tiền cho đơn hàng tháng Tư",
         "secondary_en": "update the expected handling timeline",
-        "customer_vi": "khách hàng Acorn",
-        "customer_en": "customer Acorn",
-    },
-    {
-        "subject_vi": "Phát hành credit note",
-        "subject_en": "Issue the credit note",
-        "request_vi": "phát hành credit note cho invoice điều chỉnh",
-        "request_en": "issue the credit note for the adjusted invoice",
-        "secondary_vi": "gửi bản PDF cho khách hàng",
-        "secondary_en": "send the PDF copy to the customer",
-        "customer_vi": "khách hàng Northwind",
-        "customer_en": "customer Northwind",
-    },
-    {
-        "subject_vi": "Xác nhận PO trước khi xuất hóa đơn",
-        "subject_en": "Confirm the PO before invoicing",
-        "request_vi": "xác nhận mã PO trước khi xuất hóa đơn",
-        "request_en": "confirm the PO number before issuing the invoice",
-        "secondary_vi": "đồng bộ lại với đội sales",
-        "secondary_en": "sync again with the sales team",
-        "customer_vi": "khách hàng BrightPath",
-        "customer_en": "customer BrightPath",
+        "secondary_vi": "cập nhật timeline xử lý dự kiến",
     },
 ]
-
 BILLING_VARIANTS = [
     {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "deadline_vi": "trước 16h hôm nay",
+        "priority": "high",
         "deadline_en": "by 4 PM today",
-        "context_vi": "để tránh gián đoạn dịch vụ",
-        "context_en": "to avoid service interruption",
+        "deadline_vi": "trước 16h hôm nay",
     },
     {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "deadline_vi": "trước 12h trưa thứ Năm",
-        "deadline_en": "by Thursday noon",
-        "context_vi": "để sales kịp follow-up",
-        "context_en": "so sales can follow up in time",
-    },
-    {
-        "priority_vi": "cao",
-        "priority_en": "high",
-        "deadline_vi": "trong hôm nay",
-        "deadline_en": "today",
-        "context_vi": "vì khách hàng đang chờ xác nhận cuối cùng",
-        "context_en": "because the customer is waiting for the final confirmation",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "deadline_vi": "trước 10h sáng mai",
+        "priority": "medium",
         "deadline_en": "by 10 AM tomorrow",
-        "context_vi": "để finance chốt batch thanh toán tiếp theo",
-        "context_en": "so finance can close the next payment batch",
+        "deadline_vi": "trước 10h sáng mai",
     },
     {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "deadline_vi": "Không có",
+        "priority": "medium",
         "deadline_en": "None",
-        "context_vi": "khi có thời gian trong tuần này",
-        "context_en": "when the team has time later this week",
+        "deadline_vi": "None",
     },
 ]
-
 PRODUCT_ITEMS = [
     {
-        "subject_vi": "Ghi nhận đề xuất dark mode",
-        "subject_en": "Log the dark mode request",
-        "feature_vi": "dark mode",
-        "feature_en": "dark mode",
-        "customer_vi": "khách hàng enterprise Orion",
-        "customer_en": "enterprise customer Orion",
-    },
-    {
-        "subject_vi": "Đề xuất xuất báo cáo theo lịch",
-        "subject_en": "Scheduled report export request",
-        "feature_vi": "xuất báo cáo theo lịch",
-        "feature_en": "scheduled report export",
-        "customer_vi": "khách hàng GreenLeaf",
-        "customer_en": "customer GreenLeaf",
-    },
-    {
-        "subject_vi": "Yêu cầu hỗ trợ nhiều phê duyệt viên",
-        "subject_en": "Multi-approver workflow request",
-        "feature_vi": "workflow nhiều phê duyệt viên",
-        "feature_en": "multi-approver workflow",
-        "customer_vi": "khách hàng Northwind",
-        "customer_en": "customer Northwind",
-    },
-    {
-        "subject_vi": "Đề xuất bộ lọc dashboard mới",
-        "subject_en": "New dashboard filter request",
+        "subject_en": "Feature request from Orion",
+        "subject_vi": "Yêu cầu tính năng từ Orion",
+        "feature_en": "regional dashboard filters",
         "feature_vi": "bộ lọc dashboard theo khu vực",
-        "feature_en": "regional dashboard filter",
-        "customer_vi": "khách hàng BrightPath",
-        "customer_en": "customer BrightPath",
+        "request_en": "regional dashboard filter",
+        "request_vi": "bộ lọc dashboard theo khu vực",
+        "review_en": "next week's roadmap review",
+        "review_vi": "buổi roadmap review tuần sau",
     },
     {
-        "subject_vi": "Đề xuất thông báo qua SMS",
         "subject_en": "SMS notification request",
-        "feature_vi": "thông báo qua SMS",
+        "subject_vi": "Đề xuất thông báo qua SMS",
         "feature_en": "SMS notifications",
-        "customer_vi": "khách hàng Acorn",
-        "customer_en": "customer Acorn",
+        "feature_vi": "thông báo qua SMS",
+        "request_en": "SMS notification",
+        "request_vi": "thông báo qua SMS",
+        "review_en": "Friday's prioritization meeting",
+        "review_vi": "buổi họp ưu tiên thứ Sáu",
+    },
+    {
+        "subject_en": "Scheduled export request",
+        "subject_vi": "Đề xuất xuất báo cáo theo lịch",
+        "feature_en": "scheduled report exports",
+        "feature_vi": "xuất báo cáo theo lịch",
+        "request_en": "scheduled report export",
+        "request_vi": "xuất báo cáo theo lịch",
+        "review_en": "the monthly backlog review",
+        "review_vi": "buổi rà soát backlog hàng tháng",
+    },
+]
+PRODUCT_VARIANTS = [
+    {
+        "priority": "low",
+        "deadline_en": "None",
+        "deadline_vi": "None",
+    },
+    {
+        "priority": "medium",
+        "deadline_en": "by Friday 3 PM",
+        "deadline_vi": "trước 15h thứ Sáu",
     },
 ]
 
-PRODUCT_VARIANTS = [
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "deadline_vi": "Không có",
-        "deadline_en": "None",
-        "review_vi": "roadmap review tuần sau",
-        "review_en": "next week's roadmap review",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "deadline_vi": "trước cuối tuần",
-        "deadline_en": "before the end of the week",
-        "review_vi": "buổi grooming cuối tuần này",
-        "review_en": "this week's backlog grooming",
-    },
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "deadline_vi": "trước thứ Hai tuần sau",
-        "deadline_en": "by next Monday",
-        "review_vi": "planning đầu tuần sau",
-        "review_en": "next week's planning session",
-    },
-    {
-        "priority_vi": "trung bình",
-        "priority_en": "medium",
-        "deadline_vi": "trước 15h thứ Sáu",
-        "deadline_en": "by 3 PM Friday",
-        "review_vi": "cuộc họp ưu tiên tính năng thứ Sáu",
-        "review_en": "Friday's feature prioritization meeting",
-    },
-    {
-        "priority_vi": "thấp",
-        "priority_en": "low",
-        "deadline_vi": "Không có",
-        "deadline_en": "None",
-        "review_vi": "đợt rà soát backlog tháng này",
-        "review_en": "this month's backlog review",
-    },
-]
+
+@dataclass(frozen=True)
+class GoldTriageRecord:
+    domain: str
+    language: str
+    email: str
+    summary: str
+    priority: str
+    action_items: list[str]
+    deadlines: list[str]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate a bilingual email-triage seed dataset."
-    )
+    parser = argparse.ArgumentParser(description="Generate a clean email-triage seed dataset.")
     parser.add_argument(
         "--output_path",
         type=Path,
@@ -568,380 +398,554 @@ def parse_args() -> argparse.Namespace:
         "--total_rows",
         type=int,
         default=DEFAULT_TOTAL_ROWS,
-        help="Total number of rows to generate. Must be a multiple of 8.",
+        help="Total number of rows to generate. Must be a positive multiple of 4.",
     )
     return parser.parse_args()
 
 
-def triage_output(
-    summary: str,
-    priority: str,
-    actions: list[str],
-    deadlines: str,
-    *,
-    vi: bool,
-) -> str:
-    if vi:
-        return (
-            f"Tóm tắt: {summary}\n"
-            f"Ưu tiên: {priority}\n"
-            f"Việc cần làm:\n{chr(10).join(actions)}\n"
-            f"Hạn chót: {deadlines}"
+def _pair(index: int) -> tuple[str, str]:
+    return NAME_PAIRS[index % len(NAME_PAIRS)]
+
+
+def _record_priority(index: int, variants: list[dict[str, str]]) -> dict[str, str]:
+    return variants[(index // 3) % len(variants)]
+
+
+def add_reference(email: str, *, language: str, domain: str, index: int) -> str:
+    reference = f"{domain.upper()}-{index + 1:03d}"
+    if language == "en":
+        return email.replace("\n\nThanks.", f"\n\nReference: {reference}.\n\nThanks.")
+    return email.replace("\n\nCảm ơn.", f"\n\nMã theo dõi: {reference}.\n\nCảm ơn.")
+
+
+def extract_deadline_phrase(text: str) -> str:
+    for marker in (" within ", " by ", " before ", " trong vòng ", " trước "):
+        if marker in text:
+            return marker.strip() + " " + text.split(marker, 1)[1].strip()
+    return text.strip()
+
+
+def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
+    item = OPS_RELEASE_ITEMS[index % len(OPS_RELEASE_ITEMS)]
+    variant = _record_priority(index, OPS_RELEASE_VARIANTS)
+    owner, reviewer = _pair(index)
+    blocker_action_en = f"Share any blocker in {item['channel_en']} before {variant['event_en']}"
+    blocker_action_vi = f"Báo blocker trên {item['channel_vi']} trước {variant['event_vi']}"
+    unconditional_blocker = (index // 4) % 2 == 0
+
+    if language == "en":
+        if unconditional_blocker:
+            blocker_clause_en = (
+                f", and share any blocker in {item['channel_en']} before {variant['event_en']}."
+            )
+        else:
+            blocker_clause_en = (
+                f". If anything slips, post it in {item['channel_en']} immediately."
+            )
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            f"Hi ops team,\n\n"
+            f"Before {variant['event_en']}, please have {owner} update the {item['deliverable_en']} "
+            f"{variant['first_en']} and {reviewer} verify {item['review_en']} {variant['second_en']}"
+            f"{blocker_clause_en}\n\n"
+            "Thanks."
         )
-    return (
-        f"Summary: {summary}\n"
-        f"Priority: {priority}\n"
-        f"Action items:\n{chr(10).join(actions)}\n"
-        f"Deadlines: {deadlines}"
-    )
-
-
-def ascii_name(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    return "".join(char for char in normalized if not unicodedata.combining(char))
-
-
-def build_internal_case(local_index: int) -> dict[str, object]:
-    item = INTERNAL_ITEMS[local_index % len(INTERNAL_ITEMS)]
-    variant = INTERNAL_VARIANTS[local_index // len(INTERNAL_ITEMS)]
-    owner_en = ascii_name(str(item["owner"]))
-    reviewer_en = ascii_name(str(item["reviewer"]))
-    return {
-        "vi_email": (
+        summary = (
+            f"Ops needs the {item['deliverable_en']} and {item['review_en']} finished "
+            f"before {variant['event_en']}."
+        )
+        actions = [
+            f"{owner} updates the {item['deliverable_en']} {variant['first_en']}",
+            f"{reviewer} verifies {item['review_en']} {variant['second_en']}",
+        ]
+        if unconditional_blocker:
+            actions.append(blocker_action_en)
+            deadlines = [variant["first_en"], variant["second_en"], variant["event_en"]]
+        else:
+            deadlines = [variant["first_en"], variant["second_en"]]
+    else:
+        if unconditional_blocker:
+            blocker_clause_vi = (
+                f", và báo blocker trên {item['channel_vi']} trước {variant['event_vi']}."
+            )
+        else:
+            blocker_clause_vi = (
+                f". Nếu phát sinh vấn đề, vui lòng thông báo trên {item['channel_vi']} ngay lập tức."
+            )
+        email = (
             f"Chủ đề: {item['subject_vi']}\n\n"
-            f"Chào cả nhóm,\n\n"
-            f"Trước {variant['event_vi']}, nhờ {item['owner']} cập nhật "
-            f"{item['deliverable_vi']} {variant['first_vi']} và {item['reviewer']} "
-            f"{item['review_task_vi']} {variant['second_vi']}. Nếu có blocker mới, "
-            f"báo lại ngay trên {item['channel_vi']}.\n\n"
+            f"Chào team ops,\n\n"
+            f"Trước {variant['event_vi']}, nhờ {owner} cập nhật {item['deliverable_vi']} "
+            f"{variant['first_vi']} và {reviewer} rà soát {item['review_vi']} {variant['second_vi']}"
+            f"{blocker_clause_vi}\n\n"
             "Cảm ơn."
-        ),
-        "en_email": (
-            f"Subject: {item['subject_en']}\n\n"
-            f"Hi team,\n\n"
-            f"Before {variant['event_en']}, please have {owner_en} update the "
-            f"{item['deliverable_en']} {variant['first_en']} and {reviewer_en} "
-            f"{item['review_task_en']} {variant['second_en']}. If any new blocker appears, "
-            f"post it in the {item['channel_en']} immediately.\n\n"
-            "Thanks."
-        ),
-        "vi_summary": (
-            f"Nhóm cần hoàn tất {item['deliverable_vi']} và {item['review_task_vi']} "
+        )
+        summary = (
+            f"Team ops cần hoàn tất {item['deliverable_vi']} và {item['review_vi']} "
             f"trước {variant['event_vi']}."
-        ),
-        "en_summary": (
-            f"The team needs the {item['deliverable_en']} updated and the review task "
-            f"completed before {variant['event_en']}."
-        ),
-        "vi_priority": variant["priority_vi"],
-        "en_priority": variant["priority_en"],
-        "vi_actions": [
-            f"- {item['owner']} cập nhật {item['deliverable_vi']} {variant['first_vi']}",
-            f"- {item['reviewer']} {item['review_task_vi']} {variant['second_vi']}",
-            "- Báo ngay nếu phát sinh blocker mới",
-        ],
-        "en_actions": [
-            f"- {owner_en} updates the {item['deliverable_en']} {variant['first_en']}",
-            f"- {reviewer_en} {item['review_task_en']} {variant['second_en']}",
-            "- Report any new blocker immediately",
-        ],
-        "vi_deadlines": (
-            f"{variant['first_vi']}; {variant['second_vi']}; {variant['event_vi']}"
-        ),
-        "en_deadlines": (
-            f"{variant['first_en']}; {variant['second_en']}; {variant['event_en']}"
-        ),
-    }
+        )
+        actions = [
+            f"{owner} cập nhật {item['deliverable_vi']} {variant['first_vi']}",
+            f"{reviewer} rà soát {item['review_vi']} {variant['second_vi']}",
+        ]
+        if unconditional_blocker:
+            actions.append(blocker_action_vi)
+            deadlines = [variant["first_vi"], variant["second_vi"], variant["event_vi"]]
+        else:
+            deadlines = [variant["first_vi"], variant["second_vi"]]
 
-
-def build_scheduling_case(local_index: int) -> dict[str, object]:
-    item = SCHEDULING_ITEMS[local_index % len(SCHEDULING_ITEMS)]
-    variant = SCHEDULING_VARIANTS[local_index // len(SCHEDULING_ITEMS)]
-    coord_en = ascii_name(str(item["coord"]))
-    support_en = ascii_name(str(item["support"]))
-    return {
-        "vi_email": (
-            f"Chủ đề: {item['subject_vi']}\n\n"
-            f"Chào cả nhóm,\n\n"
-            f"Vì {item['reason_vi']} nên {item['meeting_vi']} vào {variant['day_vi']} lúc "
-            f"{variant['old_vi']} cần dời sang {variant['new_vi']}. Nhờ {item['coord']} cập nhật "
-            f"lại lịch trên calendar và {item['support']} {item['support_task_vi']} "
-            f"{variant['confirm_vi']}.\n\n"
-            "Cảm ơn."
-        ),
-        "en_email": (
-            f"Subject: {item['subject_en']}\n\n"
-            f"Hi team,\n\n"
-            f"Because {item['reason_en']}, the {item['meeting_en']} on {variant['day_en']} at "
-            f"{variant['old_en']} needs to move to {variant['new_en']}. Please have {coord_en} "
-            f"update the calendar and {support_en} {item['support_task_en']} "
-            f"{variant['confirm_en']}.\n\n"
-            "Thanks."
-        ),
-        "vi_summary": (
-            f"{item['meeting_vi'].capitalize()} vào {variant['day_vi']} được dời từ "
-            f"{variant['old_vi']} sang {variant['new_vi']} và nhóm cần cập nhật lịch "
-            f"{variant['confirm_vi']}."
-        ),
-        "en_summary": (
-            f"The {item['meeting_en']} on {variant['day_en']} moved from {variant['old_en']} "
-            f"to {variant['new_en']}, and the schedule must be updated {variant['confirm_en']}."
-        ),
-        "vi_priority": variant["priority_vi"],
-        "en_priority": variant["priority_en"],
-        "vi_actions": [
-            f"- {item['coord']} cập nhật lại lịch trên calendar {variant['confirm_vi']}",
-            f"- {item['support']} {item['support_task_vi']} {variant['confirm_vi']}",
-        ],
-        "en_actions": [
-            f"- {coord_en} updates the calendar {variant['confirm_en']}",
-            f"- {support_en} {item['support_task_en']} {variant['confirm_en']}",
-        ],
-        "vi_deadlines": (
-            f"{variant['confirm_vi']}; lịch mới {variant['day_vi']} lúc {variant['new_vi']}"
-        ),
-        "en_deadlines": (
-            f"{variant['confirm_en']}; new meeting time {variant['day_en']} at {variant['new_en']}"
-        ),
-    }
-
-
-def build_support_case(local_index: int) -> dict[str, object]:
-    item = SUPPORT_ITEMS[local_index % len(SUPPORT_ITEMS)]
-    variant = SUPPORT_VARIANTS[local_index // len(SUPPORT_ITEMS)]
-    return {
-        "vi_email": (
-            f"Chủ đề: {item['subject_vi']}\n\n"
-            f"Chào team support,\n\n"
-            f"{item['group_vi'].capitalize()} báo rằng họ {item['issue_vi']} và việc này "
-            f"{variant['impact_vi']}. Nhờ team kiểm tra giúp và {item['follow_up_vi']} "
-            f"{variant['reply_vi']}. Nếu chưa fix kịp, vui lòng {item['workaround_vi']}.\n\n"
-            "Cảm ơn."
-        ),
-        "en_email": (
-            f"Subject: {item['subject_en']}\n\n"
-            f"Hi support team,\n\n"
-            f"{item['group_en'].capitalize()} reported that they {item['issue_en']}, and this "
-            f"{variant['impact_en']}. Please investigate and {item['follow_up_en']} "
-            f"{variant['reply_en']}. If the fix is not ready yet, please {item['workaround_en']}.\n\n"
-            "Thanks."
-        ),
-        "vi_summary": (
-            f"Team support cần xử lý việc {item['issue_vi']} vì sự cố này {variant['impact_vi']}."
-        ),
-        "en_summary": (
-            f"Support needs to address the fact that {item['group_en']} {item['issue_en']}, "
-            f"because it {variant['impact_en']}."
-        ),
-        "vi_priority": variant["priority_vi"],
-        "en_priority": variant["priority_en"],
-        "vi_actions": [
-            f"- Kiểm tra sự cố {item['issue_vi']}",
-            f"- {item['follow_up_vi'].capitalize()} {variant['reply_vi']}",
-            f"- {item['workaround_vi'].capitalize()} nếu chưa fix kịp",
-        ],
-        "en_actions": [
-            f"- Investigate why {item['group_en']} {item['issue_en']}",
-            f"- {item['follow_up_en'].capitalize()} {variant['reply_en']}",
-            f"- {item['workaround_en'].capitalize()} if the fix is not ready",
-        ],
-        "vi_deadlines": variant["reply_vi"],
-        "en_deadlines": variant["reply_en"],
-    }
-
-
-def build_billing_case(local_index: int) -> dict[str, object]:
-    item = BILLING_ITEMS[local_index % len(BILLING_ITEMS)]
-    variant = BILLING_VARIANTS[local_index // len(BILLING_ITEMS)]
-    when_vi = (
-        variant["deadline_vi"].lower()
-        if variant["deadline_vi"] != "Không có"
-        else "khi có thời gian"
+    return GoldTriageRecord(
+        domain="ops",
+        language=language,
+        email=add_reference(email, language=language, domain="ops", index=index),
+        summary=summary,
+        priority=variant["priority"],
+        action_items=actions,
+        deadlines=deadlines,
     )
-    when_en = (
-        variant["deadline_en"]
-        if variant["deadline_en"] != "None"
-        else "when the team has time"
+
+
+def build_ops_schedule_record(language: str, index: int) -> GoldTriageRecord:
+    item = OPS_SCHEDULE_ITEMS[index % len(OPS_SCHEDULE_ITEMS)]
+    variant = _record_priority(index, OPS_SCHEDULE_VARIANTS)
+    owner, reviewer = _pair(index + 1)
+
+    if language == "en":
+        confirm_phrase_en = variant["confirm_en"]
+        if item["meeting_en"] == "launch sync" and variant["priority"] == "high":
+            confirm_phrase_en = "by 2:30 PM today"
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            f"Hi operations,\n\n"
+            f"Because {item['reason_en']}, the {item['meeting_en']} scheduled for {variant['old_en']} "
+            f"needs to move to {variant['new_en']}. Please have {owner} update the calendar and "
+            f"{reviewer} confirm {item['support_en']} {confirm_phrase_en}.\n\n"
+            "Thanks."
+        )
+        if variant["priority"] == "high":
+            summary = (
+                f"The {item['meeting_en']} moved to {variant['new_en']}, and ops needs the schedule updated "
+                "this afternoon."
+            )
+        else:
+            summary = (
+                f"The {item['meeting_en']} moved to {variant['new_en']}, and ops needs the schedule updated "
+                f"{confirm_phrase_en}."
+            )
+        actions = [
+            "Update the calendar",
+            f"{reviewer} confirms {item['support_en']} {confirm_phrase_en}",
+        ]
+        deadlines = [confirm_phrase_en, variant["new_en"]]
+    else:
+        confirm_phrase_vi = variant["confirm_vi"]
+        if item["meeting_vi"] == "launch sync" and variant["priority"] == "high":
+            confirm_phrase_vi = "trước 14h30"
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            f"Chào team vận hành,\n\n"
+            f"Vì {item['reason_vi']} nên {item['meeting_vi']} dự kiến vào {variant['old_vi']} "
+            f"cần dời sang {variant['new_vi']}. Nhờ {owner} cập nhật lại lịch trên calendar và "
+            f"{reviewer} xác nhận {item['support_vi']} {confirm_phrase_vi}.\n\n"
+            "Cảm ơn."
+        )
+        if variant["priority"] == "high":
+            summary = (
+                f"{item['meeting_vi'].capitalize()} đã được dời sang {variant['new_vi']}, và team vận hành cần "
+                "cập nhật lịch ngay chiều nay."
+            )
+        else:
+            summary = (
+                f"{item['meeting_vi'].capitalize()} đã được dời sang {variant['new_vi']}, và team vận hành cần "
+                f"cập nhật lịch {confirm_phrase_vi}."
+            )
+        actions = [
+            "Cập nhật calendar",
+            f"{reviewer} xác nhận {item['support_vi']} {confirm_phrase_vi}",
+        ]
+        deadlines = [confirm_phrase_vi, variant["new_vi"]]
+
+    return GoldTriageRecord(
+        domain="ops",
+        language=language,
+        email=add_reference(email, language=language, domain="ops", index=100 + index),
+        summary=summary,
+        priority=variant["priority"],
+        action_items=actions,
+        deadlines=deadlines,
     )
-    return {
-        "vi_email": (
-            f"Chủ đề: {item['subject_vi']}\n\n"
-            f"Chào team finance,\n\n"
-            f"{item['customer_vi'].capitalize()} đang cần bên mình {item['request_vi']}. "
-            f"Nhờ team {item['request_vi']} {when_vi} và {item['secondary_vi']} "
-            f"{variant['context_vi']}.\n\n"
-            "Cảm ơn."
-        ),
-        "en_email": (
+
+
+def build_ops_fyi_record(language: str, index: int) -> GoldTriageRecord:
+    item = OPS_FYI_ITEMS[index % len(OPS_FYI_ITEMS)]
+
+    if language == "en":
+        email = (
             f"Subject: {item['subject_en']}\n\n"
-            f"Hi finance team,\n\n"
-            f"{item['customer_en'].capitalize()} needs us to {item['request_en']}. "
-            f"Please {item['request_en']} {when_en} and {item['secondary_en']} "
-            f"{variant['context_en']}.\n\n"
+            "Hi team,\n\n"
+            f"The {item['document_en']} for {item['context_en']} is now published in the operations wiki. "
+            "No response is needed unless you spot a factual error.\n\n"
             "Thanks."
-        ),
-        "vi_summary": (
-            f"Team finance được nhờ {item['request_vi']} và {item['secondary_vi']} "
-            f"{variant['context_vi']}."
-        ),
-        "en_summary": (
-            f"Finance is asked to {item['request_en']} and {item['secondary_en']} "
-            f"{variant['context_en']}."
-        ),
-        "vi_priority": variant["priority_vi"],
-        "en_priority": variant["priority_en"],
-        "vi_actions": [
-            f"- {item['request_vi'].capitalize()}",
-            f"- {item['secondary_vi'].capitalize()}",
-        ],
-        "en_actions": [
-            f"- {item['request_en'].capitalize()}",
-            f"- {item['secondary_en'].capitalize()}",
-        ],
-        "vi_deadlines": variant["deadline_vi"],
-        "en_deadlines": variant["deadline_en"],
-    }
-
-
-def build_product_case(local_index: int) -> dict[str, object]:
-    item = PRODUCT_ITEMS[local_index % len(PRODUCT_ITEMS)]
-    variant = PRODUCT_VARIANTS[local_index // len(PRODUCT_ITEMS)]
-    return {
-        "vi_email": (
+        )
+        summary = f"The {item['document_en']} is available for reference, and no immediate action is required."
+    else:
+        email = (
             f"Chủ đề: {item['subject_vi']}\n\n"
-            f"Chào team sản phẩm,\n\n"
-            f"{item['customer_vi'].capitalize()} vừa hỏi liệu bên mình có kế hoạch hỗ trợ "
-            f"{item['feature_vi']} hay không. Chưa cần phản hồi gấp, nhưng nhờ team ghi nhận "
-            f"lại để bổ sung vào {variant['review_vi']}. Nếu có thể, cập nhật trạng thái trước "
-            f"{variant['deadline_vi']}.\n\n"
+            "Chào cả nhóm,\n\n"
+            f"{item['document_vi'].capitalize()} phục vụ {item['context_vi']} đã được đăng trên wiki vận hành. "
+            "Không cần phản hồi ngay trừ khi mọi người phát hiện lỗi thực tế.\n\n"
             "Cảm ơn."
-        ),
-        "en_email": (
+        )
+        summary = f"{item['document_vi'].capitalize()} đã sẵn sàng để tham khảo và chưa cần hành động ngay."
+
+    return GoldTriageRecord(
+        domain="ops",
+        language=language,
+        email=add_reference(email, language=language, domain="ops", index=200 + index),
+        summary=summary,
+        priority="low",
+        action_items=["None"],
+        deadlines=["None"],
+    )
+
+
+def build_support_incident_record(language: str, index: int) -> GoldTriageRecord:
+    item = SUPPORT_INCIDENT_ITEMS[index % len(SUPPORT_INCIDENT_ITEMS)]
+    variant = _record_priority(index, SUPPORT_INCIDENT_VARIANTS)
+
+    if language == "en":
+        email = (
             f"Subject: {item['subject_en']}\n\n"
-            f"Hi product team,\n\n"
-            f"{item['customer_en'].capitalize()} asked whether we plan to support "
-            f"{item['feature_en']}. There is no urgent reply needed, but please log the request "
-            f"so it can be included in {variant['review_en']}. If possible, share a status note "
-            f"before {variant['deadline_en']}.\n\n"
+            "Hi support,\n\n"
+            f"We need help because {item['issue_en']}, and {item['impact_en']}. Please {variant['owner_en']} "
+            f"and {variant['update_en']}. If engineering is not ready, please {item['workaround_en']}.\n\n"
             "Thanks."
-        ),
-        "vi_summary": (
-            f"Team sản phẩm được nhờ ghi nhận đề xuất {item['feature_vi']} vào "
-            f"{variant['review_vi']}."
-        ),
-        "en_summary": (
-            f"The product team should log the {item['feature_en']} request for "
-            f"{variant['review_en']}."
-        ),
-        "vi_priority": variant["priority_vi"],
-        "en_priority": variant["priority_en"],
-        "vi_actions": [
-            f"- Ghi nhận đề xuất {item['feature_vi']} vào backlog",
-            f"- Đưa mục này vào {variant['review_vi']}",
-        ],
-        "en_actions": [
-            f"- Log the {item['feature_en']} request in the backlog",
-            f"- Include it in {variant['review_en']}",
-        ],
-        "vi_deadlines": variant["deadline_vi"],
-        "en_deadlines": variant["deadline_en"],
-    }
+        )
+        summary = (
+            f"Support needs to respond because {item['issue_en']} and {item['impact_en']}."
+        )
+        actions = [
+            variant["owner_en"].replace("confirm ", "Confirm ").replace("capture ", "Capture "),
+            variant["update_en"].replace("send ", "Send ").replace("share ", "Share ").replace("reply ", "Reply "),
+            item["workaround_en"].capitalize(),
+        ]
+        deadlines = [
+            extract_deadline_phrase(variant["owner_en"]),
+            extract_deadline_phrase(variant["update_en"]),
+        ]
+    else:
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            "Chào team support,\n\n"
+            f"Hiện tại {item['issue_vi']} và {item['impact_vi']}. Nhờ team {variant['owner_vi']} "
+            f"và {variant['update_vi']}. Nếu engineering chưa sẵn sàng, vui lòng {item['workaround_vi']}.\n\n"
+            "Cảm ơn."
+        )
+        summary = f"Team support cần phản hồi vì {item['issue_vi']} và {item['impact_vi']}."
+        actions = [
+            variant["owner_vi"].capitalize(),
+            variant["update_vi"].capitalize(),
+            item["workaround_vi"].capitalize(),
+        ]
+        deadlines = [
+            extract_deadline_phrase(variant["owner_vi"]),
+            extract_deadline_phrase(variant["update_vi"]),
+        ]
+
+    return GoldTriageRecord(
+        domain="support",
+        language=language,
+        email=add_reference(email, language=language, domain="support", index=index),
+        summary=summary,
+        priority=variant["priority"],
+        action_items=actions,
+        deadlines=deadlines,
+    )
 
 
-def build_case_catalog() -> list[dict[str, object]]:
-    builders = [
-        build_internal_case,
-        build_scheduling_case,
-        build_support_case,
-        build_billing_case,
-        build_product_case,
-    ]
-    cases: list[dict[str, object]] = []
-    cases_per_builder = MAX_CASE_COUNT // len(builders)
+def build_support_followup_record(language: str, index: int) -> GoldTriageRecord:
+    item = SUPPORT_FOLLOWUP_ITEMS[index % len(SUPPORT_FOLLOWUP_ITEMS)]
 
-    for local_index in range(cases_per_builder):
-        for builder in builders:
-            cases.append(builder(local_index))
+    if language == "en":
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            "Hi support leads,\n\n"
+            f"{item['issue_en'].capitalize()}. Please {item['request_en']}. Until then, {item['workaround_en']}.\n\n"
+            "Thanks."
+        )
+        summary = f"Support needs a concise follow-up while {item['issue_en']}."
+        actions = [
+            item["request_en"].capitalize(),
+            item["workaround_en"].capitalize(),
+        ]
+    else:
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            "Chào các lead support,\n\n"
+            f"{item['issue_vi'].capitalize()}. Nhờ team {item['request_vi']}. Trong lúc chờ, vui lòng "
+            f"{item['workaround_vi']}.\n\n"
+            "Cảm ơn."
+        )
+        summary = f"Team support cần một bản follow-up ngắn gọn trong khi {item['issue_vi']}."
+        actions = [
+            item["request_vi"].capitalize(),
+            item["workaround_vi"].capitalize(),
+        ]
 
-    return cases
+    return GoldTriageRecord(
+        domain="support",
+        language=language,
+        email=add_reference(email, language=language, domain="support", index=100 + index),
+        summary=summary,
+        priority="medium",
+        action_items=actions,
+        deadlines=["None"],
+    )
 
 
-def rows_from_case(case: dict[str, object]) -> list[dict[str, str]]:
-    vi_actions = list(case["vi_actions"])
-    en_actions = list(case["en_actions"])
+def build_support_fyi_record(language: str, index: int) -> GoldTriageRecord:
+    item = SUPPORT_FYI_ITEMS[index % len(SUPPORT_FYI_ITEMS)]
 
-    vi_action_output = "\n".join([*vi_actions, f"- Hạn chót: {case['vi_deadlines']}"])
-    en_action_output = "\n".join([*en_actions, f"- Deadlines: {case['en_deadlines']}"])
+    if language == "en":
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            "Hi support team,\n\n"
+            f"The {item['note_en']} are now posted in {item['channel_en']}. No response is required unless "
+            "someone finds an inaccurate detail.\n\n"
+            "Thanks."
+        )
+        summary = "The support notes are available for reference and do not require immediate action."
+    else:
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            "Chào team support,\n\n"
+            f"{item['note_vi'].capitalize()} đã được đăng trong {item['channel_vi']}. Hiện chưa cần phản hồi "
+            "trừ khi có chi tiết chưa chính xác.\n\n"
+            "Cảm ơn."
+        )
+        summary = "Ghi chú support đã sẵn sàng để tham khảo và chưa cần hành động ngay."
 
+    return GoldTriageRecord(
+        domain="support",
+        language=language,
+        email=add_reference(email, language=language, domain="support", index=200 + index),
+        summary=summary,
+        priority="low",
+        action_items=["None"],
+        deadlines=["None"],
+    )
+
+
+def build_billing_record(language: str, index: int) -> GoldTriageRecord:
+    item = BILLING_ITEMS[index % len(BILLING_ITEMS)]
+    variant = _record_priority(index, BILLING_VARIANTS)
+
+    if language == "en":
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            "Hi finance,\n\n"
+            f"Please {item['request_en']}. Also {item['secondary_en']}."
+        )
+        if variant["deadline_en"] != "None":
+            email += f" We need this done {variant['deadline_en']}.\n\nThanks."
+            deadlines = [variant["deadline_en"]]
+            second_action = f"{item['secondary_en'].capitalize()} {variant['deadline_en']}"
+        else:
+            email += " There is no hard deadline yet, but it should stay visible in the queue.\n\nThanks."
+            deadlines = ["None"]
+            second_action = item["secondary_en"].capitalize()
+        summary = f"Finance needs to {item['request_en']} and keep the customer updated."
+        actions = [
+            item["request_en"].capitalize(),
+            second_action,
+        ]
+    else:
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            "Chào team finance,\n\n"
+            f"Nhờ team {item['request_vi']} và {item['secondary_vi']}."
+        )
+        if variant["deadline_vi"] != "None":
+            email += f" Việc này cần hoàn tất {variant['deadline_vi']}.\n\nCảm ơn."
+            deadlines = [variant["deadline_vi"]]
+            second_action = f"{item['secondary_vi'].capitalize()} {variant['deadline_vi']}"
+        else:
+            email += " Hiện chưa có hạn chót cứng nhưng cần giữ đầu việc trong hàng chờ.\n\nCảm ơn."
+            deadlines = ["None"]
+            second_action = item["secondary_vi"].capitalize()
+        summary = f"Team finance cần {item['request_vi']} và cập nhật lại cho khách hàng."
+        actions = [
+            item["request_vi"].capitalize(),
+            second_action,
+        ]
+
+    return GoldTriageRecord(
+        domain="billing",
+        language=language,
+        email=add_reference(email, language=language, domain="billing", index=index),
+        summary=summary,
+        priority=variant["priority"],
+        action_items=actions,
+        deadlines=deadlines,
+    )
+
+
+def build_product_record(language: str, index: int) -> GoldTriageRecord:
+    item = PRODUCT_ITEMS[index % len(PRODUCT_ITEMS)]
+    variant = _record_priority(index, PRODUCT_VARIANTS)
+
+    if language == "en":
+        email = (
+            f"Subject: {item['subject_en']}\n\n"
+            "Hi product,\n\n"
+            f"A customer asked about {item['feature_en']}. Please log the {item['request_en']} request so it can be reviewed in "
+            f"{item['review_en']}."
+        )
+        if variant["deadline_en"] != "None":
+            email += f" If possible, share a quick status note {variant['deadline_en']}.\n\nThanks."
+            deadlines = [variant["deadline_en"]]
+            actions = [
+                f"Log the {item['request_en']} request",
+                f"Share a quick status note {variant['deadline_en']}",
+            ]
+        else:
+            email += " No immediate reply is required.\n\nThanks."
+            deadlines = ["None"]
+            actions = [
+                f"Log the {item['request_en']} request",
+            ]
+        summary = f"Product should log the {item['request_en']} request for {item['review_en']}."
+    else:
+        email = (
+            f"Chủ đề: {item['subject_vi']}\n\n"
+            "Chào team sản phẩm,\n\n"
+            f"Khách hàng vừa hỏi về {item['feature_vi']}. Nhờ team ghi nhận yêu cầu {item['request_vi']} để đưa vào "
+            f"{item['review_vi']}."
+        )
+        if variant["deadline_vi"] != "None":
+            email += f" Nếu thuận tiện, vui lòng cập nhật trạng thái {variant['deadline_vi']}.\n\nCảm ơn."
+            deadlines = [variant["deadline_vi"]]
+            actions = [
+                f"Ghi nhận yêu cầu {item['request_vi']}",
+                f"Cập nhật trạng thái {variant['deadline_vi']}",
+            ]
+        else:
+            email += " Hiện chưa cần phản hồi gấp.\n\nCảm ơn."
+            deadlines = ["None"]
+            actions = [
+                f"Ghi nhận yêu cầu {item['request_vi']}",
+            ]
+        summary = f"Team sản phẩm nên ghi nhận yêu cầu {item['request_vi']} cho {item['review_vi']}."
+
+    return GoldTriageRecord(
+        domain="product",
+        language=language,
+        email=add_reference(email, language=language, domain="product", index=index),
+        summary=summary,
+        priority=variant["priority"],
+        action_items=actions,
+        deadlines=deadlines,
+    )
+
+
+def build_domain_records(language: str, count: int, builders: list) -> list[GoldTriageRecord]:
+    records: list[GoldTriageRecord] = []
+    local_index = 0
+    while len(records) < count:
+        builder = builders[local_index % len(builders)]
+        records.append(builder(language, local_index))
+        local_index += 1
+    return records
+
+
+def build_record_catalog() -> list[GoldTriageRecord]:
+    records: list[GoldTriageRecord] = []
+    records.extend(
+        build_domain_records(
+            "en",
+            80,
+            [build_ops_release_record, build_ops_schedule_record, build_ops_schedule_record, build_ops_fyi_record],
+        )
+    )
+    records.extend(
+        build_domain_records(
+            "en",
+            60,
+            [build_support_incident_record, build_support_followup_record, build_support_fyi_record],
+        )
+    )
+    records.extend(
+        build_domain_records(
+            "vi",
+            35,
+            [build_ops_release_record, build_ops_schedule_record, build_ops_schedule_record, build_ops_fyi_record],
+        )
+    )
+    records.extend(build_domain_records("vi", 20, [build_support_incident_record, build_support_followup_record, build_support_fyi_record]))
+    records.extend(build_domain_records("en", 20, [build_billing_record]))
+    records.extend(build_domain_records("en", 10, [build_product_record]))
+    records.extend(build_domain_records("vi", 15, [build_billing_record]))
+    records.extend(build_domain_records("vi", 10, [build_product_record]))
+    return records
+
+
+def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
+    language = record.language
     return [
         {
-            "instruction": VI_SUMMARY,
-            "input": str(case["vi_email"]),
-            "output": str(case["vi_summary"]),
+            "instruction": SUMMARY_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": record.summary,
+            "domain": record.domain,
+            "language": record.language,
         },
         {
-            "instruction": EN_SUMMARY,
-            "input": str(case["en_email"]),
-            "output": str(case["en_summary"]),
+            "instruction": PRIORITY_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": record.priority,
+            "domain": record.domain,
+            "language": record.language,
         },
         {
-            "instruction": VI_PRIORITY,
-            "input": str(case["vi_email"]),
-            "output": str(case["vi_priority"]),
-        },
-        {
-            "instruction": EN_PRIORITY,
-            "input": str(case["en_email"]),
-            "output": str(case["en_priority"]),
-        },
-        {
-            "instruction": VI_ACTION,
-            "input": str(case["vi_email"]),
-            "output": vi_action_output,
-        },
-        {
-            "instruction": EN_ACTION,
-            "input": str(case["en_email"]),
-            "output": en_action_output,
-        },
-        {
-            "instruction": VI_TRIAGE,
-            "input": str(case["vi_email"]),
-            "output": triage_output(
-                str(case["vi_summary"]),
-                str(case["vi_priority"]),
-                vi_actions,
-                str(case["vi_deadlines"]),
-                vi=True,
+            "instruction": ACTION_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": format_action_extraction(
+                record.action_items,
+                record.deadlines,
+                language=language,
             ),
+            "domain": record.domain,
+            "language": record.language,
         },
         {
-            "instruction": EN_TRIAGE,
-            "input": str(case["en_email"]),
-            "output": triage_output(
-                str(case["en_summary"]),
-                str(case["en_priority"]),
-                en_actions,
-                str(case["en_deadlines"]),
-                vi=False,
+            "instruction": TRIAGE_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": format_full_triage(
+                record.summary,
+                record.priority,
+                record.action_items,
+                record.deadlines,
+                language=language,
             ),
+            "domain": record.domain,
+            "language": record.language,
         },
     ]
 
 
 def build_rows(total_rows: int = DEFAULT_TOTAL_ROWS) -> list[dict[str, str]]:
-    if total_rows <= 0 or total_rows % ROWS_PER_CASE != 0:
-        raise ValueError("total_rows must be a positive multiple of 8.")
+    if total_rows <= 0 or total_rows % ROWS_PER_RECORD != 0:
+        raise ValueError("total_rows must be a positive multiple of 4.")
 
-    case_catalog = build_case_catalog()
-    max_rows = len(case_catalog) * ROWS_PER_CASE
+    records = build_record_catalog()
+    max_rows = len(records) * ROWS_PER_RECORD
     if total_rows > max_rows:
         raise ValueError(f"total_rows cannot exceed {max_rows}.")
 
-    selected_case_count = total_rows // ROWS_PER_CASE
+    selected_record_count = total_rows // ROWS_PER_RECORD
     rows: list[dict[str, str]] = []
-    for case in case_catalog[:selected_case_count]:
-        rows.extend(rows_from_case(case))
+    for record in records[:selected_record_count]:
+        rows.extend(rows_from_record(record))
     return rows
 
 
