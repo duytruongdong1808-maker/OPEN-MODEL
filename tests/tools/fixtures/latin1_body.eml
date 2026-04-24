@@ -1,0 +1,10 @@
+From: Alice <alice@example.com>
+To: Reader <reader@example.com>
+Subject: Latin1 body
+Date: Fri, 24 Apr 2026 12:00:00 +0000
+Message-ID: <177704939636.36384.11973114717012283974@example.com>
+Content-Type: text/plain; charset="iso-8859-1"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+Café crème déjà vu. Plain ASCII remains readable.

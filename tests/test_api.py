@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
 from src.server.app import create_app
 from src.server.runtime import GenerationStream
 from src.server.storage import ConversationStore
+from src.tools.config import get_email_settings
+from src.tools.schemas import EmailMessage, EmailSummary, SendResult
 
 
 class FakeChatRuntime:
@@ -116,3 +119,111 @@ def test_stream_error_emits_error_event_and_does_not_persist_assistant_message(t
 
     conversation = client.get(f"/conversations/{conversation_id}").json()
     assert [message["role"] for message in conversation["messages"]] == ["user"]
+
+
+def configure_tools_env(monkeypatch) -> None:
+    get_email_settings.cache_clear()
+    monkeypatch.setenv("AGENT_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("AGENT_IMAP_USER", "reader@example.com")
+    monkeypatch.setenv("AGENT_IMAP_PASS", "imap-secret")
+    monkeypatch.setenv("AGENT_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("AGENT_SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("AGENT_SMTP_PASS", "smtp-secret")
+    monkeypatch.setenv("AGENT_SMTP_FROM", "Sender <sender@example.com>")
+    monkeypatch.setenv("AGENT_OPS_TOKEN", "test-token")
+
+
+def tools_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer test-token"}
+
+
+def test_tools_inbox_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    client = create_test_client(tmp_path)
+
+    response = client.get("/tools/inbox")
+
+    assert response.status_code == 401
+
+
+def test_tools_inbox_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    async def fake_read_inbox(limit: int = 20, unread_only: bool = True):
+        assert limit == 2
+        assert unread_only is False
+        return [
+            EmailSummary(
+                uid="123",
+                **{"from": "alice@example.com"},
+                to=["reader@example.com"],
+                subject="Hello",
+                date=now,
+                snippet="Short",
+                unread=True,
+                has_attachments=False,
+            )
+        ]
+
+    monkeypatch.setattr("src.server.app.email_tools.read_inbox", fake_read_inbox)
+    client = create_test_client(tmp_path)
+
+    response = client.get("/tools/inbox?limit=2&unread_only=false", headers=tools_headers())
+
+    assert response.status_code == 200
+    assert response.json()[0]["uid"] == "123"
+
+
+def test_tools_email_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    async def fake_get_email(uid: str):
+        assert uid == "123"
+        return EmailMessage(
+            uid="123",
+            **{"from": "alice@example.com"},
+            to=["reader@example.com"],
+            subject="Hello",
+            date=now,
+            snippet="Short",
+            unread=True,
+            has_attachments=False,
+            body_text="Full body",
+            headers={},
+            message_id="<m@example.com>",
+        )
+
+    monkeypatch.setattr("src.server.app.email_tools.get_email", fake_get_email)
+    client = create_test_client(tmp_path)
+
+    response = client.get("/tools/email/123", headers=tools_headers())
+
+    assert response.status_code == 200
+    assert response.json()["body_text"] == "Full body"
+
+
+def test_tools_send_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+
+    async def fake_send_request(payload):
+        assert payload.to == ["person@example.com"]
+        assert payload.subject == "Dry run"
+        return SendResult(status="dry_run", reason="dry-run enabled")
+
+    monkeypatch.setattr("src.server.app.email_tools.send_request", fake_send_request)
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/tools/send",
+        headers=tools_headers(),
+        json={
+            "to": ["person@example.com"],
+            "subject": "Dry run",
+            "body_text": "Hello",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "dry_run"

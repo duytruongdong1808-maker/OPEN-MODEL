@@ -1,0 +1,24 @@
+From: Alice <alice@example.com>
+To: Reader <reader@example.com>
+Subject: Multipart update
+Date: Fri, 24 Apr 2026 12:00:00 +0000
+Message-ID: <177704903670.22188.4515259555727950@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============0521068755788615098=="
+
+--===============0521068755788615098==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Plain body for the multipart message. It should win for snippets.
+
+--===============0521068755788615098==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><p>HTML body</p><script>alert(1)</script><img src=3D"http://track=
+er.example/pixel.png"></body></html>
+
+--===============0521068755788615098==--

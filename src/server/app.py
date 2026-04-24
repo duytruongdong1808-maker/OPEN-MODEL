@@ -5,11 +5,15 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from ..utils import DEFAULT_BASE_MODEL, DEFAULT_SYSTEM_PROMPT, ROOT_DIR, configure_logging, str_to_bool
+from ..tools import email_tools
+from ..tools.config import get_email_settings
+from ..tools.errors import AuthError, PolicyError, ToolError
+from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from .runtime import LocalModelChatService, SupportsStreamingReply
 from .schemas import (
     AssistantDeltaPayload,
@@ -56,7 +60,28 @@ def get_store(request: Request) -> ConversationStore:
 
 
 def get_runtime(request: Request) -> SupportsStreamingReply:
+    if request.app.state.runtime is None:
+        request.app.state.runtime = resolve_runtime()
     return request.app.state.runtime
+
+
+def verify_tools_token(authorization: str | None = Header(default=None)) -> None:
+    settings = get_email_settings()
+    expected = settings.ops_token.get_secret_value() if settings.ops_token else None
+    if not expected:
+        raise HTTPException(status_code=503, detail="AGENT_OPS_TOKEN is not configured.")
+    if authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="Invalid tools bearer token.")
+
+
+def tool_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, PolicyError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, ToolError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=500, detail=str(exc))
 
 
 def resolve_runtime() -> LocalModelChatService:
@@ -92,11 +117,44 @@ def create_app(
     )
 
     app.state.store = store or ConversationStore(Path(os.getenv("OPEN_MODEL_DB_PATH", DEFAULT_DB_PATH)))
-    app.state.runtime = runtime or resolve_runtime()
+    app.state.runtime = runtime
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get(
+        "/tools/inbox",
+        response_model=list[EmailSummary],
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def tools_inbox_endpoint(limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
+        try:
+            return await email_tools.read_inbox(limit=limit, unread_only=unread_only)
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
+
+    @app.get(
+        "/tools/email/{uid}",
+        response_model=EmailMessage,
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def tools_email_endpoint(uid: str) -> EmailMessage:
+        try:
+            return await email_tools.get_email(uid)
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
+
+    @app.post(
+        "/tools/send",
+        response_model=SendResult,
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def tools_send_endpoint(payload: SendRequest) -> SendResult:
+        try:
+            return await email_tools.send_request(payload)
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
 
     @app.get("/conversations", response_model=list[ConversationSummary])
     def list_conversations_endpoint(

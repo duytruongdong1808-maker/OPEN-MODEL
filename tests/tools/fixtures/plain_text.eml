@@ -1,0 +1,10 @@
+From: Alice <alice@example.com>
+To: Reader <reader@example.com>
+Subject: Plain text update
+Date: Fri, 24 Apr 2026 12:00:00 +0000
+Message-ID: <177704903668.22188.15509113790934369167@example.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Hello from a plain text message. This is useful for snippets.

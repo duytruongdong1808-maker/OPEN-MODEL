@@ -1,0 +1,31 @@
+From: Alice <alice@example.com>
+To: Reader <reader@example.com>
+Subject: Attachments included
+Date: Fri, 24 Apr 2026 12:00:00 +0000
+Message-ID: <177704903670.22188.12965428199775118355@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============4089333165401350109=="
+
+--===============4089333165401350109==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Please review the attached files.
+
+--===============4089333165401350109==
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="brief.pdf"
+MIME-Version: 1.0
+
+JVBERi0xLjQKJSB0aW55IGZha2UgcGRmCg==
+
+--===============4089333165401350109==
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="chart.png"
+MIME-Version: 1.0
+
+iVBORw0KGgpzbWFsbC1pbWFnZQ==
+
+--===============4089333165401350109==--
