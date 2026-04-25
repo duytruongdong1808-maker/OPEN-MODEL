@@ -1,122 +1,210 @@
-import { memo, useEffect } from "react";
+"use client";
 
-import { SourceList } from "@/components/source-list";
+import { memo, useEffect, useState } from "react";
+
+import { formatPublishedAt } from "@/lib/format";
 import type { SourceItem, StepUpdate } from "@/lib/types";
 
-const statusTone: Record<StepUpdate["status"], string> = {
-  pending: "border-stroke-subtle bg-action-muted text-content-secondary",
-  active: "border-interactive-border bg-interactive-active text-content-tertiary",
-  complete: "border-success-border bg-success-bg text-success-fg",
-  error: "border-error-border bg-error-bg text-error-fg",
-};
+import { IconChevron, IconCpu, IconLink, IconSliders } from "./icons";
 
 interface AgentStatusPanelProps {
-  open: boolean;
-  onClose: () => void;
   steps: StepUpdate[];
   sources: SourceItem[];
+  isStreaming: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
 }
 
+const STATUS_COLOR: Record<StepUpdate["status"], { dot: string; label: string }> = {
+  pending:  { dot: "bg-text-4",                     label: "text-text-4" },
+  active:   { dot: "bg-accent-fg animate-om-pulse", label: "text-text" },
+  complete: { dot: "bg-ok-fg",                      label: "text-text-2" },
+  error:    { dot: "bg-err-fg",                     label: "text-err-fg" },
+};
+
 function AgentStatusPanelImpl({
-  open,
-  onClose,
   steps,
   sources,
+  isStreaming,
+  open,
+  onToggle,
+  onClose,
 }: AgentStatusPanelProps) {
+  const [tab, setTab] = useState<"runtime" | "sources">("runtime");
+
   useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+    if (!open) return undefined;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
     };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
+  if (!open) return null;
 
-  const panelClasses = open
-    ? "pointer-events-auto translate-x-0 opacity-100"
-    : "pointer-events-none translate-x-6 opacity-0 xl:pointer-events-auto xl:translate-x-0 xl:opacity-100";
+  const activeStep = steps.find((step) => step.status === "active");
 
   return (
     <>
       <div
-        aria-hidden={!open}
-        className={`fixed inset-0 z-20 bg-overlay transition xl:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        aria-hidden="true"
+        className="fixed inset-0 z-20 bg-black/60 backdrop-blur-[2px] xl:hidden"
         onClick={onClose}
       />
-
       <aside
         id="runtime-panel"
-        aria-label="Runtime status"
-        className={`app-shell-scrollbar app-surface fixed inset-y-3 right-3 z-30 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-y-auto rounded-[24px] p-5 transition xl:sticky xl:top-3 xl:h-[calc(100vh-1.5rem)] xl:w-full xl:translate-x-0 xl:opacity-100 ${panelClasses}`}
+        aria-label="Runtime panel"
+        className="om-scroll fixed inset-y-0 right-0 z-30 flex w-[min(380px,92vw)] flex-col overflow-y-auto border-l border-line bg-bg-rail shadow-pop xl:sticky xl:top-0 xl:h-screen xl:w-full xl:shadow-none"
       >
-        <div className="flex items-start justify-between gap-4">
+        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
           <div>
-            <p className="app-meta text-content-secondary">Runtime</p>
-            <h2 className="mt-3 text-xl font-semibold text-content-primary">Runtime panel</h2>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">
-              Watch step status and citations without pushing the response out of focus.
-            </p>
+            <div className="om-meta">Runtime</div>
+            <h2 className="mt-0.5 text-[13.5px] font-semibold tracking-tight text-text">
+              {isStreaming ? activeStep?.label ?? "Working…" : steps.length === 0 ? "Idle" : "Trace ready"}
+            </h2>
           </div>
-
           <button
             type="button"
-            onClick={onClose}
-            aria-label="Close runtime panel"
-            className="app-icon-button app-button-secondary app-focus-ring xl:hidden"
+            onClick={onToggle}
+            aria-label="Hide runtime panel"
+            className="om-icon-btn om-focus"
           >
-            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4">
-              <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
-            </svg>
+            <IconChevron size={16} />
           </button>
+        </header>
+
+        <div className="flex border-b border-line px-4 pt-2">
+          {(["runtime", "sources"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTab(value)}
+              className={`relative -mb-px px-3 py-2 text-[12px] font-medium capitalize transition-colors ${
+                tab === value ? "text-text" : "text-text-3 hover:text-text-2"
+              }`}
+            >
+              {value}
+              {value === "sources" && sources.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-bg-emph px-1.5 py-0.5 font-mono text-[10px] text-text-3">
+                  {sources.length}
+                </span>
+              )}
+              {tab === value && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded bg-accent-fg" />}
+            </button>
+          ))}
         </div>
 
-        <section className="mt-8 border-t border-stroke-subtle pt-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-content-primary">Current steps</h3>
-            <span className="app-meta text-content-secondary">{steps.length || 0} live</span>
-          </div>
+        <div className="flex-1 px-4 py-3">
+          {tab === "runtime" ? (
+            <RuntimeTrace steps={steps} isStreaming={isStreaming} />
+          ) : (
+            <SourceTab sources={sources} />
+          )}
+        </div>
 
-          <div className="space-y-3" role="status" aria-live="polite">
-            {steps.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-stroke-strong bg-interactive-hover px-5 py-6 text-sm leading-6 text-content-secondary">
-                Runtime status will appear here when the assistant starts working.
-              </div>
-            ) : (
-              steps.map((step) => (
-                <div
-                  key={step.step_id}
-                  className={`rounded-[16px] border px-4 py-4 ${statusTone[step.status]}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{step.label}</p>
-                    <span
-                      className="text-[11px] font-medium uppercase tracking-[0.18em]"
-                      aria-label={`Step status: ${step.status}`}
-                    >
-                      {step.status}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
+        <div className="border-t border-line px-4 py-3">
+          <div className="om-meta mb-2">Inference</div>
+          <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-text-2">
+            <Stat label="Backend" value="llama.cpp · q4" />
+            <Stat label="Context" value="4 096 tok" />
+            <Stat label="Memory" value="22.4 GB" />
+            <Stat label="Speed" value="38 tok/s" />
           </div>
-        </section>
-
-        <section className="mt-8 border-t border-stroke-subtle pt-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-content-primary">Sources</h3>
-            <span className="app-meta text-content-secondary">{sources.length || 0} items</span>
-          </div>
-          <SourceList sources={sources} />
-        </section>
+          <button type="button" className="om-btn om-btn-ghost mt-3 w-full justify-center">
+            <IconSliders size={13} /> Inference settings
+          </button>
+        </div>
       </aside>
     </>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-line bg-bg-raised px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-text-4">{label}</div>
+      <div className="mt-0.5 text-[12px] text-text">{value}</div>
+    </div>
+  );
+}
+
+function RuntimeTrace({ steps, isStreaming }: { steps: StepUpdate[]; isStreaming: boolean }) {
+  if (steps.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-line-strong p-4 text-center">
+        <div className="mx-auto mb-2 grid h-8 w-8 place-items-center rounded-full border border-line bg-bg-raised text-text-3">
+          <IconCpu size={14} />
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-text-3">
+          Send a message to see runtime steps — retrieval, tool calls, and token generation.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <ol className="relative ml-1.5 border-l border-line pl-4">
+      {steps.map((step, i) => {
+        const tone = STATUS_COLOR[step.status];
+        return (
+          <li key={step.step_id} className="relative pb-3 last:pb-0">
+            <span
+              className={`absolute -left-[22px] top-1.5 h-2 w-2 rounded-full ${tone.dot}`}
+              style={step.status === "active" ? { boxShadow: "0 0 0 3px var(--accent-glow)" } : undefined}
+            />
+            <div className={`text-[12.5px] font-medium ${tone.label}`}>{step.label}</div>
+            <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-text-4">
+              step {String(i + 1).padStart(2, "0")} · {step.status}
+            </div>
+          </li>
+        );
+      })}
+      {isStreaming && (
+        <li className="relative pl-1 pt-1">
+          <span className="font-mono text-[10.5px] text-text-3">↳ streaming…</span>
+        </li>
+      )}
+    </ol>
+  );
+}
+
+function SourceTab({ sources }: { sources: SourceItem[] }) {
+  if (sources.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-line-strong p-4 text-center text-[11.5px] leading-relaxed text-text-3">
+        Citations from retrieval and tool calls appear here.
+      </div>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-1.5" aria-label="Citations">
+      {sources.map((source, i) => (
+        <li key={source.url}>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="om-focus group flex items-start gap-2.5 rounded-md border border-line bg-bg-raised p-2.5 transition-colors hover:border-line-hi hover:bg-bg-emph"
+          >
+            <span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full border border-accent-ring bg-accent-soft font-mono text-[10px] font-semibold text-accent-fg">
+              {i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="line-clamp-2 text-[12.5px] font-medium text-text">{source.title}</div>
+              <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-text-3">
+                <IconLink size={10} />
+                {source.source}
+                {source.published_at && (
+                  <span className="text-text-4">· {formatPublishedAt(source.published_at)}</span>
+                )}
+              </div>
+            </div>
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 

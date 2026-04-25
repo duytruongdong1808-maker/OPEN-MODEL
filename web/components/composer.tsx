@@ -1,4 +1,15 @@
+"use client";
+
 import { memo, useEffect, useRef } from "react";
+
+import {
+  IconCpu,
+  IconDoc,
+  IconGlobe,
+  IconRetry,
+  IconSend,
+  IconStop,
+} from "./icons";
 
 interface ComposerProps {
   draft: string;
@@ -25,23 +36,16 @@ function ComposerImpl({
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
+    if (!textarea) return;
     textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   }, [draft]);
 
-  return (
-    <div className="sticky bottom-0 z-10 border-t border-stroke-subtle bg-surface-base px-3 pb-3 pt-3 sm:px-6 sm:pb-4">
-      <div className="app-surface-strong rounded-[18px] p-3 sm:p-4">
-        <div className="flex items-center justify-between gap-3">
-          <label className="app-meta text-content-secondary" htmlFor="message-composer">
-            Prompt
-          </label>
-          <p className="hidden text-xs text-content-secondary sm:block">Enter to send</p>
-        </div>
+  const canSend = draft.trim().length > 0 && !isStreaming && !disabled;
 
+  return (
+    <div className="shrink-0 px-6 pt-2.5 pb-4 [background:linear-gradient(180deg,transparent,var(--bg-thread)_30%)]">
+      <div className="mx-auto max-w-[760px] rounded-xl border border-line-strong bg-bg-input p-3.5 pb-2.5 shadow-soft transition-all focus-within:border-accent-ring focus-within:[box-shadow:0_0_0_3px_var(--accent-soft),var(--shadow-soft)]">
         <textarea
           ref={textareaRef}
           id="message-composer"
@@ -50,47 +54,73 @@ function ComposerImpl({
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onSend();
+              if (canSend) onSend();
             }
           }}
-          rows={2}
-          placeholder="Ask a question, summarize, compare, or stage the next task."
-          className="app-focus-ring mt-3 max-h-[13.75rem] min-h-[4.75rem] w-full resize-none rounded-[12px] border border-transparent bg-transparent px-0 py-0 text-[15px] leading-7 text-content-primary outline-none placeholder:text-content-secondary"
+          rows={1}
           disabled={disabled}
+          placeholder={
+            isStreaming
+              ? "Generating response — press Stop to interrupt"
+              : "Ask anything. Shift + Enter for new line."
+          }
+          aria-label="Message"
+          className="block max-h-[200px] min-h-[28px] w-full resize-none border-0 bg-transparent px-0 py-1 text-[14.5px] leading-snug text-text outline-none placeholder:text-text-4"
         />
 
-        <div className="mt-3 flex flex-col gap-3 border-t border-stroke-subtle pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-content-secondary sm:text-sm">Shift + Enter adds a new line.</p>
-
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mt-2.5 flex items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-1">
             <button
               type="button"
-              onClick={onRetry}
-              disabled={!canRetry || isStreaming}
-              className="app-button app-button-secondary app-focus-ring text-sm font-medium"
+              aria-label="Attach"
+              className="grid h-7 w-7 place-items-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text"
             >
-              Retry
+              <IconDoc size={15} />
             </button>
+            <button
+              type="button"
+              aria-label="Search the web"
+              className="grid h-7 w-7 place-items-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text"
+            >
+              <IconGlobe size={15} />
+            </button>
+            <span className="mx-1 h-4 w-px bg-line" />
+            <span className="om-chip">
+              <IconCpu size={12} /> Llama-3.1-70B
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {canRetry && !isStreaming && (
+              <button type="button" onClick={onRetry} className="om-btn om-btn-ghost">
+                <IconRetry size={14} /> Retry
+              </button>
+            )}
             {isStreaming ? (
-              <button
-                type="button"
-                onClick={onStop}
-                className="app-button app-button-danger app-focus-ring text-sm font-semibold"
-              >
-                Stop
+              <button type="button" onClick={onStop} className="om-btn om-btn-stop">
+                <IconStop size={13} /> Stop
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onSend}
-                disabled={disabled || draft.trim().length === 0}
-                className="app-button app-button-primary app-focus-ring text-sm font-semibold"
+                disabled={!canSend}
+                className="om-btn om-btn-send disabled:opacity-40"
               >
-                Send
+                Send <IconSend size={13} />
               </button>
             )}
           </div>
         </div>
+      </div>
+
+      <div className="mx-auto mt-2 flex max-w-[760px] justify-between gap-3 font-mono text-[10.5px] text-text-4">
+        <span>
+          <span className="om-kbd">↵</span> send · <span className="om-kbd">⇧↵</span> newline
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <IconCpu size={11} /> running on-device · no telemetry
+        </span>
       </div>
     </div>
   );

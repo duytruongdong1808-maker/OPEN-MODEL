@@ -125,14 +125,15 @@ test("chat shell streams optimistic messages and updates the runtime panel", asy
     expect(screen.getByRole("heading", { name: /daily workspace/i })).toBeInTheDocument(),
   );
 
-  const textbox = screen.getByPlaceholderText(/ask a question/i);
+  const textbox = screen.getByRole("textbox", { name: /message/i });
   await user.type(textbox, "Summarize the latest");
   await user.click(screen.getByRole("button", { name: /send/i }));
 
   expect(screen.getAllByText("Summarize the latest").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Here is a concise briefing.").length).toBeGreaterThan(0);
+  await user.click(screen.getByRole("button", { name: /sources/i }));
   expect(screen.getAllByText("Reuters item").length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: /hide runtime panel/i })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /hide runtime panel/i }).length).toBeGreaterThan(0);
 });
 
 test("chat shell toggles the runtime panel", async () => {
@@ -151,6 +152,7 @@ test("chat shell toggles the runtime panel", async () => {
     expect(screen.getByRole("heading", { name: /daily workspace/i })).toBeInTheDocument(),
   );
 
+  await user.click(screen.getAllByRole("button", { name: /hide runtime panel/i })[0]);
   await user.click(screen.getByRole("button", { name: /show runtime panel/i }));
-  expect(screen.getAllByText(/runtime panel/i).length).toBeGreaterThan(0);
+  expect(screen.getByRole("complementary", { name: /runtime panel/i })).toBeInTheDocument();
 });

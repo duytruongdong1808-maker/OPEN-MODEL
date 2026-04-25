@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { IconModel } from "@/components/icons";
 import { createBrowserApiClient, formatApiError } from "@/lib/api";
 
 export default function HomePage() {
@@ -16,9 +17,7 @@ export default function HomePage() {
       const apiClient = createBrowserApiClient();
       try {
         const conversations = await apiClient.listConversations();
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         if (conversations.length > 0) {
           router.replace(`/chat/${conversations[0].id}`);
           return;
@@ -28,9 +27,7 @@ export default function HomePage() {
           router.replace(`/chat/${conversation.id}`);
         }
       } catch (cause) {
-        if (!cancelled) {
-          setError(formatApiError(cause));
-        }
+        if (!cancelled) setError(formatApiError(cause));
       }
     }
 
@@ -42,31 +39,34 @@ export default function HomePage() {
   }, [router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-6 sm:px-6">
-      <section className="app-surface w-full max-w-2xl rounded-[24px] px-6 py-8 sm:px-8 sm:py-10">
-        <div className="flex items-center gap-3">
-          <span className="h-2.5 w-2.5 rounded-full bg-action" aria-hidden="true" />
-          <p className="app-meta text-content-secondary">Open Model</p>
+    <main className="flex min-h-screen items-center justify-center px-6 py-10">
+      <section className="w-full max-w-md rounded-xl border border-line bg-bg-rail px-6 py-8 shadow-soft">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-8 w-8 place-items-center rounded-[9px] border border-accent-ring bg-accent-soft text-accent-fg">
+            <IconModel size={15} />
+          </span>
+          <div>
+            <div className="text-[13.5px] font-semibold tracking-tight text-text">Open Model</div>
+            <div className="om-meta">Local · on-device</div>
+          </div>
         </div>
 
-        <h1 className="mt-6 max-w-xl text-3xl font-semibold tracking-tight text-content-primary sm:text-4xl">
-          Preparing your workspace
+        <h1 className="mt-6 text-2xl font-semibold tracking-tight text-text">
+          {error ? "Couldn't start a session" : "Preparing your workspace"}
         </h1>
 
-        <p className="mt-3 max-w-xl text-sm leading-6 text-content-secondary sm:text-base">
-          {error ?? "Loading the latest conversation or creating a fresh thread."}
+        <p className="mt-2 text-sm leading-6 text-text-3">
+          {error ?? "Loading the latest conversation or creating a fresh thread…"}
         </p>
 
-        <div className="mt-8 grid gap-3 border-t border-stroke-subtle pt-5 text-sm text-content-secondary sm:grid-cols-2">
-          <div className="rounded-[16px] border border-stroke-subtle bg-surface-strong px-4 py-4">
-            <p className="app-meta text-content-secondary">State</p>
-            <p className="mt-2 font-medium text-content-primary">{error ? "Startup issue" : "Bootstrapping"}</p>
+        {!error && (
+          <div className="mt-6 flex items-center gap-1.5 font-mono text-[10.5px] text-text-3">
+            <span className="h-1 w-1 animate-om-pulse rounded-full bg-accent-fg" />
+            <span className="h-1 w-1 animate-om-pulse rounded-full bg-accent-fg [animation-delay:.15s]" />
+            <span className="h-1 w-1 animate-om-pulse rounded-full bg-accent-fg [animation-delay:.3s]" />
+            Connecting
           </div>
-          <div className="rounded-[16px] border border-stroke-subtle bg-surface-strong px-4 py-4">
-            <p className="app-meta text-content-secondary">Flow</p>
-            <p className="mt-2 font-medium text-content-primary">Restore thread or open a new session</p>
-          </div>
-        </div>
+        )}
       </section>
     </main>
   );

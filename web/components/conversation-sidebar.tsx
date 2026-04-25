@@ -1,7 +1,17 @@
-import { memo, useEffect } from "react";
+"use client";
+
+import { memo, useEffect, useMemo, useState } from "react";
 
 import { formatConversationTime, truncatePreview } from "@/lib/format";
 import type { ConversationSummary } from "@/lib/types";
+
+import {
+  IconModel,
+  IconPlus,
+  IconSearch,
+  IconUser,
+  IconX,
+} from "./icons";
 
 interface ConversationSidebarProps {
   conversations: ConversationSummary[];
@@ -13,6 +23,22 @@ interface ConversationSidebarProps {
   onSelectConversation: (conversationId: string) => void;
 }
 
+function groupConversations(items: ConversationSummary[]) {
+  const now = Date.now();
+  const day = 86_400_000;
+  const today: ConversationSummary[] = [];
+  const yesterday: ConversationSummary[] = [];
+  const earlier: ConversationSummary[] = [];
+  for (const c of items) {
+    const updated = new Date(c.updated_at).getTime();
+    const age = now - (Number.isNaN(updated) ? now : updated);
+    if (age < day) today.push(c);
+    else if (age < day * 2) yesterday.push(c);
+    else earlier.push(c);
+  }
+  return { Today: today, Yesterday: yesterday, Earlier: earlier };
+}
+
 function ConversationSidebarImpl({
   conversations,
   activeConversationId,
@@ -22,106 +48,159 @@ function ConversationSidebarImpl({
   onNewConversation,
   onSelectConversation,
 }: ConversationSidebarProps) {
+  const [query, setQuery] = useState("");
+
   useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+    if (!open) return undefined;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
     };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
+  const filtered = useMemo(() => {
+    if (!query.trim()) return conversations;
+    const q = query.toLowerCase();
+    return conversations.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        (c.last_message_preview ?? "").toLowerCase().includes(q),
+    );
+  }, [conversations, query]);
 
-  const sidebarClasses = open
-    ? "pointer-events-auto translate-x-0 opacity-100"
-    : "pointer-events-none -translate-x-6 opacity-0 lg:pointer-events-auto lg:translate-x-0 lg:opacity-100";
+  const groups = useMemo(() => groupConversations(filtered), [filtered]);
 
   return (
     <>
       <div
         aria-hidden={!open}
-        className={`fixed inset-0 z-20 bg-overlay transition lg:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        className={`fixed inset-0 z-20 bg-black/60 backdrop-blur-[2px] transition lg:hidden ${
+          open ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
         onClick={onClose}
       />
 
       <aside
         aria-label="Conversations"
-        className={`app-shell-scrollbar app-surface fixed inset-y-3 left-3 z-30 flex w-[min(19rem,calc(100vw-1.5rem))] flex-col overflow-y-auto rounded-[24px] p-5 transition lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:w-full lg:translate-x-0 lg:opacity-100 ${sidebarClasses}`}
+        className={`om-scroll fixed inset-y-0 left-0 z-30 flex w-[min(320px,86vw)] flex-col overflow-y-auto border-r border-line bg-bg-rail transition-transform lg:sticky lg:top-0 lg:h-screen lg:w-full lg:translate-x-0 ${
+          open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="app-meta text-content-secondary">Open Model</p>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-content-primary">Workspace</h1>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">
-              Manage threads and reopen recent context without leaving the main surface.
-            </p>
+        {/* Brand row */}
+        <div className="flex items-center gap-2.5 border-b border-line px-3.5 py-3.5">
+          <div className="flex flex-1 items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-[9px] border border-accent-ring bg-accent-soft text-accent-fg">
+              <IconModel size={15} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13.5px] font-semibold tracking-tight text-text">Open Model</div>
+              <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-text-3">
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-accent-solid"
+                  style={{ boxShadow: "0 0 0 3px var(--accent-glow)" }}
+                />
+                Local · on-device
+              </div>
+            </div>
           </div>
-
           <button
             type="button"
             onClick={onClose}
             aria-label="Close conversations"
-            className="app-icon-button app-button-secondary app-focus-ring lg:hidden"
+            className="om-icon-btn om-focus lg:hidden"
           >
-            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4">
-              <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
-            </svg>
+            <IconX size={16} />
           </button>
         </div>
 
+        {/* New chat */}
         <button
           type="button"
           onClick={onNewConversation}
-          className="app-button app-button-primary app-focus-ring mt-6 w-full justify-center px-4 py-3 text-sm font-semibold"
+          className="om-focus mx-3 mt-3 flex items-center gap-2.5 rounded-md border border-line-strong bg-bg-raised px-3 py-2.5 text-left text-[13px] font-medium text-text transition-colors hover:border-accent-ring hover:bg-bg-emph"
         >
-          {isCreatingConversation ? "Creating thread..." : "New chat"}
+          <span className="grid h-[22px] w-[22px] place-items-center rounded-md border border-accent-ring bg-accent-soft text-accent-fg">
+            <IconPlus size={15} />
+          </span>
+          <span className="flex-1">{isCreatingConversation ? "Creating thread…" : "New chat"}</span>
+          <span className="om-kbd">⌘ K</span>
         </button>
 
-        <div className="mt-8 border-t border-stroke-subtle pt-6">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm font-semibold text-content-primary">Recent conversations</p>
-            <span className="app-meta text-content-secondary">{conversations.length}</span>
-          </div>
+        {/* Search */}
+        <div className="mx-3 mt-3 mb-2 flex items-center gap-2 rounded-[9px] border border-line bg-bg-input px-2.5 py-2 text-text-3">
+          <IconSearch size={14} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search conversations"
+            aria-label="Search conversations"
+            className="min-w-0 flex-1 bg-transparent text-[12.5px] text-text outline-none placeholder:text-text-4"
+          />
+        </div>
 
-          <div className="space-y-2">
-            {conversations.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-stroke-strong bg-interactive-hover px-4 py-5 text-sm leading-6 text-content-secondary">
-                No conversation history yet. Start a thread to create a persistent workspace log.
+        {/* List */}
+        <div className="om-scroll flex-1 overflow-y-auto px-2 pt-1 pb-3">
+          {Object.entries(groups).map(([label, items]) =>
+            items.length === 0 ? null : (
+              <div key={label} className="mt-3.5 first:mt-1.5">
+                <div className="px-2 pb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-text-4">
+                  {label}
+                </div>
+                <ul className="flex flex-col gap-0.5">
+                  {items.map((conversation) => {
+                    const isActive = conversation.id === activeConversationId;
+                    return (
+                      <li key={conversation.id}>
+                        <button
+                          type="button"
+                          aria-current={isActive ? "page" : undefined}
+                          onClick={() => onSelectConversation(conversation.id)}
+                          className={`om-focus relative block w-full rounded-[9px] border px-2.5 py-2.5 text-left transition-colors ${
+                            isActive
+                              ? "border-line-strong bg-bg-raised"
+                              : "border-transparent hover:bg-white/[0.03]"
+                          }`}
+                        >
+                          {isActive && (
+                            <span className="absolute -left-px top-2.5 bottom-2.5 w-0.5 rounded bg-accent-fg" />
+                          )}
+                          <div className="flex items-baseline gap-2">
+                            <span className="flex-1 truncate text-[13px] font-medium text-text">
+                              {conversation.title}
+                            </span>
+                            <span className="shrink-0 font-mono text-[10px] text-text-4">
+                              {formatConversationTime(conversation.updated_at)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 line-clamp-1 text-xs text-text-3">
+                            {truncatePreview(conversation.last_message_preview)}
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-            ) : (
-              conversations.map((conversation) => {
-                const isActive = conversation.id === activeConversationId;
+            ),
+          )}
+          {filtered.length === 0 && (
+            <div className="px-3 py-4 text-center text-[12.5px] text-text-3">
+              No threads match “{query}”
+            </div>
+          )}
+        </div>
 
-                return (
-                  <button
-                    key={conversation.id}
-                    type="button"
-                    aria-current={isActive ? "page" : undefined}
-                    onClick={() => onSelectConversation(conversation.id)}
-                    className={`app-focus-ring w-full rounded-[18px] border px-4 py-4 text-left transition ${
-                      isActive
-                        ? "border-interactive-border bg-interactive-active"
-                        : "border-transparent bg-transparent hover:border-stroke-subtle hover:bg-interactive-hover"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-medium text-content-primary">{conversation.title}</p>
-                      <span className="text-xs uppercase tracking-[0.18em] text-content-secondary">
-                        {formatConversationTime(conversation.updated_at)}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-content-secondary">
-                      {truncatePreview(conversation.last_message_preview)}
-                    </p>
-                  </button>
-                );
-              })
-            )}
+        {/* Footer */}
+        <div className="border-t border-line p-2.5">
+          <div className="flex items-center gap-2.5 rounded-[10px] p-2 hover:bg-white/[0.03]">
+            <div className="grid h-7 w-7 place-items-center rounded-full border border-line-strong bg-bg-emph text-text-2">
+              <IconUser size={14} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-medium text-text">Local workspace</div>
+              <div className="font-mono text-[10px] text-text-3">on-device · 0 keys</div>
+            </div>
           </div>
         </div>
       </aside>
