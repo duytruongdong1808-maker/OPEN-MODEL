@@ -70,7 +70,7 @@ class AgentLoop:
             try:
                 command = parse_model_command(model_text)
             except ValueError:
-                messages.append({"role": "assistant", "content": model_text})
+                messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
                     {
                         "role": "user",
@@ -114,7 +114,7 @@ class AgentLoop:
             try:
                 result = await self._execute_tool(tool_name, arguments)
                 step.result = to_jsonable(result)
-                messages.append({"role": "assistant", "content": model_text})
+                messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
                     {
                         "role": "user",
@@ -128,7 +128,7 @@ class AgentLoop:
             except Exception as exc:
                 step.status = "error"
                 step.error = str(exc)
-                messages.append({"role": "assistant", "content": model_text})
+                messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
                     {
                         "role": "user",
@@ -169,17 +169,18 @@ class AgentLoop:
 
 def parse_model_command(text: str) -> dict[str, Any]:
     decoder = json.JSONDecoder()
-    stripped = _strip_json_fence(text.strip())
-    for index, char in enumerate(stripped):
-        if char != "{":
-            continue
-        try:
-            value, _ = decoder.raw_decode(stripped[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return value
-    raise ValueError("no JSON object found")
+    stripped = _strip_json_fence(text.strip()).strip()
+    if not stripped.startswith("{"):
+        raise ValueError("JSON object must start at the beginning of the response")
+    try:
+        value, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("JSON value is not an object")
+    if stripped[end:].strip():
+        raise ValueError("unexpected text after JSON object")
+    return value
 
 
 def _strip_json_fence(text: str) -> str:

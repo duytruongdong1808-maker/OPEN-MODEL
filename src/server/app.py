@@ -71,9 +71,10 @@ def get_store(request: Request) -> ConversationStore:
 
 
 def get_runtime(request: Request) -> SupportsStreamingReply:
-    if request.app.state.runtime is None:
-        request.app.state.runtime = resolve_runtime()
-    return request.app.state.runtime
+    runtime = request.app.state.runtime
+    if runtime is None:
+        raise HTTPException(status_code=503, detail="Model runtime is not loaded.")
+    return runtime
 
 
 def verify_tools_token(authorization: str | None = Header(default=None)) -> None:
