@@ -13,7 +13,6 @@ from src.tools.config import EmailSettings
 from src.tools.ledger import SendLedger
 from src.tools.safety import SafetyPipeline
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -112,7 +111,9 @@ class FakeIMAP:
             if "BODY.PEEK[]" in items or "RFC822" in items:
                 uid = uids[0]
                 raw = self._mb[uid][0]
-                return FakeFetchResponse("OK", [f"* 1 FETCH (UID {uid} BODY.PEEK[] {{{len(raw)}}}".encode(), raw, b")"])
+                return FakeFetchResponse(
+                    "OK", [f"* 1 FETCH (UID {uid} BODY.PEEK[] {{{len(raw)}}}".encode(), raw, b")"]
+                )
         if command == "STORE":
             uid = int(args[0])
             flags = self._mb[uid][1]
@@ -179,7 +180,9 @@ def email_settings(fake_imap) -> EmailSettings:
 @pytest.fixture
 def fake_imap(monkeypatch):
     instance = FakeIMAP(seed_mailbox())
-    monkeypatch.setattr("src.tools.email_client.aioimaplib.IMAP4_SSL", lambda *args, **kwargs: instance)
+    monkeypatch.setattr(
+        "src.tools.email_client.aioimaplib.IMAP4_SSL", lambda *args, **kwargs: instance
+    )
     return instance
 
 
@@ -230,6 +233,7 @@ def smtp_settings(smtp_capture) -> EmailSettings:
         dry_run=False,
         require_approval=False,
         daily_send_cap=20,
+        allowed_recipient_domains=["example.com"],
     )
 
 

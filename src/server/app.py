@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import secrets
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Iterable
+from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
 from ..agent import AgentLoop, AgentRunRequest, AgentRunResult, ApprovalDecisionResult
 from ..tools.ledger import SendLedger
-from ..utils import DEFAULT_BASE_MODEL, DEFAULT_SYSTEM_PROMPT, ROOT_DIR, configure_logging, str_to_bool
+from ..utils import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_SYSTEM_PROMPT,
+    ROOT_DIR,
+    configure_logging,
+    str_to_bool,
+)
 from ..tools import email_tools
 from ..tools.config import get_email_settings
 from ..tools.errors import AuthError, PolicyError, ToolError
@@ -29,9 +38,9 @@ from .schemas import (
 )
 from .storage import ConversationStore
 
-
 DEFAULT_DB_PATH = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
 DEFAULT_ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+DEFAULT_MAX_REQUEST_BYTES = 256 * 1024
 
 
 def parse_allowed_origins(raw_value: str | None) -> list[str]:
@@ -72,7 +81,8 @@ def verify_tools_token(authorization: str | None = Header(default=None)) -> None
     expected = settings.ops_token.get_secret_value() if settings.ops_token else None
     if not expected:
         raise HTTPException(status_code=503, detail="AGENT_OPS_TOKEN is not configured.")
-    if authorization != f"Bearer {expected}":
+    presented = (authorization or "").removeprefix("Bearer ").strip()
+    if not secrets.compare_digest(presented, expected):
         raise HTTPException(status_code=401, detail="Invalid tools bearer token.")
 
 
@@ -86,8 +96,8 @@ def tool_http_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
-def get_send_ledger() -> SendLedger:
-    return SendLedger()
+def get_send_ledger(request: Request) -> SendLedger:
+    return request.app.state.ledger
 
 
 def resolve_runtime() -> LocalModelChatService:
@@ -111,9 +121,20 @@ def create_app(
     *,
     store: ConversationStore | None = None,
     runtime: SupportsStreamingReply | None = None,
+    protect_chat_routes: bool = True,
 ) -> FastAPI:
     configure_logging()
-    app = FastAPI(title="Open Model Chat API", version="1.0.0")
+
+    @asynccontextmanager
+    async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
+        if fastapi_app.state.runtime is None:
+            resolved_runtime = resolve_runtime()
+            if isinstance(resolved_runtime, LocalModelChatService):
+                resolved_runtime._ensure_loaded()
+            fastapi_app.state.runtime = resolved_runtime
+        yield
+
+    app = FastAPI(title="Open Model Chat API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=parse_allowed_origins(os.getenv("OPEN_MODEL_CORS_ORIGINS")),
@@ -122,8 +143,34 @@ def create_app(
         allow_headers=["*"],
     )
 
-    app.state.store = store or ConversationStore(Path(os.getenv("OPEN_MODEL_DB_PATH", DEFAULT_DB_PATH)))
+    app.state.store = store or ConversationStore(
+        Path(os.getenv("OPEN_MODEL_DB_PATH", DEFAULT_DB_PATH))
+    )
     app.state.runtime = runtime
+    app.state.ledger = SendLedger(
+        Path(
+            os.getenv("OPEN_MODEL_LEDGER_DB_PATH", ROOT_DIR / "outputs" / "app" / "ledger.sqlite3")
+        )
+    )
+
+    @app.middleware("http")
+    async def reject_large_requests(request: Request, call_next):
+        max_request_bytes = int(
+            os.getenv("OPEN_MODEL_MAX_REQUEST_BYTES", str(DEFAULT_MAX_REQUEST_BYTES))
+        )
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                request_bytes = int(content_length)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length header."}
+                )
+            if request_bytes > max_request_bytes:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+        return await call_next(request)
+
+    chat_dependencies = [Depends(verify_tools_token)] if protect_chat_routes else []
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
@@ -222,19 +269,25 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Approval not found.") from exc
 
-    @app.get("/conversations", response_model=list[ConversationSummary])
+    @app.get(
+        "/conversations", response_model=list[ConversationSummary], dependencies=chat_dependencies
+    )
     def list_conversations_endpoint(
         conversation_store: ConversationStore = Depends(get_store),
     ) -> list[ConversationSummary]:
         return conversation_store.list_conversations()
 
-    @app.post("/conversations", response_model=ConversationSummary)
+    @app.post("/conversations", response_model=ConversationSummary, dependencies=chat_dependencies)
     def create_conversation_endpoint(
         conversation_store: ConversationStore = Depends(get_store),
     ) -> ConversationSummary:
         return conversation_store.create_conversation()
 
-    @app.get("/conversations/{conversation_id}", response_model=ConversationDetail)
+    @app.get(
+        "/conversations/{conversation_id}",
+        response_model=ConversationDetail,
+        dependencies=chat_dependencies,
+    )
     def get_conversation_endpoint(
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
@@ -244,7 +297,7 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Conversation not found.") from exc
 
-    @app.post("/conversations/{conversation_id}/messages/stream")
+    @app.post("/conversations/{conversation_id}/messages/stream", dependencies=chat_dependencies)
     async def stream_conversation_message(
         conversation_id: str,
         payload: ChatStreamRequest,
@@ -259,10 +312,12 @@ def create_app(
         conversation = conversation_store.get_conversation(conversation_id)
         summary = conversation_store.get_conversation_summary(conversation_id)
 
-        async def event_stream() -> Iterable[str]:
+        async def event_stream() -> AsyncIterator[str]:
             yield sse_event(
                 "message_start",
-                MessageStartPayload(conversation=summary, user_message=user_message).model_dump(mode="json"),
+                MessageStartPayload(conversation=summary, user_message=user_message).model_dump(
+                    mode="json"
+                ),
             )
 
             steps = build_steps(payload.mode)
@@ -270,9 +325,9 @@ def create_app(
                 first_step_id, first_step_label = steps[0]
                 yield sse_event(
                     "step_update",
-                    StepUpdatePayload(step_id=first_step_id, label=first_step_label, status="active").model_dump(
-                        mode="json"
-                    ),
+                    StepUpdatePayload(
+                        step_id=first_step_id, label=first_step_label, status="active"
+                    ).model_dump(mode="json"),
                 )
 
             generation = None
@@ -281,18 +336,18 @@ def create_app(
                 for step_id, step_label in steps[:-1]:
                     yield sse_event(
                         "step_update",
-                        StepUpdatePayload(step_id=step_id, label=step_label, status="complete").model_dump(
-                            mode="json"
-                        ),
+                        StepUpdatePayload(
+                            step_id=step_id, label=step_label, status="complete"
+                        ).model_dump(mode="json"),
                     )
 
                 if steps:
                     draft_step_id, draft_step_label = steps[-1]
                     yield sse_event(
                         "step_update",
-                        StepUpdatePayload(step_id=draft_step_id, label=draft_step_label, status="active").model_dump(
-                            mode="json"
-                        ),
+                        StepUpdatePayload(
+                            step_id=draft_step_id, label=draft_step_label, status="active"
+                        ).model_dump(mode="json"),
                     )
 
                 generation = chat_runtime.stream_reply(
@@ -326,9 +381,9 @@ def create_app(
                     draft_step_id, draft_step_label = steps[-1]
                     yield sse_event(
                         "step_update",
-                        StepUpdatePayload(step_id=draft_step_id, label=draft_step_label, status="complete").model_dump(
-                            mode="json"
-                        ),
+                        StepUpdatePayload(
+                            step_id=draft_step_id, label=draft_step_label, status="complete"
+                        ).model_dump(mode="json"),
                     )
 
                 yield sse_event(

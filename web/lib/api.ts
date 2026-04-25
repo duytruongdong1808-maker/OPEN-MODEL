@@ -32,6 +32,15 @@ export function resolveApiBaseUrl(): string {
   return DEFAULT_API_BASE_URL;
 }
 
+export function resolveApiBearerToken(): string | null {
+  return process.env.NEXT_PUBLIC_API_BEARER_TOKEN?.trim() || null;
+}
+
+function authHeaders(): HeadersInit {
+  const token = resolveApiBearerToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export function formatApiError(cause: unknown): string {
   if (!(cause instanceof Error)) {
     return `Unable to connect to the chat API at ${resolveApiBaseUrl()}.`;
@@ -49,6 +58,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
   });
@@ -124,6 +134,7 @@ export class HttpApiClient implements ApiClient {
       body: JSON.stringify(payload),
       headers: {
         "Content-Type": "application/json",
+        ...authHeaders(),
       },
       signal: handlers.signal,
     });

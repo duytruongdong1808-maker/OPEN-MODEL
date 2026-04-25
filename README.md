@@ -480,9 +480,13 @@ Optional environment variables:
 - `OPEN_MODEL_MODEL_REVISION`
 - `OPEN_MODEL_LOAD_IN_4BIT`
 - `OPEN_MODEL_DB_PATH`
+- `OPEN_MODEL_LEDGER_DB_PATH`
 - `OPEN_MODEL_CORS_ORIGINS`
+- `OPEN_MODEL_MAX_REQUEST_BYTES`
 
 If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lora/final_adapter` first and falls back to the base model if no adapter is present.
+
+The chat API endpoints use the same bearer token as the tools API. Set `AGENT_OPS_TOKEN`, then send `Authorization: Bearer <token>` to `/conversations/*` and `/messages/stream`.
 
 ### Run the frontend
 
@@ -498,6 +502,12 @@ If your API is not on `http://127.0.0.1:8000`, set:
 
 ```powershell
 $env:NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8000"
+```
+
+For local/internal testing against the protected chat API, set the browser client token to the same value as `AGENT_OPS_TOKEN`:
+
+```powershell
+$env:NEXT_PUBLIC_API_BEARER_TOKEN="<token>"
 ```
 
 Then open:

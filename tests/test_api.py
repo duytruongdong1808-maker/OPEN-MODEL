@@ -53,7 +53,7 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
 
 def create_test_client(tmp_path: Path, runtime: FakeChatRuntime | None = None) -> TestClient:
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    app = create_app(store=store, runtime=runtime or FakeChatRuntime())
+    app = create_app(store=store, runtime=runtime or FakeChatRuntime(), protect_chat_routes=False)
     return TestClient(app)
 
 
@@ -104,7 +104,9 @@ def test_stream_message_persists_user_and_assistant_messages(tmp_path: Path) -> 
     assert runtime.calls[0]["messages"][0]["content"] == "Tell me something useful."
 
 
-def test_stream_error_emits_error_event_and_does_not_persist_assistant_message(tmp_path: Path) -> None:
+def test_stream_error_emits_error_event_and_does_not_persist_assistant_message(
+    tmp_path: Path,
+) -> None:
     runtime = FakeChatRuntime(error=RuntimeError("Generation failed."))
     client = create_test_client(tmp_path, runtime=runtime)
     conversation_id = client.post("/conversations").json()["id"]
@@ -144,6 +146,16 @@ def test_tools_inbox_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch)
     client = create_test_client(tmp_path)
 
     response = client.get("/tools/inbox")
+
+    assert response.status_code == 401
+
+
+def test_conversations_require_bearer_token_by_default(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    app = create_app(store=ConversationStore(tmp_path / "chat.sqlite3"), runtime=FakeChatRuntime())
+    client = TestClient(app)
+
+    response = client.get("/conversations")
 
     assert response.status_code == 401
 

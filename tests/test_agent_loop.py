@@ -71,11 +71,11 @@ async def test_agent_loop_executes_tool_then_final() -> None:
 
 
 async def test_agent_loop_returns_parse_error() -> None:
-    runtime = ScriptedRuntime(["not json"])
+    runtime = ScriptedRuntime(["not json", "still not json"])
     loop = AgentLoop(runtime, registry=echo_registry())
 
     result = await loop.run("hello")
 
     assert result.stopped_reason == "error"
     assert "parse error" in result.answer
-
+    assert len(runtime.calls) == 2

@@ -150,6 +150,21 @@ async def test_disallowed_domain_blocked(tmp_path, smtp_settings, ledger_db):
     assert "gmail.com" in safety_log.read_text(encoding="utf-8")
 
 
+async def test_empty_allowlist_blocks_when_not_dry_run(tmp_path, smtp_settings, ledger_db):
+    settings = smtp_settings.model_copy(update={"allowed_recipient_domains": []})
+    safety = SafetyPipeline(
+        settings,
+        ledger_db,
+        safety_log_path=tmp_path / "agent_safety.log",
+    )
+    sender = SMTPSender(settings, safety)
+
+    result = await sender.send(request())
+
+    assert result.status == "blocked"
+    assert "allowed_recipient_domains" in str(result.reason)
+
+
 async def test_daily_cap_blocks_n_plus_one(smtp_settings, safety):
     settings = smtp_settings.model_copy(update={"daily_send_cap": 2})
     safety.settings = settings
@@ -296,7 +311,9 @@ async def test_ledger_tables_and_indexes_exist(ledger_db: SendLedger):
 
 
 async def test_safety_log_records_approval_and_blocks(tmp_path, smtp_settings, ledger_db):
-    settings = smtp_settings.model_copy(update={"require_approval": True, "allowed_recipient_domains": ["example.com"]})
+    settings = smtp_settings.model_copy(
+        update={"require_approval": True, "allowed_recipient_domains": ["example.com"]}
+    )
     safety_log = tmp_path / "agent_safety.log"
     safety = SafetyPipeline(settings, ledger_db, safety_log_path=safety_log)
     sender = SMTPSender(settings, safety)

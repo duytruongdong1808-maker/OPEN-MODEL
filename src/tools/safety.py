@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Literal
 
@@ -12,7 +13,6 @@ from .config import EmailSettings
 from .errors import PolicyError
 from .ledger import SendLedger
 from .schemas import SendRequest, SendResult
-
 
 DEFAULT_DRY_RUN_LOG = ROOT_DIR / "outputs" / "agent_dry_run.log"
 DEFAULT_SAFETY_LOG = ROOT_DIR / "outputs" / "agent_safety.log"
@@ -106,6 +106,8 @@ class SafetyPipeline:
     def _domain_block_reason(self, req: SendRequest) -> str | None:
         allowed = set(self.settings.allowed_recipient_domains)
         if not allowed:
+            if not self.settings.dry_run:
+                return "no allowed_recipient_domains configured and dry_run is off"
             return None
         for address in self._all_recipients(req):
             domain = address.rsplit("@", 1)[-1].lower()
@@ -115,7 +117,9 @@ class SafetyPipeline:
 
     async def _loop_block_reason(self, req: SendRequest) -> str | None:
         recipients = {address.lower() for address in self._all_recipients(req)}
-        if self.settings.smtp_user.lower() in recipients:
+        _, smtp_from_address = parseaddr(self.settings.smtp_from)
+        sender_address = (smtp_from_address or self.settings.smtp_from).lower()
+        if sender_address in recipients:
             return "self-send blocked"
         first_recipient = str(req.to[0])
         if await self.ledger.recent_duplicate(req.subject, first_recipient, window_s=60):
@@ -145,7 +149,9 @@ class SafetyPipeline:
                 "status": status,
                 "reason": reason,
                 "approval_id": approval_id,
-                "recipient_domains": sorted({address.rsplit("@", 1)[-1].lower() for address in self._all_recipients(req)}),
+                "recipient_domains": sorted(
+                    {address.rsplit("@", 1)[-1].lower() for address in self._all_recipients(req)}
+                ),
                 "subject_len": len(req.subject),
             },
         )
@@ -166,4 +172,3 @@ class SafetyPipeline:
                 handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
         await asyncio.to_thread(write)
-
