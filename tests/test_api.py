@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from src.server.app import create_app
+from src.server.app import create_app, get_send_ledger
 from src.server.runtime import GenerationStream
 from src.server.storage import ConversationStore
+from src.tools.ledger import SendLedger
 from src.tools.config import get_email_settings
-from src.tools.schemas import EmailMessage, EmailSummary, SendResult
+from src.tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 
 
 class FakeChatRuntime:
@@ -227,3 +229,53 @@ def test_tools_send_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> No
 
     assert response.status_code == 200
     assert response.json()["status"] == "dry_run"
+
+
+def test_agent_run_endpoint_returns_final_answer(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    runtime = FakeChatRuntime(chunks=['{"final":"Inbox checked."}'])
+    client = create_test_client(tmp_path, runtime=runtime)
+
+    response = client.post(
+        "/agent/run",
+        headers=tools_headers(),
+        json={"message": "Check my inbox", "max_steps": 2},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "Inbox checked."
+    assert payload["stopped_reason"] == "final"
+    assert runtime.calls[0]["mode"] == "agent"
+    assert "Available tools" in runtime.calls[0]["system_prompt"]
+
+
+def test_agent_run_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    client = create_test_client(tmp_path)
+
+    response = client.post("/agent/run", json={"message": "hello"})
+
+    assert response.status_code == 401
+
+
+def test_agent_approval_endpoints_update_ledger(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    ledger = SendLedger(tmp_path / "approvals.sqlite3")
+    approval_id = asyncio.run(
+        ledger.create_approval(
+            SendRequest(to=["person@example.com"], subject="Needs approval", body_text="Hello")
+        )
+    )
+    app = create_app(store=ConversationStore(tmp_path / "chat.sqlite3"), runtime=FakeChatRuntime())
+    app.dependency_overrides[get_send_ledger] = lambda: ledger
+    client = TestClient(app)
+
+    approve_response = client.post(
+        f"/agent/approvals/{approval_id}/approve",
+        headers={**tools_headers(), "X-Operator": "tester"},
+    )
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+    assert approve_response.json()["decided_by"] == "tester"

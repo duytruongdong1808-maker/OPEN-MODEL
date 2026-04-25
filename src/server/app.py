@@ -9,6 +9,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from ..agent import AgentLoop, AgentRunRequest, AgentRunResult, ApprovalDecisionResult
+from ..tools.ledger import SendLedger
 from ..utils import DEFAULT_BASE_MODEL, DEFAULT_SYSTEM_PROMPT, ROOT_DIR, configure_logging, str_to_bool
 from ..tools import email_tools
 from ..tools.config import get_email_settings
@@ -84,6 +86,10 @@ def tool_http_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
+def get_send_ledger() -> SendLedger:
+    return SendLedger()
+
+
 def resolve_runtime() -> LocalModelChatService:
     adapter_path = os.getenv("OPEN_MODEL_ADAPTER_PATH")
     load_in_4bit = os.getenv("OPEN_MODEL_LOAD_IN_4BIT")
@@ -155,6 +161,66 @@ def create_app(
             return await email_tools.send_request(payload)
         except Exception as exc:
             raise tool_http_error(exc) from exc
+
+    @app.post(
+        "/agent/run",
+        response_model=AgentRunResult,
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def agent_run_endpoint(
+        payload: AgentRunRequest,
+        chat_runtime: SupportsStreamingReply = Depends(get_runtime),
+    ) -> AgentRunResult:
+        try:
+            return await AgentLoop(chat_runtime).run(
+                payload.message,
+                system_prompt=payload.system_prompt,
+                max_steps=payload.max_steps,
+            )
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
+
+    @app.post(
+        "/agent/approvals/{approval_id}/approve",
+        response_model=ApprovalDecisionResult,
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def agent_approval_approve_endpoint(
+        approval_id: str,
+        x_operator: str | None = Header(default=None),
+        ledger: SendLedger = Depends(get_send_ledger),
+    ) -> ApprovalDecisionResult:
+        try:
+            row = await ledger.decide_approval(approval_id, "approved", x_operator or "ops")
+            return ApprovalDecisionResult(
+                id=row.id,
+                status=row.status,  # type: ignore[arg-type]
+                decided_at=row.decided_at,
+                decided_by=row.decided_by,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Approval not found.") from exc
+
+    @app.post(
+        "/agent/approvals/{approval_id}/reject",
+        response_model=ApprovalDecisionResult,
+        dependencies=[Depends(verify_tools_token)],
+    )
+    async def agent_approval_reject_endpoint(
+        approval_id: str,
+        x_operator: str | None = Header(default=None),
+        ledger: SendLedger = Depends(get_send_ledger),
+    ) -> ApprovalDecisionResult:
+        try:
+            row = await ledger.decide_approval(approval_id, "rejected", x_operator or "ops")
+            return ApprovalDecisionResult(
+                id=row.id,
+                status=row.status,  # type: ignore[arg-type]
+                decided_at=row.decided_at,
+                decided_by=row.decided_by,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Approval not found.") from exc
 
     @app.get("/conversations", response_model=list[ConversationSummary])
     def list_conversations_endpoint(

@@ -6,20 +6,24 @@ from .ledger import SendLedger
 from .safety import SafetyPipeline
 from .schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from .smtp_sender import SMTPSender
+from .registry import tool
 
 
+@tool(name="read_inbox", description="List recent email summaries from the configured inbox.")
 async def read_inbox(limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
     """List recent email summaries."""
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.list_inbox(limit=limit, unread_only=unread_only)
 
 
+@tool(name="get_email", description="Read a full email by IMAP UID.")
 async def get_email(uid: str) -> EmailMessage:
     """Read a full email by IMAP UID."""
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.get_email(uid)
 
 
+@tool(name="send_email", description="Send an email after safety checks, dry-run, and approval gates.")
 async def send_email(
     to: list[str],
     subject: str,
@@ -55,6 +59,7 @@ async def send_request(req: SendRequest) -> SendResult:
         await sender.close()
 
 
+@tool(name="reply_email", description="Reply to an existing email by UID with threading headers.")
 async def reply_email(
     uid: str,
     body_text: str,
@@ -84,12 +89,14 @@ async def reply_email(
     )
 
 
+@tool(name="mark_read", description="Mark an email read by IMAP UID.")
 async def mark_read(uid: str) -> None:
     """Mark an email read by IMAP UID."""
     async with IMAPReader(get_email_settings()) as reader:
         await reader.mark_read(uid)
 
 
+@tool(name="archive", description="Archive an email by IMAP UID.")
 async def archive(uid: str) -> None:
     """Archive an email by IMAP UID."""
     async with IMAPReader(get_email_settings()) as reader:
