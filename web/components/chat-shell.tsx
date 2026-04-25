@@ -42,6 +42,22 @@ function latestAssistantSources(messages: UiMessage[]): SourceItem[] {
   return latestAssistant?.sources ?? [];
 }
 
+function MenuIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4">
+      <path d="M3.5 6h13M3.5 10h13M3.5 14h13" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function PanelIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4">
+      <path d="M4 4.5h12a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Zm8 0v11" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 interface ChatShellProps {
   apiClient: ApiClient;
   conversationId: string;
@@ -293,6 +309,9 @@ export function ChatShell({
   const handleRetry = useCallback(() => {
     void sendMessage(lastPrompt ?? undefined);
   }, [sendMessage, lastPrompt]);
+  const handlePromptSelect = useCallback((prompt: string) => {
+    setDraft(prompt);
+  }, []);
 
   return (
     <main className="min-h-screen px-3 py-3 text-content-primary sm:px-4">
@@ -313,9 +332,10 @@ export function ChatShell({
               <button
                 type="button"
                 onClick={openSidebar}
-                className="app-button app-button-secondary app-focus-ring shrink-0 text-sm font-medium lg:hidden"
+                aria-label="Open conversations"
+                className="app-icon-button app-button-secondary app-focus-ring shrink-0 lg:hidden"
               >
-                Threads
+                <MenuIcon />
               </button>
 
               <div>
@@ -323,20 +343,19 @@ export function ChatShell({
                 <h1 className="mt-3 text-lg font-semibold tracking-tight text-content-primary sm:text-xl">
                   Local chat workspace
                 </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
-                  Threaded chat, live runtime steps, and citations stay in one focused surface.
-                </p>
               </div>
             </div>
 
             <button
               type="button"
               onClick={togglePanel}
-              className="app-button app-button-secondary app-focus-ring shrink-0 text-sm font-medium xl:hidden"
+              className="app-button app-button-secondary app-focus-ring shrink-0 px-3 text-sm font-medium xl:hidden"
+              aria-label={panelOpen ? "Hide runtime panel" : "Show runtime panel"}
               aria-expanded={panelOpen}
               aria-controls="runtime-panel"
             >
-              {panelOpen ? "Hide runtime panel" : "Show runtime panel"}
+              <PanelIcon />
+              <span className="hidden sm:inline">{panelOpen ? "Hide runtime" : "Runtime"}</span>
             </button>
           </header>
 
@@ -354,6 +373,7 @@ export function ChatShell({
               isLoading={isLoading}
               liveSteps={liveSteps}
               messages={messages}
+              onPromptSelect={handlePromptSelect}
               title={conversationTitle}
             />
             <div ref={threadAnchorRef} />

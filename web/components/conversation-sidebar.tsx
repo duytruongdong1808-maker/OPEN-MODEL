@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect } from "react";
 
 import { formatConversationTime, truncatePreview } from "@/lib/format";
 import type { ConversationSummary } from "@/lib/types";
@@ -22,6 +22,21 @@ function ConversationSidebarImpl({
   onNewConversation,
   onSelectConversation,
 }: ConversationSidebarProps) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
   const sidebarClasses = open
     ? "pointer-events-auto translate-x-0 opacity-100"
     : "pointer-events-none -translate-x-6 opacity-0 lg:pointer-events-auto lg:translate-x-0 lg:opacity-100";
@@ -50,9 +65,12 @@ function ConversationSidebarImpl({
           <button
             type="button"
             onClick={onClose}
-            className="app-button app-button-secondary app-focus-ring px-3 py-2 text-xs font-medium lg:hidden"
+            aria-label="Close conversations"
+            className="app-icon-button app-button-secondary app-focus-ring lg:hidden"
           >
-            Close
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4">
+              <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+            </svg>
           </button>
         </div>
 

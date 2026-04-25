@@ -7,7 +7,14 @@ interface MessageThreadProps {
   messages: UiMessage[];
   liveSteps: StepUpdate[];
   isLoading: boolean;
+  onPromptSelect: (prompt: string) => void;
 }
+
+const promptStarters = [
+  "Summarize the latest context",
+  "List the next best actions",
+  "Compare the available sources",
+];
 
 function statusTone(step: StepUpdate): string {
   if (step.status === "active") {
@@ -27,6 +34,7 @@ function MessageThreadImpl({
   messages,
   liveSteps,
   isLoading,
+  onPromptSelect,
 }: MessageThreadProps) {
   if (isLoading) {
     return (
@@ -62,18 +70,27 @@ function MessageThreadImpl({
       <div className="mb-8 border-b border-stroke-subtle pb-6">
         <p className="app-meta text-content-secondary">Conversation</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-content-primary">{title}</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">
-          Messages stay centered and readable while runtime steps and citations update in parallel.
-        </p>
       </div>
 
       {messages.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center rounded-[20px] border border-dashed border-stroke-strong bg-interactive-hover px-8 py-16 text-center">
-          <div className="max-w-xl">
+        <div className="flex flex-1 items-center justify-center px-2 py-12 text-center sm:px-8">
+          <div className="w-full max-w-2xl">
             <h3 className="text-2xl font-semibold text-content-primary">Start with a concrete task</h3>
-            <p className="mt-3 text-sm leading-6 text-content-secondary">
-              Ask for a summary, compare sources, or hand the workspace the next step to execute.
+            <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-content-secondary">
+              Pick a starter or write your own prompt below.
             </p>
+            <div className="mt-6 grid gap-2 sm:grid-cols-3">
+              {promptStarters.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => onPromptSelect(prompt)}
+                  className="app-focus-ring rounded-[14px] border border-stroke-subtle bg-surface-strong px-4 py-3 text-left text-sm font-medium leading-5 text-content-primary transition hover:border-stroke-strong hover:bg-surface-emphasis"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       ) : (
