@@ -1,44 +1,31 @@
-import { formatApiError, resolveApiBaseUrl, resolveApiBearerToken } from "@/lib/api";
+import { formatApiError, resolveApiBaseUrl } from "@/lib/api";
 
-const originalApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-const originalApiBearerToken = process.env.NEXT_PUBLIC_API_BEARER_TOKEN;
+const originalApiBaseUrl = process.env.NEXT_PUBLIC_API_PROXY_BASE_URL;
 
 afterEach(() => {
   if (originalApiBaseUrl === undefined) {
-    delete process.env.NEXT_PUBLIC_API_BASE_URL;
+    delete process.env.NEXT_PUBLIC_API_PROXY_BASE_URL;
   } else {
-    process.env.NEXT_PUBLIC_API_BASE_URL = originalApiBaseUrl;
-  }
-
-  if (originalApiBearerToken === undefined) {
-    delete process.env.NEXT_PUBLIC_API_BEARER_TOKEN;
-  } else {
-    process.env.NEXT_PUBLIC_API_BEARER_TOKEN = originalApiBearerToken;
+    process.env.NEXT_PUBLIC_API_PROXY_BASE_URL = originalApiBaseUrl;
   }
 });
 
-test("resolveApiBaseUrl defaults to the documented local FastAPI address", () => {
-  delete process.env.NEXT_PUBLIC_API_BASE_URL;
+test("resolveApiBaseUrl defaults to the internal Next.js API proxy", () => {
+  delete process.env.NEXT_PUBLIC_API_PROXY_BASE_URL;
 
-  expect(resolveApiBaseUrl()).toBe("http://127.0.0.1:8000");
+  expect(resolveApiBaseUrl()).toBe("/api/backend");
 });
 
-test("resolveApiBaseUrl trims a configured API base URL", () => {
-  process.env.NEXT_PUBLIC_API_BASE_URL = "http://localhost:9000/";
+test("resolveApiBaseUrl trims a configured proxy base URL", () => {
+  process.env.NEXT_PUBLIC_API_PROXY_BASE_URL = "/custom-api/";
 
-  expect(resolveApiBaseUrl()).toBe("http://localhost:9000");
-});
-
-test("resolveApiBearerToken returns a trimmed configured token", () => {
-  process.env.NEXT_PUBLIC_API_BEARER_TOKEN = " test-token ";
-
-  expect(resolveApiBearerToken()).toBe("test-token");
+  expect(resolveApiBaseUrl()).toBe("/custom-api");
 });
 
 test("formatApiError expands the browser network failure into an actionable message", () => {
-  delete process.env.NEXT_PUBLIC_API_BASE_URL;
+  delete process.env.NEXT_PUBLIC_API_PROXY_BASE_URL;
 
   expect(formatApiError(new Error("Failed to fetch"))).toContain(
-    "Unable to connect to the chat API at http://127.0.0.1:8000.",
+    "Unable to connect to the chat API through /api/backend.",
   );
 });

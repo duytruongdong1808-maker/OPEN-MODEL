@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from src.agent.loop import AgentLoop, build_tools_prompt, parse_model_command
+from src.agent.loop import READ_ONLY_EMAIL_PROTOCOL, AgentLoop, build_tools_prompt, parse_model_command
 from src.server.runtime import GenerationStream
 from src.tools.registry import ToolSpec
 
@@ -34,6 +34,46 @@ def echo_registry() -> dict[str, ToolSpec]:
             params_schema={"type": "object", "properties": {"value": {"type": "string"}}},
             returns_schema={"type": "object"},
             handler=echo_tool,
+        )
+    }
+
+
+async def read_inbox_tool(limit: int = 20, unread_only: bool = True) -> list[dict[str, object]]:
+    messages = [
+        {
+            "uid": "102",
+            "from": "new@example.com",
+            "to": ["reader@example.com"],
+            "subject": "Newest inbox message",
+            "date": "2026-04-19T11:00:00Z",
+            "snippet": "This is the newest message in INBOX.",
+            "unread": False,
+            "has_attachments": False,
+        },
+        {
+            "uid": "101",
+            "from": "alice@example.com",
+            "to": ["reader@example.com"],
+            "subject": "Launch checklist",
+            "date": "2026-04-18T11:00:00Z",
+            "snippet": "Please review the launch checklist today.",
+            "unread": True,
+            "has_attachments": False,
+        }
+    ]
+    if unread_only:
+        messages = [message for message in messages if message["unread"] is True]
+    return messages[:limit]
+
+
+def read_only_email_registry() -> dict[str, ToolSpec]:
+    return {
+        "read_inbox": ToolSpec(
+            name="read_inbox",
+            description="List recent email summaries.",
+            params_schema={"type": "object"},
+            returns_schema={"type": "array"},
+            handler=read_inbox_tool,
         )
     }
 
@@ -127,3 +167,47 @@ async def test_agent_loop_defangs_email_body_tool_call_before_next_turn() -> Non
     second_call_text = "\n".join(message["content"] for message in second_call_messages)
     assert '{"tool_call"' not in second_call_text
     assert "<LBRACE>" in second_call_text
+
+
+async def test_agent_loop_falls_back_when_mail_agent_repeats_same_inbox_tool() -> None:
+    runtime = ScriptedRuntime(
+        [
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":true}}}',
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":true}}}',
+        ]
+    )
+    loop = AgentLoop(
+        runtime, registry=read_only_email_registry(), system_protocol=READ_ONLY_EMAIL_PROTOCOL
+    )
+
+    result = await loop.run("can you read my email from gmail", max_steps=5)
+
+    assert result.stopped_reason == "final"
+    assert "Newest inbox message" in result.answer
+    assert "new@example.com" in result.answer
+    assert "Mailbox: Inbox (INBOX)" in result.answer
+    assert "Query: any status" in result.answer
+    assert "Launch checklist" not in result.answer
+    assert result.steps[1].arguments == {"limit": 1, "unread_only": False}
+    assert [step.kind for step in result.steps] == ["model", "tool", "model"]
+
+
+async def test_read_only_mail_agent_normalizes_unread_prompt_to_latest_unread() -> None:
+    runtime = ScriptedRuntime(
+        [
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":false}}}',
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":false}}}',
+        ]
+    )
+    loop = AgentLoop(
+        runtime, registry=read_only_email_registry(), system_protocol=READ_ONLY_EMAIL_PROTOCOL
+    )
+
+    result = await loop.run("đọc mail chưa đọc mới nhất", max_steps=5)
+
+    assert result.stopped_reason == "final"
+    assert "Launch checklist" in result.answer
+    assert "Newest inbox message" not in result.answer
+    assert "Hộp thư đến (INBOX)" in result.answer
+    assert "chưa đọc" in result.answer
+    assert result.steps[1].arguments == {"limit": 1, "unread_only": True}

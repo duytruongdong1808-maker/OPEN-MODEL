@@ -464,6 +464,7 @@ This repo now includes a ChatGPT-style internal MVP with:
 - a `Next.js` frontend under `web/`
 - local conversation storage in SQLite
 - streaming assistant replies over `SSE`
+- a read-only mail agent that can inspect inbox summaries and full emails, then produce prioritized briefs with action items
 
 ### Run the backend
 
@@ -483,10 +484,15 @@ Optional environment variables:
 - `OPEN_MODEL_LEDGER_DB_PATH`
 - `OPEN_MODEL_CORS_ORIGINS`
 - `OPEN_MODEL_MAX_REQUEST_BYTES`
+- `OPEN_MODEL_MAX_NEW_TOKENS`
+- `OPEN_MODEL_TEMPERATURE`
+- `OPEN_MODEL_TOP_P`
 
 If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lora/final_adapter` first and falls back to the base model if no adapter is present.
 
-The chat API endpoints use the same bearer token as the tools API. Set `AGENT_OPS_TOKEN`, then send `Authorization: Bearer <token>` to `/conversations/*` and `/messages/stream`.
+The chat API endpoints use the same bearer token as the tools API. Set `AGENT_OPS_TOKEN`, then send `Authorization: Bearer <token>` to `/conversations/*` and `/messages/stream`. The Next.js app below does this server-side through its API proxy, so the browser bundle never receives the token.
+
+The web chat runs the mail agent in read-only mode by default. For this workflow, configure the `AGENT_IMAP_*` variables and `AGENT_OPS_TOKEN`; SMTP settings are only needed for the separate send-mail workflow and are not used by the web summarizer.
 
 ### Run the frontend
 
@@ -501,14 +507,16 @@ npm run dev
 If your API is not on `http://127.0.0.1:8000`, set:
 
 ```powershell
-$env:NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8000"
+$env:OPEN_MODEL_API_BASE_URL="http://127.0.0.1:8000"
 ```
 
-For local/internal testing against the protected chat API, set the browser client token to the same value as `AGENT_OPS_TOKEN`:
+For local/internal testing against the protected chat API, set the server-side proxy token to the same value as `AGENT_OPS_TOKEN`:
 
 ```powershell
-$env:NEXT_PUBLIC_API_BEARER_TOKEN="<token>"
+$env:AGENT_OPS_TOKEN="<token>"
 ```
+
+Do not expose this token with a `NEXT_PUBLIC_*` variable; anything with that prefix is bundled into client-side JavaScript.
 
 Then open:
 

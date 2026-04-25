@@ -1,5 +1,6 @@
 export type MessageRole = "user" | "assistant";
 export type StepStatus = "pending" | "active" | "complete" | "error";
+export type ChatStreamMode = "chat" | "agent" | "news";
 
 export interface SourceItem {
   title: string;
@@ -43,7 +44,19 @@ export interface StepUpdate {
 export interface ChatStreamRequest {
   message: string;
   system_prompt?: string;
-  mode?: string;
+  mode?: ChatStreamMode;
+  max_steps?: number;
+}
+
+export interface AgentStep {
+  index: number;
+  kind: "model" | "tool";
+  status: "ok" | "error";
+  content: string | null;
+  tool_name: string | null;
+  arguments: Record<string, unknown> | null;
+  result: unknown;
+  error: string | null;
 }
 
 export type StreamEvent =
@@ -63,6 +76,10 @@ export type StreamEvent =
       payload: {
         delta: string;
       };
+    }
+  | {
+      type: "agent_step";
+      payload: AgentStep;
     }
   | {
       type: "source_add";

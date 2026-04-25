@@ -15,6 +15,7 @@ export interface ApiClient {
   listConversations(): Promise<ConversationSummary[]>;
   createConversation(): Promise<ConversationSummary>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
+  deleteConversation(conversationId: string): Promise<void>;
   streamConversationMessage(
     conversationId: string,
     payload: ChatStreamRequest,
@@ -22,23 +23,14 @@ export interface ApiClient {
   ): Promise<void>;
 }
 
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_BASE_URL = "/api/backend";
 
 export function resolveApiBaseUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  const configured = process.env.NEXT_PUBLIC_API_PROXY_BASE_URL?.trim();
   if (configured) {
     return configured.replace(/\/$/, "");
   }
   return DEFAULT_API_BASE_URL;
-}
-
-export function resolveApiBearerToken(): string | null {
-  return process.env.NEXT_PUBLIC_API_BEARER_TOKEN?.trim() || null;
-}
-
-function authHeaders(): HeadersInit {
-  const token = resolveApiBearerToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export function formatApiError(cause: unknown): string {
@@ -47,7 +39,7 @@ export function formatApiError(cause: unknown): string {
   }
 
   if (cause.message === "Failed to fetch") {
-    return `Unable to connect to the chat API at ${resolveApiBaseUrl()}. Make sure the FastAPI server is running or set NEXT_PUBLIC_API_BASE_URL.`;
+    return `Unable to connect to the chat API through ${resolveApiBaseUrl()}. Make sure the Next.js proxy and FastAPI server are running.`;
   }
 
   return cause.message;
@@ -58,7 +50,6 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
   });
@@ -87,6 +78,11 @@ function toStreamEvent(eventName: string, payload: unknown): StreamEvent {
       return {
         type: "assistant_delta",
         payload: payload as Extract<StreamEvent, { type: "assistant_delta" }>["payload"],
+      };
+    case "agent_step":
+      return {
+        type: "agent_step",
+        payload: payload as Extract<StreamEvent, { type: "agent_step" }>["payload"],
       };
     case "source_add":
       return {
@@ -124,6 +120,17 @@ export class HttpApiClient implements ApiClient {
     return requestJson<ConversationDetail>(`/conversations/${conversationId}`);
   }
 
+  async deleteConversation(conversationId: string): Promise<void> {
+    const response = await fetch(`${resolveApiBaseUrl()}/conversations/${conversationId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || "Unable to delete this conversation.");
+    }
+  }
+
   async streamConversationMessage(
     conversationId: string,
     payload: ChatStreamRequest,
@@ -134,7 +141,6 @@ export class HttpApiClient implements ApiClient {
       body: JSON.stringify(payload),
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(),
       },
       signal: handlers.signal,
     });

@@ -4,8 +4,6 @@ import { memo, useEffect, useRef } from "react";
 
 import {
   IconCpu,
-  IconDoc,
-  IconGlobe,
   IconRetry,
   IconSend,
   IconStop,
@@ -70,23 +68,8 @@ function ComposerImpl({
 
         <div className="mt-2.5 flex items-center justify-between gap-2.5">
           <div className="flex flex-wrap items-center gap-1">
-            <button
-              type="button"
-              aria-label="Attach"
-              className="grid h-7 w-7 place-items-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text"
-            >
-              <IconDoc size={15} />
-            </button>
-            <button
-              type="button"
-              aria-label="Search the web"
-              className="grid h-7 w-7 place-items-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text"
-            >
-              <IconGlobe size={15} />
-            </button>
-            <span className="mx-1 h-4 w-px bg-line" />
             <span className="om-chip">
-              <IconCpu size={12} /> Llama-3.1-70B
+              <IconCpu size={12} /> Local chat
             </span>
           </div>
 

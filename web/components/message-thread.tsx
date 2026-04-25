@@ -1,8 +1,8 @@
 "use client";
 
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 
-import type { StepUpdate, UiMessage } from "@/lib/types";
+import type { ChatStreamMode, StepUpdate, UiMessage } from "@/lib/types";
 
 import {
   IconAlert,
@@ -18,22 +18,39 @@ interface MessageThreadProps {
   title: string;
   messages: UiMessage[];
   liveSteps: StepUpdate[];
+  messageModes: Record<string, ChatStreamMode>;
   isLoading: boolean;
+  canRetry: boolean;
   onPromptSelect: (prompt: string) => void;
+  onRetry: () => void;
 }
 
 const STARTERS = [
-  { Icon: IconDoc,     title: "Summarize a document", body: "Paste text or a URL — I'll produce a structured brief." },
-  { Icon: IconCompare, title: "Compare options",      body: "Side-by-side analysis with pros, cons, and tradeoffs." },
-  { Icon: IconSpark,   title: "Plan the next step",   body: "Turn a goal into an actionable, prioritized checklist." },
+  {
+    Icon: IconDoc,
+    title: "Summarize this idea",
+    body: "Turn notes or a question into a clear, useful answer.",
+  },
+  {
+    Icon: IconCompare,
+    title: "Compare options",
+    body: "Weigh choices side by side with tradeoffs and next steps.",
+  },
+  {
+    Icon: IconSpark,
+    title: "Tóm tắt mail chưa đọc",
+    body: "Khi cần, agent sẽ đọc inbox và gom ưu tiên cho bạn.",
+  },
 ];
 
 function renderInline(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) =>
-    part.startsWith("**") && part.endsWith("**")
-      ? <strong key={i}>{part.slice(2, -2)}</strong>
-      : <span key={i}>{part}</span>,
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={i}>{part.slice(2, -2)}</strong>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
   );
 }
 
@@ -68,7 +85,10 @@ function renderRichText(text: string) {
     } else if (/^\*\*[^*]+\*\*$/.test(line.trim())) {
       flushP();
       out.push(
-        <h4 key={`h${out.length}`} className="mt-5 mb-1.5 text-[14px] font-semibold tracking-tight text-text">
+        <h4
+          key={`h${out.length}`}
+          className="mt-5 mb-1.5 text-[14px] font-semibold tracking-tight text-text"
+        >
           {line.trim().replace(/\*\*/g, "")}
         </h4>,
       );
@@ -92,9 +112,11 @@ function PromptStarters({ onPick }: { onPick: (prompt: string) => void }) {
       <div className="relative mx-auto mb-4 grid h-11 w-11 place-items-center rounded-xl border border-accent-ring bg-accent-soft text-accent-fg">
         <IconSpark size={20} />
       </div>
-      <h2 className="relative mb-2 text-[26px] font-semibold tracking-tight text-text">What should we work on?</h2>
+      <h2 className="relative mb-2 text-[26px] font-semibold tracking-tight text-text">
+        What should we work on?
+      </h2>
       <p className="relative mx-auto max-w-[440px] text-[14px] leading-6 text-text-3">
-        Open Model runs entirely on your hardware. Pick a starter, or write your own prompt below.
+        Chat normally, or ask about your inbox when you want the read-only mail agent to step in.
       </p>
       <div className="relative mt-7 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         {STARTERS.map(({ Icon, title, body }) => (
@@ -129,7 +151,28 @@ function UserMessage({ message }: { message: UiMessage }) {
   );
 }
 
-function AssistantMessage({ message, streaming }: { message: UiMessage; streaming: boolean }) {
+function AssistantMessage({
+  message,
+  mode,
+  streaming,
+  canRegenerate,
+  onRegenerate,
+}: {
+  message: UiMessage;
+  mode: ChatStreamMode;
+  streaming: boolean;
+  canRegenerate: boolean;
+  onRegenerate: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copyMessage = async () => {
+    if (!message.content || !navigator.clipboard?.writeText) return;
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
   return (
     <div className="group flex gap-3.5">
       <div className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-accent-ring bg-accent-soft text-accent-fg">
@@ -137,13 +180,15 @@ function AssistantMessage({ message, streaming }: { message: UiMessage; streamin
       </div>
       <div className="min-w-0 flex-1">
         <div className="mb-1.5 flex items-center gap-2.5">
-          <span className="text-[12px] font-semibold text-text-2">Open Model</span>
+          <span className="text-[12px] font-semibold text-text-2">
+            {mode === "agent" ? "Mail agent" : "Open Model"}
+          </span>
           {streaming && (
             <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-accent-fg">
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current" />
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current [animation-delay:.15s]" />
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current [animation-delay:.3s]" />
-              Generating
+              {mode === "agent" ? "Reading" : "Generating"}
             </span>
           )}
         </div>
@@ -176,12 +221,22 @@ function AssistantMessage({ message, streaming }: { message: UiMessage; streamin
 
         {!streaming && message.content && !message.error && (
           <div className="mt-2.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-            <button type="button" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 hover:bg-bg-raised hover:text-text">
-              <IconCheck size={13} /> Copy
+            <button
+              type="button"
+              onClick={() => void copyMessage()}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 hover:bg-bg-raised hover:text-text"
+            >
+              <IconCheck size={13} /> {copied ? "Copied" : "Copy"}
             </button>
-            <button type="button" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 hover:bg-bg-raised hover:text-text">
-              <IconRetry size={13} /> Regenerate
-            </button>
+            {canRegenerate && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 hover:bg-bg-raised hover:text-text"
+              >
+                <IconRetry size={13} /> Regenerate
+              </button>
+            )}
           </div>
         )}
 
@@ -191,7 +246,9 @@ function AssistantMessage({ message, streaming }: { message: UiMessage; streamin
               <IconAlert size={16} />
             </div>
             <div className="flex-1">
-              <div className="text-[13px] font-semibold text-text">Generation failed</div>
+              <div className="text-[13px] font-semibold text-text">
+                {mode === "agent" ? "Agent failed" : "Generation failed"}
+              </div>
               <div className="text-[12.5px] leading-relaxed text-text-2">{message.error}</div>
             </div>
           </div>
@@ -205,8 +262,11 @@ function MessageThreadImpl({
   title,
   messages,
   liveSteps,
+  messageModes,
   isLoading,
+  canRetry,
   onPromptSelect,
+  onRetry,
 }: MessageThreadProps) {
   const latestAssistantId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -220,8 +280,12 @@ function MessageThreadImpl({
       <div className="flex flex-1 items-center justify-center px-6 py-16">
         <div className="max-w-md text-center">
           <p className="om-meta">Syncing thread</p>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-text">Loading conversation</h2>
-          <p className="mt-3 text-sm leading-6 text-text-3">Restoring messages, runtime steps, and citations.</p>
+          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-text">
+            Loading conversation
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-text-3">
+            Restoring messages, runtime steps, and citations.
+          </p>
         </div>
       </div>
     );
@@ -231,11 +295,13 @@ function MessageThreadImpl({
     <div className="flex flex-1 flex-col" role="log" aria-label="Conversation messages" aria-live="polite">
       <header className="flex items-center justify-between gap-3 border-b border-line px-6 py-3.5">
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-4">Workspace · Local</div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-4">
+            Workspace / Local chat
+          </div>
           <h1 className="mt-1 text-[16px] font-semibold tracking-tight text-text">{title}</h1>
         </div>
         <span className="om-chip">
-          <span className="font-mono text-[11px]">Llama-3.1-70B</span>
+          <span className="font-mono text-[11px]">Open Model</span>
         </span>
       </header>
 
@@ -257,10 +323,10 @@ function MessageThreadImpl({
                           step.status === "active"
                             ? "border-accent-ring bg-accent-soft text-accent-fg"
                             : step.status === "complete"
-                            ? "border-ok-bd bg-ok-bg text-ok-fg"
-                            : step.status === "error"
-                            ? "border-err-bd bg-err-bg text-err-fg"
-                            : "border-line-strong bg-white/[0.04] text-text-3"
+                              ? "border-ok-bd bg-ok-bg text-ok-fg"
+                              : step.status === "error"
+                                ? "border-err-bd bg-err-bg text-err-fg"
+                                : "border-line-strong bg-white/[0.04] text-text-3"
                         }`}
                       >
                         {step.label}
@@ -273,7 +339,10 @@ function MessageThreadImpl({
                 ) : (
                   <AssistantMessage
                     message={message}
+                    mode={messageModes[message.id] ?? "chat"}
                     streaming={Boolean(message.pending) && !message.error}
+                    canRegenerate={canRetry && message.id === latestAssistantId}
+                    onRegenerate={onRetry}
                   />
                 )}
               </div>

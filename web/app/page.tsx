@@ -5,6 +5,27 @@ import { useRouter } from "next/navigation";
 
 import { IconModel } from "@/components/icons";
 import { createBrowserApiClient, formatApiError } from "@/lib/api";
+import type { ApiClient } from "@/lib/api";
+
+let pendingBootstrapConversation: Promise<string> | null = null;
+
+async function resolveInitialConversationId(apiClient: ApiClient): Promise<string> {
+  const conversations = await apiClient.listConversations();
+  if (conversations.length > 0) {
+    return conversations[0].id;
+  }
+
+  if (!pendingBootstrapConversation) {
+    pendingBootstrapConversation = apiClient
+      .createConversation()
+      .then((conversation) => conversation.id)
+      .finally(() => {
+        pendingBootstrapConversation = null;
+      });
+  }
+
+  return pendingBootstrapConversation;
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -16,16 +37,9 @@ export default function HomePage() {
     async function bootstrapConversation() {
       const apiClient = createBrowserApiClient();
       try {
-        const conversations = await apiClient.listConversations();
+        const conversationId = await resolveInitialConversationId(apiClient);
         if (cancelled) return;
-        if (conversations.length > 0) {
-          router.replace(`/chat/${conversations[0].id}`);
-          return;
-        }
-        const conversation = await apiClient.createConversation();
-        if (!cancelled) {
-          router.replace(`/chat/${conversation.id}`);
-        }
+        router.replace(`/chat/${conversationId}`);
       } catch (cause) {
         if (!cancelled) setError(formatApiError(cause));
       }

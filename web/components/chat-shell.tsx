@@ -10,11 +10,22 @@ import { MessageThread } from "@/components/message-thread";
 import type { ApiClient } from "@/lib/api";
 import type {
   ConversationSummary,
+  AgentStep,
+  ChatStreamMode,
   SourceItem,
   StreamEvent,
   StepUpdate,
   UiMessage,
 } from "@/lib/types";
+
+const DEFAULT_CONVERSATION_TITLE = "New chat";
+
+function isBlankConversation(conversation: ConversationSummary | null | undefined): boolean {
+  return (
+    conversation?.title === DEFAULT_CONVERSATION_TITLE &&
+    conversation.last_message_preview === null
+  );
+}
 
 function sortConversationList(items: ConversationSummary[]): ConversationSummary[] {
   return [...items].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
@@ -48,6 +59,50 @@ function latestAssistantSources(messages: UiMessage[]): SourceItem[] {
   return latestAssistant?.sources ?? [];
 }
 
+function agentStepLabel(step: AgentStep): string {
+  if (step.kind === "tool") {
+    return step.tool_name ? `Tool: ${step.tool_name}` : "Tool call";
+  }
+  return step.status === "error" ? "Agent reasoning failed" : "Agent reasoning";
+}
+
+function agentStepToRuntimeStep(step: AgentStep, position: number): StepUpdate {
+  return {
+    step_id: `agent-${position}-${step.kind}-${step.tool_name ?? "model"}-${step.index}`,
+    label: agentStepLabel(step),
+    status: step.status === "error" ? "error" : "complete",
+  };
+}
+
+const MAIL_READ_PATTERNS = [
+  /\b(read|check|summari[sz]e|triage|review|scan)\s+(my\s+)?(mail|email|emails|inbox)\b/i,
+  /\b(mail|email|emails|inbox)\s+(summary|brief|triage|priorit(?:y|ies)|unread|needs?\s+reply)\b/i,
+  /\b(unread|recent|latest|today'?s?)\s+(mail|email|emails|inbox)\b/i,
+  /\b(mail|email|emails)\s+(n[aà]o|c[aầ]n|ch[uư]a)\b/i,
+  /\b(d[oọ]c|kiem tra|ki[eể]m tra|tom tat|t[oó]m t[aắ]t|loc|l[oọ]c)\s+(mail|email|inbox|hop thu|h[oộ]p th[uư])\b/i,
+  /\b(mail|email|inbox|hop thu|h[oộ]p th[uư])\s+(chua doc|ch[uư]a [dđ]oc|ch[uư]a [dđ][oọ]c|can phan hoi|c[aầ]n ph[aả]n h[oồ]i|hom nay|h[oô]m nay)\b/i,
+];
+
+const EMAIL_WRITE_PATTERNS = [
+  /\b(write|draft|compose|send|reply|respond|forward)\s+(an?\s+)?(mail|email|emails)\b/i,
+  /\b(soan|so[aạ]n|gui|g[uử]i|tra loi|tr[aả] l[oờ]i|phan hoi|ph[aả]n h[oồ]i)\s+(mail|email)\b/i,
+];
+
+function stripVietnameseDiacritics(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, (match) => (match === "Đ" ? "D" : "d"));
+}
+
+function detectMailAgentIntent(prompt: string): boolean {
+  const normalized = stripVietnameseDiacritics(prompt);
+  if (EMAIL_WRITE_PATTERNS.some((pattern) => pattern.test(prompt) || pattern.test(normalized))) {
+    return false;
+  }
+  return MAIL_READ_PATTERNS.some((pattern) => pattern.test(prompt) || pattern.test(normalized));
+}
+
 interface ChatShellProps {
   apiClient: ApiClient;
   conversationId: string;
@@ -68,14 +123,20 @@ export function ChatShell({
   const [isStreaming, setIsStreaming] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [liveSteps, setLiveSteps] = useState<StepUpdate[]>([]);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [liveSources, setLiveSources] = useState<SourceItem[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const threadAnchorRef = useRef<HTMLDivElement | null>(null);
   const draftRef = useRef(draft);
   const isStreamingRef = useRef(isStreaming);
+  const isCreatingConversationRef = useRef(false);
+  const lastCreatedBlankConversationRef = useRef<ConversationSummary | null>(null);
+  const deletingConversationIdsRef = useRef<Set<string>>(new Set());
+  const [deletingConversationIds, setDeletingConversationIds] = useState<string[]>([]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -97,6 +158,7 @@ export function ChatShell({
       setIsLoading(true);
       setBanner(null);
       setLiveSteps([]);
+      setAgentSteps([]);
       setLiveSources([]);
       try {
         const [conversationList, conversation] = await Promise.all([
@@ -107,6 +169,7 @@ export function ChatShell({
         setConversations(sortConversationList(conversationList));
         setConversationTitle(conversation.title);
         setMessages(conversation.messages);
+        setMessageModes({});
       } catch (cause) {
         if (!cancelled) {
           setBanner(cause instanceof Error ? cause.message : "Unable to load this conversation.");
@@ -130,24 +193,118 @@ export function ChatShell({
   }, [messages, liveSteps]);
 
   const createNewConversation = useCallback(async () => {
+    if (isCreatingConversationRef.current) return;
+
+    const activeConversation = conversations.find((item) => item.id === conversationId);
+    const currentLooksBlank =
+      isBlankConversation(activeConversation) ||
+      (conversationTitle === DEFAULT_CONVERSATION_TITLE && messages.length === 0);
+    if (currentLooksBlank) {
+      setSidebarOpen(false);
+      return;
+    }
+
+    const knownConversationIds = new Set(conversations.map((item) => item.id));
+    const blankCandidates =
+      lastCreatedBlankConversationRef.current &&
+      !knownConversationIds.has(lastCreatedBlankConversationRef.current.id)
+        ? [...conversations, lastCreatedBlankConversationRef.current]
+        : conversations;
+    const reusableBlankConversation = sortConversationList(blankCandidates).find(isBlankConversation);
+    if (reusableBlankConversation) {
+      setSidebarOpen(false);
+      onNavigateConversation(reusableBlankConversation.id);
+      return;
+    }
+
+    isCreatingConversationRef.current = true;
     setIsCreatingConversation(true);
     try {
       const conversation = await apiClient.createConversation();
+      lastCreatedBlankConversationRef.current = conversation;
       setConversations((current) => upsertConversation(current, conversation));
       onNavigateConversation(conversation.id);
     } catch (cause) {
       setBanner(cause instanceof Error ? cause.message : "Unable to create a new conversation.");
     } finally {
+      isCreatingConversationRef.current = false;
       setIsCreatingConversation(false);
       setSidebarOpen(false);
     }
-  }, [apiClient, onNavigateConversation]);
+  }, [apiClient, conversationId, conversationTitle, conversations, messages.length, onNavigateConversation]);
+
+  const deleteActiveFallbackConversation = useCallback(
+    async (remainingConversations: ConversationSummary[]) => {
+      if (remainingConversations.length > 0) {
+        onNavigateConversation(remainingConversations[0].id);
+        return;
+      }
+
+      if (isCreatingConversationRef.current) return;
+      isCreatingConversationRef.current = true;
+      setIsCreatingConversation(true);
+      try {
+        const conversation = await apiClient.createConversation();
+        lastCreatedBlankConversationRef.current = conversation;
+        setConversations([conversation]);
+        onNavigateConversation(conversation.id);
+      } finally {
+        isCreatingConversationRef.current = false;
+        setIsCreatingConversation(false);
+      }
+    },
+    [apiClient, onNavigateConversation],
+  );
+
+  const deleteConversation = useCallback(
+    async (targetConversationId: string) => {
+      if (deletingConversationIdsRef.current.has(targetConversationId)) return;
+
+      const targetConversation = conversations.find((item) => item.id === targetConversationId);
+      const confirmed = window.confirm(
+        `Delete "${targetConversation?.title ?? "this chat"}"?`,
+      );
+      if (!confirmed) return;
+
+      deletingConversationIdsRef.current.add(targetConversationId);
+      setDeletingConversationIds((current) => [...current, targetConversationId]);
+      setBanner(null);
+
+      try {
+        await apiClient.deleteConversation(targetConversationId);
+        const remainingConversations = sortConversationList(
+          conversations.filter((item) => item.id !== targetConversationId),
+        );
+        setConversations(remainingConversations);
+        setSidebarOpen(false);
+
+        if (targetConversationId === conversationId) {
+          abortControllerRef.current?.abort();
+          await deleteActiveFallbackConversation(remainingConversations);
+        }
+      } catch (cause) {
+        setBanner(cause instanceof Error ? cause.message : "Unable to delete this conversation.");
+      } finally {
+        deletingConversationIdsRef.current.delete(targetConversationId);
+        setDeletingConversationIds((current) =>
+          current.filter((item) => item !== targetConversationId),
+        );
+      }
+    },
+    [
+      apiClient,
+      conversationId,
+      conversations,
+      deleteActiveFallbackConversation,
+    ],
+  );
 
   const sendMessage = useCallback(
     async (promptOverride?: string) => {
       const prompt = (promptOverride ?? draftRef.current).trim();
       if (!prompt || isStreamingRef.current) return;
 
+      const mode: ChatStreamMode = detectMailAgentIntent(prompt) ? "agent" : "chat";
       const optimisticUser = createOptimisticMessage("user", prompt);
       const optimisticAssistant = createOptimisticMessage("assistant", "");
       const streamController = new AbortController();
@@ -156,9 +313,11 @@ export function ChatShell({
       setLastPrompt(prompt);
       setBanner(null);
       setLiveSteps([]);
+      setAgentSteps([]);
       setLiveSources([]);
       setIsStreaming(true);
       setMessages((current) => [...current, optimisticUser, optimisticAssistant]);
+      setMessageModes((current) => ({ ...current, [optimisticAssistant.id]: mode }));
       setPanelOpen(true);
 
       let streamErrored = false;
@@ -199,12 +358,23 @@ export function ChatShell({
               error: null,
             }));
             break;
+          case "agent_step":
+            setAgentSteps((current) => [...current, event.payload]);
+            setLiveSteps((current) => [
+              ...current,
+              agentStepToRuntimeStep(event.payload, current.length),
+            ]);
+            break;
           case "source_add":
             setLiveSources((current) => [...current, event.payload]);
             break;
           case "message_complete":
             setConversationTitle(event.payload.conversation.title);
             setConversations((current) => upsertConversation(current, event.payload.conversation));
+            setMessageModes((current) => {
+              const { [optimisticAssistant.id]: _removed, ...remaining } = current;
+              return { ...remaining, [event.payload.assistant_message.id]: mode };
+            });
             updateAssistantMessage({
               ...event.payload.assistant_message,
               pending: false,
@@ -230,9 +400,13 @@ export function ChatShell({
       };
 
       try {
+        const streamPayload =
+          mode === "agent"
+            ? { message: prompt, mode, max_steps: 5 }
+            : { message: prompt, mode };
         await apiClient.streamConversationMessage(
           conversationId,
-          { message: prompt, mode: "chat" },
+          streamPayload,
           { signal: streamController.signal, onEvent: handleStreamEvent },
         );
       } catch (cause) {
@@ -311,8 +485,10 @@ export function ChatShell({
         isCreatingConversation={isCreatingConversation}
         open={sidebarOpen}
         onClose={closeSidebar}
+        onDeleteConversation={deleteConversation}
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}
+        deletingConversationIds={deletingConversationIds}
       />
 
       <main className="flex min-h-0 min-w-0 flex-col bg-bg-thread">
@@ -366,10 +542,13 @@ export function ChatShell({
 
         <div className="om-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
           <MessageThread
+            canRetry={Boolean(lastPrompt)}
             isLoading={isLoading}
             liveSteps={liveSteps}
+            messageModes={messageModes}
             messages={messages}
             onPromptSelect={handlePromptSelect}
+            onRetry={handleRetry}
             title={conversationTitle}
           />
           <div ref={threadAnchorRef} />
@@ -389,6 +568,7 @@ export function ChatShell({
 
       <AgentStatusPanel
         steps={liveSteps}
+        agentSteps={agentSteps}
         sources={displayedSources}
         isStreaming={isStreaming}
         open={panelOpen}

@@ -31,7 +31,28 @@ async def test_list_inbox_unread_only_filters(email_settings, fake_imap):
     reader = await connected_reader(email_settings)
     items = await reader.list_inbox(limit=10, unread_only=True)
 
-    assert [item.uid for item in items] == ["1", "3", "4", "5", "6", "7"]
+    assert [item.uid for item in items] == ["7", "6", "5", "4", "3", "1"]
+    assert ("uid_search", ("UNSEEN",)) in fake_imap.calls
+
+
+async def test_list_inbox_limit_one_returns_latest_in_inbox(email_settings, fake_imap):
+    reader = await connected_reader(email_settings)
+
+    items = await reader.list_inbox(limit=1, unread_only=False)
+
+    assert [item.uid for item in items] == ["7"]
+    assert fake_imap.selected == "INBOX"
+    assert ("uid_search", ("ALL",)) in fake_imap.calls
+
+
+async def test_list_inbox_limit_one_unread_returns_latest_unread(email_settings, fake_imap):
+    fake_imap._mb[7][1].add("\\Seen")
+    reader = await connected_reader(email_settings)
+
+    items = await reader.list_inbox(limit=1, unread_only=True)
+
+    assert [item.uid for item in items] == ["6"]
+    assert fake_imap.selected == "INBOX"
     assert ("uid_search", ("UNSEEN",)) in fake_imap.calls
 
 

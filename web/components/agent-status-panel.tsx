@@ -3,12 +3,13 @@
 import { memo, useEffect, useState } from "react";
 
 import { formatPublishedAt } from "@/lib/format";
-import type { SourceItem, StepUpdate } from "@/lib/types";
+import type { AgentStep, SourceItem, StepUpdate } from "@/lib/types";
 
 import { IconChevron, IconCpu, IconLink, IconSliders } from "./icons";
 
 interface AgentStatusPanelProps {
   steps: StepUpdate[];
+  agentSteps: AgentStep[];
   sources: SourceItem[];
   isStreaming: boolean;
   open: boolean;
@@ -25,6 +26,7 @@ const STATUS_COLOR: Record<StepUpdate["status"], { dot: string; label: string }>
 
 function AgentStatusPanelImpl({
   steps,
+  agentSteps,
   sources,
   isStreaming,
   open,
@@ -98,7 +100,7 @@ function AgentStatusPanelImpl({
 
         <div className="flex-1 px-4 py-3">
           {tab === "runtime" ? (
-            <RuntimeTrace steps={steps} isStreaming={isStreaming} />
+            <RuntimeTrace steps={steps} agentSteps={agentSteps} isStreaming={isStreaming} />
           ) : (
             <SourceTab sources={sources} />
           )}
@@ -130,7 +132,41 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RuntimeTrace({ steps, isStreaming }: { steps: StepUpdate[]; isStreaming: boolean }) {
+function truncateDetail(value: string, max = 220): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 3).trim()}...`;
+}
+
+function formatUnknown(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function agentStepDetail(step: AgentStep): string {
+  if (step.error) return step.error;
+  if (step.kind === "tool") {
+    const args = formatUnknown(step.arguments) || "{}";
+    const result = formatUnknown(step.result);
+    return result ? `args ${args} -> ${result}` : `args ${args}`;
+  }
+  return step.content ? truncateDetail(step.content) : "";
+}
+
+function RuntimeTrace({
+  steps,
+  agentSteps,
+  isStreaming,
+}: {
+  steps: StepUpdate[];
+  agentSteps: AgentStep[];
+  isStreaming: boolean;
+}) {
   if (steps.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-line-strong p-4 text-center">
@@ -148,6 +184,7 @@ function RuntimeTrace({ steps, isStreaming }: { steps: StepUpdate[]; isStreaming
     <ol className="relative ml-1.5 border-l border-line pl-4">
       {steps.map((step, i) => {
         const tone = STATUS_COLOR[step.status];
+        const detail = agentSteps[i] ? agentStepDetail(agentSteps[i]) : "";
         return (
           <li key={step.step_id} className="relative pb-3 last:pb-0">
             <span
@@ -158,6 +195,11 @@ function RuntimeTrace({ steps, isStreaming }: { steps: StepUpdate[]; isStreaming
             <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-text-4">
               step {String(i + 1).padStart(2, "0")} · {step.status}
             </div>
+            {detail && (
+              <div className="mt-1.5 rounded-md border border-line bg-bg-raised px-2 py-1.5 font-mono text-[10.5px] leading-5 text-text-3">
+                {truncateDetail(detail)}
+              </div>
+            )}
           </li>
         );
       })}

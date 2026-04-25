@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -9,10 +10,19 @@ from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import status
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 
-from ..agent import AgentLoop, AgentRunRequest, AgentRunResult, ApprovalDecisionResult
+from ..agent import (
+    READ_ONLY_EMAIL_PROTOCOL,
+    AgentLoop,
+    AgentRunRequest,
+    AgentRunResult,
+    AgentStep,
+    ApprovalDecisionResult,
+)
 from ..tools.ledger import SendLedger
 from ..utils import (
     DEFAULT_BASE_MODEL,
@@ -22,6 +32,7 @@ from ..utils import (
     str_to_bool,
 )
 from ..tools import email_tools
+from ..tools import TOOL_REGISTRY, ToolSpec
 from ..tools.config import get_email_settings
 from ..tools.errors import AuthError, PolicyError, ToolError
 from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
@@ -41,6 +52,7 @@ from .storage import ConversationStore
 DEFAULT_DB_PATH = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
 DEFAULT_ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
 DEFAULT_MAX_REQUEST_BYTES = 256 * 1024
+WEB_AGENT_TOOL_NAMES = ("read_inbox", "get_email")
 
 
 def parse_allowed_origins(raw_value: str | None) -> list[str]:
@@ -64,6 +76,10 @@ def build_steps(mode: str) -> list[tuple[str, str]]:
         ("context", "Reading conversation"),
         ("draft", "Drafting answer"),
     ]
+
+
+def get_web_agent_registry() -> dict[str, ToolSpec]:
+    return {name: TOOL_REGISTRY[name] for name in WEB_AGENT_TOOL_NAMES}
 
 
 def get_store(request: Request) -> ConversationStore:
@@ -298,6 +314,19 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Conversation not found.") from exc
 
+    @app.delete(
+        "/conversations/{conversation_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=chat_dependencies,
+    )
+    def delete_conversation_endpoint(
+        conversation_id: str,
+        conversation_store: ConversationStore = Depends(get_store),
+    ) -> Response:
+        if not conversation_store.delete_conversation(conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.post("/conversations/{conversation_id}/messages/stream", dependencies=chat_dependencies)
     async def stream_conversation_message(
         conversation_id: str,
@@ -312,6 +341,84 @@ def create_app(
         user_message = conversation_store.save_user_message(conversation_id, payload.message)
         conversation = conversation_store.get_conversation(conversation_id)
         summary = conversation_store.get_conversation_summary(conversation_id)
+
+        async def agent_event_stream() -> AsyncIterator[str]:
+            yield sse_event(
+                "message_start",
+                MessageStartPayload(conversation=summary, user_message=user_message).model_dump(
+                    mode="json"
+                ),
+            )
+
+            step_queue: asyncio.Queue[AgentStep] = asyncio.Queue()
+
+            async def on_step(step: AgentStep) -> None:
+                await step_queue.put(step)
+
+            agent = AgentLoop(
+                chat_runtime,
+                registry=get_web_agent_registry(),
+                system_protocol=READ_ONLY_EMAIL_PROTOCOL,
+            )
+            run_task = asyncio.create_task(
+                agent.run(
+                    payload.message,
+                    system_prompt=payload.system_prompt,
+                    max_steps=payload.max_steps,
+                    on_step=on_step,
+                )
+            )
+
+            try:
+                while not run_task.done():
+                    if await request.is_disconnected():
+                        run_task.cancel()
+                        return
+                    try:
+                        step = await asyncio.wait_for(step_queue.get(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        continue
+                    yield sse_event("agent_step", step.model_dump(mode="json"))
+
+                while not step_queue.empty():
+                    step = step_queue.get_nowait()
+                    yield sse_event("agent_step", step.model_dump(mode="json"))
+
+                result = await run_task
+                if result.stopped_reason == "error":
+                    yield sse_event("error", ErrorPayload(message=result.answer).model_dump(mode="json"))
+                    return
+
+                assistant_message = conversation_store.save_assistant_message(
+                    conversation_id,
+                    result.answer,
+                    sources=[],
+                )
+                updated_summary = conversation_store.get_conversation_summary(conversation_id)
+                yield sse_event(
+                    "message_complete",
+                    MessageCompletePayload(
+                        conversation=updated_summary,
+                        assistant_message=assistant_message,
+                    ).model_dump(mode="json"),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if not run_task.done():
+                    run_task.cancel()
+                yield sse_event("error", ErrorPayload(message=str(exc)).model_dump(mode="json"))
+
+        if payload.mode == "agent":
+            return StreamingResponse(
+                agent_event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         async def event_stream() -> AsyncIterator[str]:
             yield sse_event(

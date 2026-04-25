@@ -9,6 +9,7 @@ import {
   IconModel,
   IconPlus,
   IconSearch,
+  IconTrash,
   IconUser,
   IconX,
 } from "./icons";
@@ -21,6 +22,8 @@ interface ConversationSidebarProps {
   onClose: () => void;
   onNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
+  onDeleteConversation: (conversationId: string) => void;
+  deletingConversationIds?: string[];
 }
 
 function groupConversations(items: ConversationSummary[]) {
@@ -47,6 +50,8 @@ function ConversationSidebarImpl({
   onClose,
   onNewConversation,
   onSelectConversation,
+  onDeleteConversation,
+  deletingConversationIds = [],
 }: ConversationSidebarProps) {
   const [query, setQuery] = useState("");
 
@@ -117,6 +122,7 @@ function ConversationSidebarImpl({
         {/* New chat */}
         <button
           type="button"
+          aria-label="Create new chat"
           onClick={onNewConversation}
           className="om-focus mx-3 mt-3 flex items-center gap-2.5 rounded-md border border-line-strong bg-bg-raised px-3 py-2.5 text-left text-[13px] font-medium text-text transition-colors hover:border-accent-ring hover:bg-bg-emph"
         >
@@ -150,13 +156,11 @@ function ConversationSidebarImpl({
                 <ul className="flex flex-col gap-0.5">
                   {items.map((conversation) => {
                     const isActive = conversation.id === activeConversationId;
+                    const isDeleting = deletingConversationIds.includes(conversation.id);
                     return (
                       <li key={conversation.id}>
-                        <button
-                          type="button"
-                          aria-current={isActive ? "page" : undefined}
-                          onClick={() => onSelectConversation(conversation.id)}
-                          className={`om-focus relative block w-full rounded-[9px] border px-2.5 py-2.5 text-left transition-colors ${
+                        <div
+                          className={`group relative flex w-full items-stretch rounded-[9px] border transition-colors ${
                             isActive
                               ? "border-line-strong bg-bg-raised"
                               : "border-transparent hover:bg-white/[0.03]"
@@ -165,18 +169,35 @@ function ConversationSidebarImpl({
                           {isActive && (
                             <span className="absolute -left-px top-2.5 bottom-2.5 w-0.5 rounded bg-accent-fg" />
                           )}
-                          <div className="flex items-baseline gap-2">
-                            <span className="flex-1 truncate text-[13px] font-medium text-text">
-                              {conversation.title}
-                            </span>
-                            <span className="shrink-0 font-mono text-[10px] text-text-4">
-                              {formatConversationTime(conversation.updated_at)}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 line-clamp-1 text-xs text-text-3">
-                            {truncatePreview(conversation.last_message_preview)}
-                          </div>
-                        </button>
+                          <button
+                            type="button"
+                            aria-current={isActive ? "page" : undefined}
+                            aria-label={`Open ${conversation.title}`}
+                            onClick={() => onSelectConversation(conversation.id)}
+                            className="om-focus min-w-0 flex-1 rounded-l-[9px] px-2.5 py-2.5 text-left"
+                          >
+                            <div className="flex items-baseline gap-2">
+                              <span className="flex-1 truncate text-[13px] font-medium text-text">
+                                {conversation.title}
+                              </span>
+                              <span className="shrink-0 font-mono text-[10px] text-text-4">
+                                {formatConversationTime(conversation.updated_at)}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 line-clamp-1 text-xs text-text-3">
+                              {truncatePreview(conversation.last_message_preview)}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${conversation.title}`}
+                            disabled={isDeleting}
+                            onClick={() => onDeleteConversation(conversation.id)}
+                            className="om-focus mr-1 my-1 grid h-8 w-8 shrink-0 place-items-center rounded-md text-text-4 opacity-70 transition hover:bg-warn-bg hover:text-warn-fg hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 focus:opacity-100"
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        </div>
                       </li>
                     );
                   })}

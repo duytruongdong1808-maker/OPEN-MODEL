@@ -27,6 +27,7 @@ export const IconRetry   = (p: Props) => <svg {...base(p)}><path d="M3 12a9 9 0 
 export const IconPanel   = (p: Props) => <svg {...base(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /></svg>;
 export const IconSearch  = (p: Props) => <svg {...base(p)}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>;
 export const IconX       = (p: Props) => <svg {...base(p)}><path d="M18 6 6 18M6 6l12 12" /></svg>;
+export const IconTrash   = (p: Props) => <svg {...base(p)}><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15" /><path d="M10 11v6M14 11v6" /></svg>;
 export const IconCheck   = (p: Props) => <svg {...base(p)}><path d="M5 12.5 9.5 17 19 7" /></svg>;
 export const IconAlert   = (p: Props) => <svg {...base(p)}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>;
 export const IconDoc     = (p: Props) => <svg {...base(p)}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>;

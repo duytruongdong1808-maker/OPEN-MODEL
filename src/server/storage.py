@@ -99,6 +99,14 @@ class ConversationStore:
             ).fetchone()
         return row is not None
 
+    def delete_conversation(self, conversation_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversations WHERE id = ?",
+                (conversation_id,),
+            )
+        return cursor.rowcount > 0
+
     def list_conversations(self) -> list[ConversationSummary]:
         with self._connect() as connection:
             rows = connection.execute(

@@ -32,11 +32,12 @@ test("sidebar selects a conversation and triggers the callback", async () => {
       isCreatingConversation={false}
       open
       onClose={vi.fn()}
+      onDeleteConversation={vi.fn()}
       onNewConversation={vi.fn()}
       onSelectConversation={onSelectConversation}
     />,
   );
 
-  await user.click(screen.getByRole("button", { name: /second thread/i }));
+  await user.click(screen.getByRole("button", { name: /open second thread/i }));
   expect(onSelectConversation).toHaveBeenCalledWith("thread-2");
 });

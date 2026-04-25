@@ -288,7 +288,7 @@ class IMAPReader:
             for part in line.decode(errors="replace").split()
             if part.isdigit()
         ]
-        selected_uids = uids[-capped_limit:]
+        selected_uids = list(reversed(uids[-capped_limit:]))
         if not selected_uids:
             return []
         uid_set = ",".join(selected_uids)
