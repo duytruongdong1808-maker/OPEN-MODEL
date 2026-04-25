@@ -48,6 +48,12 @@ export interface ChatStreamRequest {
   max_steps?: number;
 }
 
+export interface GmailStatus {
+  connected: boolean;
+  email: string | null;
+  scopes: string[];
+}
+
 export interface AgentStep {
   index: number;
   kind: "model" | "tool";

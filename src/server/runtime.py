@@ -95,6 +95,10 @@ class LocalModelChatService:
                 )
         return self._model, self._tokenizer
 
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None and self._tokenizer is not None
+
     def stream_reply(
         self,
         *,

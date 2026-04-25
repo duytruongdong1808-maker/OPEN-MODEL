@@ -3,16 +3,20 @@
 import { memo, useEffect, useState } from "react";
 
 import { formatPublishedAt } from "@/lib/format";
-import type { AgentStep, SourceItem, StepUpdate } from "@/lib/types";
+import type { AgentStep, GmailStatus, SourceItem, StepUpdate } from "@/lib/types";
 
-import { IconChevron, IconCpu, IconLink, IconSliders } from "./icons";
+import { IconChevron, IconCpu, IconLogOut, IconMail, IconLink, IconSliders } from "./icons";
 
 interface AgentStatusPanelProps {
   steps: StepUpdate[];
   agentSteps: AgentStep[];
   sources: SourceItem[];
   isStreaming: boolean;
+  gmailStatus: GmailStatus | null;
+  gmailActionPending: boolean;
   open: boolean;
+  onGmailLogin: () => void;
+  onGmailLogout: () => void;
   onToggle: () => void;
   onClose: () => void;
 }
@@ -29,7 +33,11 @@ function AgentStatusPanelImpl({
   agentSteps,
   sources,
   isStreaming,
+  gmailStatus,
+  gmailActionPending,
   open,
+  onGmailLogin,
+  onGmailLogout,
   onToggle,
   onClose,
 }: AgentStatusPanelProps) {
@@ -107,6 +115,15 @@ function AgentStatusPanelImpl({
         </div>
 
         <div className="border-t border-line px-4 py-3">
+          <GmailAccountControl
+            status={gmailStatus}
+            pending={gmailActionPending}
+            onLogin={onGmailLogin}
+            onLogout={onGmailLogout}
+          />
+        </div>
+
+        <div className="border-t border-line px-4 py-3">
           <div className="om-meta mb-2">Inference</div>
           <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-text-2">
             <Stat label="Backend" value="llama.cpp · q4" />
@@ -120,6 +137,63 @@ function AgentStatusPanelImpl({
         </div>
       </aside>
     </>
+  );
+}
+
+function GmailAccountControl({
+  status,
+  pending,
+  onLogin,
+  onLogout,
+}: {
+  status: GmailStatus | null;
+  pending: boolean;
+  onLogin: () => void;
+  onLogout: () => void;
+}) {
+  const connected = status?.connected ?? false;
+  const email = status?.email ?? "Gmail not connected";
+  return (
+    <div>
+      <div className="om-meta mb-2">Gmail</div>
+      <div className="flex items-center gap-2.5 rounded-md border border-line bg-bg-raised px-2.5 py-2">
+        <span
+          className={`grid h-7 w-7 shrink-0 place-items-center rounded-md border ${
+            connected
+              ? "border-accent-ring bg-accent-soft text-accent-fg"
+              : "border-line-strong bg-bg-emph text-text-3"
+          }`}
+        >
+          <IconMail size={14} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12.5px] font-medium text-text">{email}</div>
+          <div className="font-mono text-[10px] text-text-3">
+            {connected ? "read-only" : "sign in to read mail"}
+          </div>
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            aria-label="Disconnect Gmail"
+            disabled={pending}
+            onClick={onLogout}
+            className="om-icon-btn om-focus"
+          >
+            <IconLogOut size={14} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={onLogin}
+            className="om-btn om-btn-ghost shrink-0 px-2.5 py-1.5 text-[11px]"
+          >
+            Sign in with Google
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

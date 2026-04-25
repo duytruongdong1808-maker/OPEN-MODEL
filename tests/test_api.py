@@ -14,6 +14,7 @@ from src.tools.ledger import SendLedger
 from src.tools.registry import ToolSpec
 from src.tools.config import get_email_settings
 from src.tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
+from src.server.settings import get_open_model_settings
 
 
 class FakeChatRuntime:
@@ -319,6 +320,7 @@ def test_agent_mode_rejects_unavailable_write_tool(tmp_path: Path, monkeypatch) 
 
 def configure_tools_env(monkeypatch) -> None:
     get_email_settings.cache_clear()
+    get_open_model_settings.cache_clear()
     monkeypatch.setenv("AGENT_IMAP_HOST", "imap.example.com")
     monkeypatch.setenv("AGENT_IMAP_USER", "reader@example.com")
     monkeypatch.setenv("AGENT_IMAP_PASS", "imap-secret")
@@ -476,6 +478,99 @@ def test_agent_run_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -
     response = client.post("/agent/run", json={"message": "hello"})
 
     assert response.status_code == 401
+
+
+def test_gmail_auth_status_endpoint_reports_disconnected(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setattr("src.server.app.get_gmail_status", lambda: type("Status", (), {
+        "connected": False,
+        "email": None,
+        "scopes": [],
+    })())
+    client = create_test_client(tmp_path)
+
+    response = client.get("/auth/gmail/status", headers=tools_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False, "email": None, "scopes": []}
+
+
+def test_gmail_login_endpoint_redirects_to_google(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setattr(
+        "src.server.app.start_gmail_oauth_flow",
+        lambda: "https://accounts.google.com/o/oauth2/v2/auth?state=abc",
+    )
+    client = create_test_client(tmp_path)
+
+    response = client.get("/auth/gmail/login", headers=tools_headers(), follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://accounts.google.com")
+
+
+def test_gmail_callback_stores_token_and_redirects_home(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    calls = []
+
+    def fake_complete(*, code: str, state: str | None):
+        calls.append((code, state))
+
+    monkeypatch.setattr("src.server.app.complete_gmail_oauth_flow", fake_complete)
+    client = create_test_client(tmp_path)
+
+    response = client.get(
+        "/auth/gmail/callback?code=auth-code&state=state-value",
+        headers=tools_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/"
+    assert calls == [("auth-code", "state-value")]
+
+
+def test_gmail_logout_endpoint_disconnects(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setattr("src.server.app.disconnect_gmail", lambda: type("Status", (), {
+        "connected": False,
+        "email": None,
+        "scopes": [],
+    })())
+    client = create_test_client(tmp_path)
+
+    response = client.post("/auth/gmail/logout", headers=tools_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False, "email": None, "scopes": []}
+
+
+def test_gmail_auth_endpoints_require_bearer_token(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    client = create_test_client(tmp_path)
+
+    response = client.get("/auth/gmail/login", follow_redirects=False)
+
+    assert response.status_code == 401
+
+
+def test_ready_check_reports_components(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setattr("src.server.app.get_gmail_status", lambda: type("Status", (), {
+        "connected": False,
+        "email": None,
+        "scopes": [],
+    })())
+    client = create_test_client(tmp_path)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["checks"]["db"]["status"] == "ok"
+    assert payload["checks"]["model"]["status"] == "ok"
+    assert payload["checks"]["gmail"]["status"] == "not_connected"
 
 
 def test_agent_approval_endpoints_update_ledger(tmp_path: Path, monkeypatch) -> None:

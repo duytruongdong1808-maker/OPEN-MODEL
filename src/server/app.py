@@ -3,15 +3,14 @@ from __future__ import annotations
 import secrets
 import asyncio
 import json
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import status
 from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 
@@ -25,16 +24,18 @@ from ..agent import (
 )
 from ..tools.ledger import SendLedger
 from ..utils import (
-    DEFAULT_BASE_MODEL,
     DEFAULT_SYSTEM_PROMPT,
-    ROOT_DIR,
     configure_logging,
-    str_to_bool,
 )
 from ..tools import email_tools
 from ..tools import TOOL_REGISTRY, ToolSpec
-from ..tools.config import get_email_settings
 from ..tools.errors import AuthError, PolicyError, ToolError
+from ..tools.gmail_auth import (
+    complete_gmail_oauth_flow,
+    disconnect_gmail,
+    get_gmail_status,
+    start_gmail_oauth_flow,
+)
 from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from .runtime import LocalModelChatService, SupportsStreamingReply
 from .schemas import (
@@ -47,18 +48,10 @@ from .schemas import (
     MessageStartPayload,
     StepUpdatePayload,
 )
+from .settings import OpenModelSettings, get_open_model_settings
 from .storage import ConversationStore
 
-DEFAULT_DB_PATH = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
-DEFAULT_ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
-DEFAULT_MAX_REQUEST_BYTES = 256 * 1024
 WEB_AGENT_TOOL_NAMES = ("read_inbox", "get_email")
-
-
-def parse_allowed_origins(raw_value: str | None) -> list[str]:
-    if not raw_value:
-        return list(DEFAULT_ALLOWED_ORIGINS)
-    return [origin.strip() for origin in raw_value.split(",") if origin.strip()]
 
 
 def sse_event(event: str, payload: dict) -> str:
@@ -93,9 +86,13 @@ def get_runtime(request: Request) -> SupportsStreamingReply:
     return runtime
 
 
+def get_app_settings(request: Request) -> OpenModelSettings:
+    return request.app.state.settings
+
+
 def verify_tools_token(authorization: str | None = Header(default=None)) -> None:
-    settings = get_email_settings()
-    expected = settings.ops_token.get_secret_value() if settings.ops_token else None
+    settings = get_open_model_settings()
+    expected = settings.agent_ops_token.get_secret_value() if settings.agent_ops_token else None
     if not expected:
         raise HTTPException(status_code=503, detail="AGENT_OPS_TOKEN is not configured.")
     presented = (authorization or "").removeprefix("Bearer ").strip()
@@ -118,20 +115,24 @@ def get_send_ledger(request: Request) -> SendLedger:
 
 
 def resolve_runtime() -> LocalModelChatService:
-    adapter_path = os.getenv("OPEN_MODEL_ADAPTER_PATH")
-    load_in_4bit = os.getenv("OPEN_MODEL_LOAD_IN_4BIT")
-    max_new_tokens = int(os.getenv("OPEN_MODEL_MAX_NEW_TOKENS", "256"))
-    temperature = float(os.getenv("OPEN_MODEL_TEMPERATURE", "0.2"))
-    top_p = float(os.getenv("OPEN_MODEL_TOP_P", "0.9"))
+    settings = get_open_model_settings()
     return LocalModelChatService(
-        base_model=os.getenv("OPEN_MODEL_BASE_MODEL", DEFAULT_BASE_MODEL),
-        adapter_path=adapter_path,
-        model_revision=os.getenv("OPEN_MODEL_MODEL_REVISION"),
-        load_in_4bit=None if load_in_4bit is None else str_to_bool(load_in_4bit),
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        base_model=settings.open_model_base_model,
+        adapter_path=settings.open_model_adapter_path,
+        model_revision=settings.open_model_model_revision,
+        load_in_4bit=settings.open_model_load_in_4bit,
+        max_new_tokens=settings.open_model_max_new_tokens,
+        temperature=settings.open_model_temperature,
+        top_p=settings.open_model_top_p,
     )
+
+
+def runtime_ready(runtime: SupportsStreamingReply | None) -> bool:
+    if runtime is None:
+        return False
+    if isinstance(runtime, LocalModelChatService):
+        return runtime.is_loaded
+    return True
 
 
 def create_app(
@@ -140,7 +141,8 @@ def create_app(
     runtime: SupportsStreamingReply | None = None,
     protect_chat_routes: bool = True,
 ) -> FastAPI:
-    configure_logging()
+    settings = get_open_model_settings()
+    configure_logging(settings.open_model_log_level)
 
     @asynccontextmanager
     async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
@@ -154,27 +156,21 @@ def create_app(
     app = FastAPI(title="Open Model Chat API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=parse_allowed_origins(os.getenv("OPEN_MODEL_CORS_ORIGINS")),
+        allow_origins=settings.open_model_cors_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    app.state.store = store or ConversationStore(
-        Path(os.getenv("OPEN_MODEL_DB_PATH", DEFAULT_DB_PATH))
-    )
+    app.state.settings = settings
+    app.state.store = store or ConversationStore(settings.open_model_db_path)
     app.state.runtime = runtime
-    app.state.ledger = SendLedger(
-        Path(
-            os.getenv("OPEN_MODEL_LEDGER_DB_PATH", ROOT_DIR / "outputs" / "app" / "ledger.sqlite3")
-        )
-    )
+    app.state.ledger = SendLedger(settings.open_model_ledger_db_path)
 
     @app.middleware("http")
     async def reject_large_requests(request: Request, call_next):
-        max_request_bytes = int(
-            os.getenv("OPEN_MODEL_MAX_REQUEST_BYTES", str(DEFAULT_MAX_REQUEST_BYTES))
-        )
+        app_settings = request.app.state.settings
+        max_request_bytes = app_settings.open_model_max_request_bytes
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
@@ -192,6 +188,78 @@ def create_app(
     @app.get("/health")
     def health_check() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/live")
+    def live_check() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def ready_check(request: Request) -> JSONResponse:
+        checks: dict[str, dict[str, object]] = {}
+        ready = True
+
+        try:
+            request.app.state.store.ping()
+            checks["db"] = {"status": "ok"}
+        except Exception as exc:
+            ready = False
+            checks["db"] = {"status": "error", "detail": str(exc)}
+
+        model_is_ready = runtime_ready(request.app.state.runtime)
+        checks["model"] = {"status": "ok" if model_is_ready else "not_ready"}
+        ready = ready and model_is_ready
+
+        gmail_status = get_gmail_status()
+        checks["gmail"] = {
+            "status": "connected" if gmail_status.connected else "not_connected",
+            "email": gmail_status.email,
+        }
+
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={"status": "ok" if ready else "not_ready", "checks": checks},
+        )
+
+    @app.get("/auth/gmail/login", dependencies=[Depends(verify_tools_token)])
+    def gmail_login_endpoint() -> RedirectResponse:
+        try:
+            return RedirectResponse(start_gmail_oauth_flow(), status_code=302)
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
+
+    @app.get("/auth/gmail/callback", dependencies=[Depends(verify_tools_token)])
+    def gmail_callback_endpoint(
+        code: str | None = Query(default=None),
+        state: str | None = Query(default=None),
+        error: str | None = Query(default=None),
+    ) -> RedirectResponse:
+        if error:
+            raise HTTPException(status_code=400, detail=f"Gmail OAuth denied: {error}")
+        if not code:
+            raise HTTPException(status_code=400, detail="Missing Gmail OAuth authorization code.")
+        try:
+            complete_gmail_oauth_flow(code=code, state=state)
+        except Exception as exc:
+            raise tool_http_error(exc) from exc
+        return RedirectResponse("/", status_code=302)
+
+    @app.get("/auth/gmail/status", dependencies=[Depends(verify_tools_token)])
+    def gmail_status_endpoint() -> dict[str, object]:
+        status_payload = get_gmail_status()
+        return {
+            "connected": status_payload.connected,
+            "email": status_payload.email,
+            "scopes": status_payload.scopes or [],
+        }
+
+    @app.post("/auth/gmail/logout", dependencies=[Depends(verify_tools_token)])
+    def gmail_logout_endpoint() -> dict[str, object]:
+        status_payload = disconnect_gmail()
+        return {
+            "connected": status_payload.connected,
+            "email": status_payload.email,
+            "scopes": status_payload.scopes or [],
+        }
 
     @app.get(
         "/tools/inbox",

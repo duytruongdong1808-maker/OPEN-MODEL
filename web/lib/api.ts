@@ -3,6 +3,7 @@ import type {
   ChatStreamRequest,
   ConversationDetail,
   ConversationSummary,
+  GmailStatus,
   StreamEvent,
 } from "@/lib/types";
 
@@ -16,6 +17,9 @@ export interface ApiClient {
   createConversation(): Promise<ConversationSummary>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
   deleteConversation(conversationId: string): Promise<void>;
+  getGmailStatus(): Promise<GmailStatus>;
+  disconnectGmail(): Promise<GmailStatus>;
+  getGmailLoginUrl(): string;
   streamConversationMessage(
     conversationId: string,
     payload: ChatStreamRequest,
@@ -129,6 +133,21 @@ export class HttpApiClient implements ApiClient {
       const message = await response.text();
       throw new Error(message || "Unable to delete this conversation.");
     }
+  }
+
+  async getGmailStatus(): Promise<GmailStatus> {
+    return requestJson<GmailStatus>("/auth/gmail/status");
+  }
+
+  async disconnectGmail(): Promise<GmailStatus> {
+    return requestJson<GmailStatus>("/auth/gmail/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  getGmailLoginUrl(): string {
+    return `${resolveApiBaseUrl()}/auth/gmail/login`;
   }
 
   async streamConversationMessage(

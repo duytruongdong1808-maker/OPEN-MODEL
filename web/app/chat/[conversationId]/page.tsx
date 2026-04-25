@@ -1,25 +1,18 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { use, useState } from "react";
-import { useRouter } from "next/navigation";
+import { auth } from "@/auth";
+import { ChatPageClient } from "@/components/chat-page-client";
 
-import { ChatShell } from "@/components/chat-shell";
-import { createBrowserApiClient } from "@/lib/api";
-
-export default function ChatPage({
+export default async function ChatPage({
   params,
 }: {
   params: Promise<{ conversationId: string }>;
 }) {
-  const { conversationId } = use(params);
-  const router = useRouter();
-  const [apiClient] = useState(() => createBrowserApiClient());
+  const { conversationId } = await params;
+  const session = await auth();
+  if (!session?.user) {
+    redirect(`/login?callbackUrl=${encodeURIComponent(`/chat/${conversationId}`)}`);
+  }
 
-  return (
-    <ChatShell
-      apiClient={apiClient}
-      conversationId={conversationId}
-      onNavigateConversation={(conversationId) => router.push(`/chat/${conversationId}`)}
-    />
-  );
+  return <ChatPageClient conversationId={conversationId} />;
 }

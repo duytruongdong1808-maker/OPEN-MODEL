@@ -1,0 +1,16 @@
+.git
+.cache
+.pytest_cache
+.ruff_cache
+.venv
+venv
+__pycache__
+*.pyc
+.env
+outputs
+web/.next
+web/node_modules
+web/coverage
+web/*.tsbuildinfo
+data/processed
+data/raw/train.jsonl

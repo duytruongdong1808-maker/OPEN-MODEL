@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 
 import { ChatShell } from "@/components/chat-shell";
 import type { ApiClient, StreamHandlers } from "@/lib/api";
-import type { ChatStreamRequest, ConversationDetail, ConversationSummary, StreamEvent } from "@/lib/types";
+import type {
+  ChatStreamRequest,
+  ConversationDetail,
+  ConversationSummary,
+  GmailStatus,
+  StreamEvent,
+} from "@/lib/types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -13,6 +19,7 @@ class FakeApiClient implements ApiClient {
   public streamPayloads: ChatStreamRequest[] = [];
   public createConversationCalls = 0;
   public deletedConversationIds: string[] = [];
+  public disconnectGmailCalls = 0;
 
   constructor(
     private readonly conversation: ConversationDetail,
@@ -26,6 +33,7 @@ class FakeApiClient implements ApiClient {
       last_message_preview: null,
     },
     private readonly createDelayMs = 0,
+    private gmailStatus: GmailStatus = { connected: false, email: null, scopes: [] },
   ) {}
 
   async listConversations(): Promise<ConversationSummary[]> {
@@ -48,6 +56,20 @@ class FakeApiClient implements ApiClient {
   async deleteConversation(conversationId: string): Promise<void> {
     this.deletedConversationIds.push(conversationId);
     this.conversations = this.conversations.filter((item) => item.id !== conversationId);
+  }
+
+  async getGmailStatus(): Promise<GmailStatus> {
+    return this.gmailStatus;
+  }
+
+  async disconnectGmail(): Promise<GmailStatus> {
+    this.disconnectGmailCalls += 1;
+    this.gmailStatus = { connected: false, email: null, scopes: [] };
+    return this.gmailStatus;
+  }
+
+  getGmailLoginUrl(): string {
+    return "/api/backend/auth/gmail/login";
   }
 
   async streamConversationMessage(
@@ -241,6 +263,53 @@ test("chat shell switches to the read-only mail agent for inbox prompts", async 
   expect(apiClient.streamPayloads[0]).toMatchObject({ mode: "agent", max_steps: 5 });
   expect(screen.getAllByText("Tool: read_inbox").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Mail agent").length).toBeGreaterThan(0);
+});
+
+test("chat shell shows Gmail sign-in when disconnected", async () => {
+  const apiClient = new FakeApiClient(baseConversation, []);
+
+  render(
+    <ChatShell
+      apiClient={apiClient}
+      conversationId="conversation-1"
+      onNavigateConversation={vi.fn()}
+    />,
+  );
+
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /sign in with google/i })).toBeInTheDocument(),
+  );
+  expect(screen.getByText("Gmail not connected")).toBeInTheDocument();
+});
+
+test("chat shell shows connected Gmail account and can disconnect", async () => {
+  const user = userEvent.setup();
+  const apiClient = new FakeApiClient(
+    baseConversation,
+    [],
+    [baseConversation],
+    undefined,
+    0,
+    {
+      connected: true,
+      email: "reader@example.com",
+      scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+    },
+  );
+
+  render(
+    <ChatShell
+      apiClient={apiClient}
+      conversationId="conversation-1"
+      onNavigateConversation={vi.fn()}
+    />,
+  );
+
+  await waitFor(() => expect(screen.getByText("reader@example.com")).toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: /disconnect gmail/i }));
+
+  expect(apiClient.disconnectGmailCalls).toBe(1);
+  await waitFor(() => expect(screen.getByText("Gmail not connected")).toBeInTheDocument());
 });
 
 test("chat shell keeps email drafting prompts in regular chat mode", async () => {

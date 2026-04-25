@@ -14,6 +14,9 @@ data/raw/train.jsonl
 data/processed/*.jsonl
 
 outputs/*
+!outputs/app/
+outputs/app/gmail_token.json
+outputs/app/gmail_oauth_state.json
 web/.next/
 web/node_modules/
 web/coverage/

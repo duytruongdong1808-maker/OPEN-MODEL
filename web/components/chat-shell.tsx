@@ -12,6 +12,7 @@ import type {
   ConversationSummary,
   AgentStep,
   ChatStreamMode,
+  GmailStatus,
   SourceItem,
   StreamEvent,
   StepUpdate,
@@ -127,6 +128,8 @@ export function ChatShell({
   const [liveSources, setLiveSources] = useState<SourceItem[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
+  const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
+  const [gmailActionPending, setGmailActionPending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -145,6 +148,14 @@ export function ChatShell({
   useEffect(() => {
     isStreamingRef.current = isStreaming;
   }, [isStreaming]);
+
+  const refreshGmailStatus = useCallback(async () => {
+    try {
+      setGmailStatus(await apiClient.getGmailStatus());
+    } catch {
+      setGmailStatus({ connected: false, email: null, scopes: [] });
+    }
+  }, [apiClient]);
 
   const displayedSources = useMemo(
     () => (liveSources.length > 0 ? liveSources : latestAssistantSources(messages)),
@@ -180,13 +191,14 @@ export function ChatShell({
     }
 
     void loadConversation();
+    void refreshGmailStatus();
 
     return () => {
       cancelled = true;
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
     };
-  }, [apiClient, conversationId]);
+  }, [apiClient, conversationId, refreshGmailStatus]);
 
   useEffect(() => {
     threadAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -447,6 +459,20 @@ export function ChatShell({
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const togglePanel = useCallback(() => setPanelOpen((current) => !current), []);
   const closePanel = useCallback(() => setPanelOpen(false), []);
+  const handleGmailLogin = useCallback(() => {
+    window.location.href = apiClient.getGmailLoginUrl();
+  }, [apiClient]);
+  const handleGmailLogout = useCallback(async () => {
+    setGmailActionPending(true);
+    setBanner(null);
+    try {
+      setGmailStatus(await apiClient.disconnectGmail());
+    } catch (cause) {
+      setBanner(cause instanceof Error ? cause.message : "Unable to disconnect Gmail.");
+    } finally {
+      setGmailActionPending(false);
+    }
+  }, [apiClient]);
 
   const handleNewConversation = useCallback(() => {
     void createNewConversation();
@@ -571,7 +597,11 @@ export function ChatShell({
         agentSteps={agentSteps}
         sources={displayedSources}
         isStreaming={isStreaming}
+        gmailStatus={gmailStatus}
+        gmailActionPending={gmailActionPending}
         open={panelOpen}
+        onGmailLogin={handleGmailLogin}
+        onGmailLogout={handleGmailLogout}
         onToggle={togglePanel}
         onClose={closePanel}
       />

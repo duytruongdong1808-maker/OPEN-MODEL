@@ -99,6 +99,10 @@ class ConversationStore:
             ).fetchone()
         return row is not None
 
+    def ping(self) -> None:
+        with self._connect() as connection:
+            connection.execute("SELECT 1").fetchone()
+
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(

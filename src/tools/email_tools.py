@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
 from .config import get_email_settings
 from .email_client import IMAPReader
+from .gmail_auth import has_gmail_credentials
+from .gmail_reader import GmailReader
 from .ledger import SendLedger
 from .safety import SafetyPipeline
 from .schemas import EmailMessage, EmailSummary, SendRequest, SendResult
@@ -12,6 +16,8 @@ from .registry import tool
 @tool(name="read_inbox", description="List recent email summaries from the configured inbox.")
 async def read_inbox(limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
     """List recent email summaries."""
+    if has_gmail_credentials():
+        return await asyncio.to_thread(GmailReader().list_inbox, limit, unread_only)
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.list_inbox(limit=limit, unread_only=unread_only)
 
@@ -19,6 +25,8 @@ async def read_inbox(limit: int = 20, unread_only: bool = True) -> list[EmailSum
 @tool(name="get_email", description="Read a full email by IMAP UID.")
 async def get_email(uid: str) -> EmailMessage:
     """Read a full email by IMAP UID."""
+    if has_gmail_credentials():
+        return await asyncio.to_thread(GmailReader().get_email, uid)
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.get_email(uid)
 
