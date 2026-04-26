@@ -1,4 +1,6 @@
 .git
+.github/
+.codex-logs/
 .cache
 .pytest_cache
 .ruff_cache
@@ -8,9 +10,17 @@ __pycache__
 *.pyc
 .env
 outputs
+tests/
+*.md
+!README.md
+DESIGN.md
+.gitleaks.toml
+.pre-commit-config.yaml
+.next/
 web/.next
 web/node_modules
 web/coverage
 web/*.tsbuildinfo
+web/.codex-logs/
 data/processed
 data/raw/train.jsonl

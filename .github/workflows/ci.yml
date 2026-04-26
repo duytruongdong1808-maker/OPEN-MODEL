@@ -118,6 +118,12 @@ jobs:
       - name: Build web image
         run: docker build -t open-model-web:ci -f web/Dockerfile ./web
 
+      - name: Verify image hardening
+        run: bash scripts/verify_images.sh
+        env:
+          BACKEND_IMAGE: open-model-backend:ci
+          WEB_IMAGE: open-model-web:ci
+
       - name: Trivy backend image scan
         uses: aquasecurity/trivy-action@master
         with:

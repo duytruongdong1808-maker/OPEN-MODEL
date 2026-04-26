@@ -1,7 +1,20 @@
 services:
+  # read_only services keep explicit writable paths only:
+  # backend writes SQLite/token state under open-model-outputs:/app/outputs;
+  # web writes runtime cache to tmpfs at /app/.next/cache and /tmp;
+  # redis persists append-only data under redis-data:/data.
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
     volumes:
       - redis-data:/data
     healthcheck:
@@ -10,11 +23,22 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=64m,mode=1777
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     env_file:
       - .env
     environment:
@@ -28,16 +52,29 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/ready"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          # TODO: profile model loading and adjust this limit.
+          memory: 4g
 
   web:
     build:
       context: ./web
       dockerfile: Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=64m,mode=1777
+      - /app/.next/cache:rw,size=64m
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     env_file:
       - .env
     environment:
@@ -48,9 +85,13 @@ services:
       - "3000:3000"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
 volumes:
   open-model-outputs:
