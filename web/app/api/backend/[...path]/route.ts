@@ -132,14 +132,28 @@ async function forwardRequest(
 ): Promise<Response> {
   const method = request.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
-  const response = await fetch(buildBackendUrl(request, pathParts), {
-    method,
-    headers,
-    body: hasBody ? request.body : undefined,
-    duplex: hasBody ? "half" : undefined,
-    redirect: "manual",
-    cache: "no-store",
-  } as RequestInit & { duplex?: "half" });
+  let response: globalThis.Response;
+  try {
+    response = await fetch(buildBackendUrl(request, pathParts), {
+      method,
+      headers,
+      body: hasBody ? request.body : undefined,
+      duplex: hasBody ? "half" : undefined,
+      redirect: "manual",
+      cache: "no-store",
+    } as RequestInit & { duplex?: "half" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown backend proxy error.";
+    return Response.json(
+      { detail: "Backend service is unavailable.", error: message },
+      {
+        status: 503,
+        headers: {
+          "cache-control": "no-cache",
+        },
+      },
+    );
+  }
 
   const responseHeaders = new Headers();
   const contentType = response.headers.get("content-type");

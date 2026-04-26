@@ -174,7 +174,16 @@ jobs:
           done
 
       - name: Check live endpoint through proxy
-        run: curl -fsS http://localhost:3000/api/backend/health/live
+        run: |
+          deadline=$((SECONDS + 90))
+          until curl -fsS http://localhost:3000/api/backend/health/live; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for backend live endpoint through web proxy."
+              docker compose ps
+              exit 1
+            fi
+            sleep 3
+          done
 
       - name: Check unauthenticated conversations are denied
         run: |
