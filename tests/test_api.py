@@ -13,6 +13,7 @@ from src.server.storage import ConversationStore
 from src.tools.ledger import SendLedger
 from src.tools.registry import ToolSpec
 from src.tools.config import get_email_settings
+from src.tools.errors import AuthError
 from src.tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from src.server.settings import get_open_model_settings
 
@@ -198,7 +199,7 @@ async def fake_get_email_tool(uid: str):
     }
 
 
-def fake_read_only_registry() -> dict[str, ToolSpec]:
+def fake_read_only_registry(user_key: str | None = None) -> dict[str, ToolSpec]:
     return {
         "read_inbox": ToolSpec(
             name="read_inbox",
@@ -333,6 +334,14 @@ def configure_tools_env(monkeypatch) -> None:
 
 def tools_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
+
+
+def google_tools_headers(user_id: str = "google-user-1", email: str = "reader@example.com") -> dict[str, str]:
+    return {
+        **tools_headers(),
+        "X-Open-Model-Google-User-Id": user_id,
+        "X-Open-Model-Google-Email": email,
+    }
 
 
 def test_tools_inbox_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -> None:
@@ -482,10 +491,27 @@ def test_agent_run_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -
 
 def test_gmail_auth_status_endpoint_reports_disconnected(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
-    monkeypatch.setattr("src.server.app.get_gmail_status", lambda: type("Status", (), {
+    monkeypatch.setattr("src.server.app.get_gmail_status", lambda **kwargs: type("Status", (), {
         "connected": False,
         "email": None,
         "scopes": [],
+    })())
+    client = create_test_client(tmp_path)
+
+    response = client.get("/auth/gmail/status", headers=google_tools_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False, "email": "reader@example.com", "scopes": []}
+
+
+def test_gmail_status_for_password_user_does_not_use_global_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setattr("src.server.app.get_gmail_status", lambda **kwargs: type("Status", (), {
+        "connected": True,
+        "email": "global@example.com",
+        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
     })())
     client = create_test_client(tmp_path)
 
@@ -532,17 +558,91 @@ def test_gmail_callback_stores_token_and_redirects_home(tmp_path: Path, monkeypa
 
 def test_gmail_logout_endpoint_disconnects(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
-    monkeypatch.setattr("src.server.app.disconnect_gmail", lambda: type("Status", (), {
+    calls: list[str | None] = []
+
+    def fake_disconnect(user_key: str | None):
+        calls.append(user_key)
+        return type("Status", (), {
         "connected": False,
         "email": None,
         "scopes": [],
-    })())
+        })()
+
+    monkeypatch.setattr("src.server.app.disconnect_gmail_user", fake_disconnect)
     client = create_test_client(tmp_path)
 
-    response = client.post("/auth/gmail/logout", headers=tools_headers())
+    response = client.post("/auth/gmail/logout", headers=google_tools_headers())
 
     assert response.status_code == 200
-    assert response.json() == {"connected": False, "email": None, "scopes": []}
+    assert response.json() == {"connected": False, "email": "reader@example.com", "scopes": []}
+    assert calls == ["google-user-1"]
+
+
+def test_gmail_session_token_endpoint_stores_user_token(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    calls = []
+
+    def fake_store(payload):
+        calls.append(payload)
+        return type("Status", (), {
+            "connected": True,
+            "email": payload.email,
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+        })()
+
+    monkeypatch.setattr("src.server.app.store_gmail_session_token", fake_store)
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/auth/gmail/session-token",
+        headers=tools_headers(),
+        json={
+            "user_id": "google-user-1",
+            "email": "reader@example.com",
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "expires_at": 1_777_000_000,
+            "scope": "openid email profile https://www.googleapis.com/auth/gmail.readonly",
+            "token_type": "Bearer",
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "reader@example.com"
+    assert calls[0].user_id == "google-user-1"
+
+
+def test_agent_mode_password_user_reports_google_sign_in_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    configure_tools_env(monkeypatch)
+
+    async def require_google_user(user_key: str | None, limit: int = 20, unread_only: bool = True):
+        assert user_key is None
+        raise AuthError("Sign in with Google to let the agent read your Gmail.")
+
+    runtime = ScriptedAgentRuntime(
+        [
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":1,"unread_only":false}}}',
+            '{"final":"Sign in with Google to let the agent read your Gmail."}',
+        ]
+    )
+    monkeypatch.setattr("src.server.app.email_tools.read_inbox_for_google_user", require_google_user)
+    client = create_test_client(tmp_path, runtime=runtime)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "Read my inbox", "mode": "agent"},
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    tool_step = [payload for name, payload in events if name == "agent_step" and payload["kind"] == "tool"][0]
+    assert tool_step["status"] == "error"
+    assert "Sign in with Google" in tool_step["error"]
 
 
 def test_gmail_auth_endpoints_require_bearer_token(tmp_path: Path, monkeypatch) -> None:

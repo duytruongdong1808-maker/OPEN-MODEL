@@ -4,6 +4,7 @@ import asyncio
 
 from .config import get_email_settings
 from .email_client import IMAPReader
+from .errors import AuthError
 from .gmail_auth import has_gmail_credentials
 from .gmail_reader import GmailReader
 from .ledger import SendLedger
@@ -29,6 +30,22 @@ async def get_email(uid: str) -> EmailMessage:
         return await asyncio.to_thread(GmailReader().get_email, uid)
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.get_email(uid)
+
+
+async def read_inbox_for_google_user(
+    user_key: str | None, limit: int = 20, unread_only: bool = True
+) -> list[EmailSummary]:
+    """List inbox summaries for the authenticated Google web user."""
+    if not user_key:
+        raise AuthError("Sign in with Google to let the agent read your Gmail.")
+    return await asyncio.to_thread(GmailReader(user_key=user_key).list_inbox, limit, unread_only)
+
+
+async def get_email_for_google_user(user_key: str | None, uid: str) -> EmailMessage:
+    """Read a full email for the authenticated Google web user."""
+    if not user_key:
+        raise AuthError("Sign in with Google to let the agent read your Gmail.")
+    return await asyncio.to_thread(GmailReader(user_key=user_key).get_email, uid)
 
 
 @tool(name="send_email", description="Send an email after safety checks, dry-run, and approval gates.")

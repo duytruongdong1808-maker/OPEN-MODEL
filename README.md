@@ -518,6 +518,22 @@ $env:AGENT_OPS_TOKEN="<token>"
 
 Do not expose this token with a `NEXT_PUBLIC_*` variable; anything with that prefix is bundled into client-side JavaScript.
 
+To use `Continue with Google` and let the web mail agent read the signed-in account's Gmail, configure the Next.js environment with:
+
+```powershell
+$env:AUTH_SECRET="<random-secret>"
+$env:AUTH_GOOGLE_ID="<google-oauth-client-id>"
+$env:AUTH_GOOGLE_SECRET="<google-oauth-client-secret>"
+```
+
+Add this authorized redirect URI in Google Cloud:
+
+```text
+http://localhost:3000/api/auth/callback/google
+```
+
+These `AUTH_GOOGLE_*` settings are for web sign-in. The older `GOOGLE_OAUTH_*` settings are only for the separate legacy Gmail connect flow.
+
 Then open:
 
 ```text

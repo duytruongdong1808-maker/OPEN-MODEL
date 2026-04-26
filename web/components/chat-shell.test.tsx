@@ -1,6 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const { signInMock } = vi.hoisted(() => ({
+  signInMock: vi.fn(),
+}));
+
+vi.mock("next-auth/react", () => ({
+  signIn: signInMock,
+}));
+
 import { ChatShell } from "@/components/chat-shell";
 import type { ApiClient, StreamHandlers } from "@/lib/api";
 import type {
@@ -13,6 +21,7 @@ import type {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  signInMock.mockReset();
 });
 
 class FakeApiClient implements ApiClient {
@@ -266,6 +275,7 @@ test("chat shell switches to the read-only mail agent for inbox prompts", async 
 });
 
 test("chat shell shows Gmail sign-in when disconnected", async () => {
+  const user = userEvent.setup();
   const apiClient = new FakeApiClient(baseConversation, []);
 
   render(
@@ -279,7 +289,10 @@ test("chat shell shows Gmail sign-in when disconnected", async () => {
   await waitFor(() =>
     expect(screen.getByRole("button", { name: /sign in with google/i })).toBeInTheDocument(),
   );
+  await user.click(screen.getByRole("button", { name: /sign in with google/i }));
+
   expect(screen.getByText("Gmail not connected")).toBeInTheDocument();
+  expect(signInMock).toHaveBeenCalledWith("google", { callbackUrl: window.location.href });
 });
 
 test("chat shell shows connected Gmail account and can disconnect", async () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { signIn } from "next-auth/react";
 
 import { AgentStatusPanel } from "@/components/agent-status-panel";
 import { Composer } from "@/components/composer";
@@ -107,12 +108,14 @@ function detectMailAgentIntent(prompt: string): boolean {
 interface ChatShellProps {
   apiClient: ApiClient;
   conversationId: string;
+  googleConfigured?: boolean;
   onNavigateConversation: (conversationId: string) => void;
 }
 
 export function ChatShell({
   apiClient,
   conversationId,
+  googleConfigured = true,
   onNavigateConversation,
 }: ChatShellProps) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -460,8 +463,12 @@ export function ChatShell({
   const togglePanel = useCallback(() => setPanelOpen((current) => !current), []);
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const handleGmailLogin = useCallback(() => {
-    window.location.href = apiClient.getGmailLoginUrl();
-  }, [apiClient]);
+    if (!googleConfigured) {
+      setBanner("Google sign-in is not configured on this server.");
+      return;
+    }
+    void signIn("google", { callbackUrl: window.location.href });
+  }, [googleConfigured]);
   const handleGmailLogout = useCallback(async () => {
     setGmailActionPending(true);
     setBanner(null);

@@ -5,10 +5,13 @@ import json
 from src.tools import gmail_auth
 from src.server.settings import get_open_model_settings
 from src.tools.gmail_auth import (
+    GmailSessionToken,
     complete_gmail_oauth_flow,
     disconnect_gmail,
+    disconnect_gmail_user,
     get_gmail_status,
     start_gmail_oauth_flow,
+    store_gmail_session_token,
 )
 
 
@@ -79,6 +82,7 @@ def configure_google_env(monkeypatch, tmp_path):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret")
     monkeypatch.setenv("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost/callback")
     monkeypatch.setenv("GOOGLE_OAUTH_TOKEN_PATH", str(tmp_path / "gmail_token.json"))
+    monkeypatch.setenv("GOOGLE_OAUTH_TOKEN_DIR", str(tmp_path / "gmail_tokens"))
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_PATH", str(tmp_path / "gmail_state.json"))
     monkeypatch.setenv("AUTH_SECRET", "test-auth-secret")
 
@@ -154,3 +158,68 @@ def test_disconnect_gmail_deletes_token_and_state(monkeypatch, tmp_path):
     assert status.connected is False
     assert not (tmp_path / "gmail_token.json").exists()
     assert not (tmp_path / "gmail_state.json").exists()
+
+
+def test_store_gmail_session_token_writes_user_scoped_encrypted_token(monkeypatch, tmp_path):
+    configure_google_env(monkeypatch, tmp_path)
+
+    status = store_gmail_session_token(
+        GmailSessionToken(
+            user_id="google-user-1",
+            email="reader@example.com",
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=1_777_000_000,
+            scope=f"openid email profile {gmail_auth.GMAIL_READONLY_SCOPE}",
+            token_type="Bearer",
+            client_id="client-id",
+            client_secret="client-secret",
+        )
+    )
+
+    token_file = gmail_auth.gmail_user_token_path("google-user-1")
+    assert status.connected is True
+    assert status.email == "reader@example.com"
+    assert token_file.exists()
+    assert "refresh-token" not in token_file.read_text(encoding="utf-8")
+    token_payload = json.loads(gmail_auth._read_encrypted_token(token_file))
+    assert token_payload["refresh_token"] == "refresh-token"
+    assert token_payload["client_secret"] == "client-secret"
+
+
+def test_user_scoped_tokens_do_not_overlap(monkeypatch, tmp_path):
+    configure_google_env(monkeypatch, tmp_path)
+    for user_id, email in [("google-user-1", "one@example.com"), ("google-user-2", "two@example.com")]:
+        store_gmail_session_token(
+            GmailSessionToken(
+                user_id=user_id,
+                email=email,
+                access_token=f"access-{user_id}",
+                refresh_token=f"refresh-{user_id}",
+                expires_at=None,
+                scope=gmail_auth.GMAIL_READONLY_SCOPE,
+                token_type="Bearer",
+                client_id="client-id",
+                client_secret="client-secret",
+            )
+        )
+
+    first = json.loads(gmail_auth._read_encrypted_token(gmail_auth.gmail_user_token_path("google-user-1")))
+    second = json.loads(gmail_auth._read_encrypted_token(gmail_auth.gmail_user_token_path("google-user-2")))
+
+    assert first["refresh_token"] == "refresh-google-user-1"
+    assert second["refresh_token"] == "refresh-google-user-2"
+
+
+def test_disconnect_gmail_user_deletes_only_that_user_token(monkeypatch, tmp_path):
+    configure_google_env(monkeypatch, tmp_path)
+    first_path = gmail_auth.gmail_user_token_path("google-user-1")
+    second_path = gmail_auth.gmail_user_token_path("google-user-2")
+    gmail_auth._write_encrypted_token(first_path, "{}")
+    gmail_auth._write_encrypted_token(second_path, "{}")
+
+    status = disconnect_gmail_user("google-user-1")
+
+    assert status.connected is False
+    assert not first_path.exists()
+    assert second_path.exists()

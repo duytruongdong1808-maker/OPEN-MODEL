@@ -17,6 +17,11 @@ type RouteContext = {
   params: Promise<{ path?: string[] }>;
 };
 
+type SessionWithGoogle = {
+  googleUserId?: string;
+  googleEmail?: string;
+};
+
 function resolveBackendUrl(): string {
   return (process.env.OPEN_MODEL_API_BASE_URL?.trim() || DEFAULT_BACKEND_URL).replace(/\/$/, "");
 }
@@ -69,7 +74,7 @@ function buildBackendUrl(request: NextRequest, pathParts: string[] = []): string
   return url.toString();
 }
 
-function buildProxyHeaders(request: NextRequest): Headers {
+function buildProxyHeaders(request: NextRequest, session: SessionWithGoogle): Headers {
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
   const accept = request.headers.get("accept");
@@ -78,6 +83,8 @@ function buildProxyHeaders(request: NextRequest): Headers {
   if (contentType) headers.set("content-type", contentType);
   if (accept) headers.set("accept", accept);
   if (token) headers.set("authorization", `Bearer ${token}`);
+  if (session.googleUserId) headers.set("x-open-model-google-user-id", session.googleUserId);
+  if (session.googleEmail) headers.set("x-open-model-google-email", session.googleEmail);
 
   return headers;
 }
@@ -92,7 +99,8 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
   if (!session?.user) {
     return Response.json({ detail: "Authentication required." }, { status: 401 });
   }
-  const userKey = session.user.email ?? session.user.name ?? "local-user";
+  const sessionWithGoogle = session as typeof session & SessionWithGoogle;
+  const userKey = sessionWithGoogle.googleUserId ?? session.user.email ?? session.user.name ?? "local-user";
   const limited = rateLimitResponse(userKey);
   if (limited) return limited;
 
@@ -100,7 +108,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
   const hasBody = method !== "GET" && method !== "HEAD";
   const response = await fetch(buildBackendUrl(request, await getPathParts(context)), {
     method,
-    headers: buildProxyHeaders(request),
+    headers: buildProxyHeaders(request, sessionWithGoogle),
     body: hasBody ? request.body : undefined,
     duplex: hasBody ? "half" : undefined,
     redirect: "manual",

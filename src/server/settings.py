@@ -31,6 +31,7 @@ class OpenModelSettings(BaseSettings):
     google_oauth_client_secret: SecretStr | None = None
     google_oauth_redirect_uri: str | None = None
     google_oauth_token_path: Path = ROOT_DIR / "outputs" / "app" / "gmail_token.json"
+    google_oauth_token_dir: Path = ROOT_DIR / "outputs" / "app" / "gmail_tokens"
     google_oauth_state_path: Path = ROOT_DIR / "outputs" / "app" / "gmail_oauth_state.json"
     google_oauth_token_encryption_key: SecretStr | None = None
 

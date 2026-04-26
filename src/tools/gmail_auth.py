@@ -5,6 +5,7 @@ import secrets
 import base64
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -31,16 +32,40 @@ class GmailConnectionStatus:
     scopes: list[str] | None = None
 
 
+@dataclass(frozen=True)
+class GmailSessionToken:
+    user_id: str
+    email: str | None
+    access_token: str
+    refresh_token: str | None
+    expires_at: int | None
+    scope: str | None
+    token_type: str | None
+    client_id: str
+    client_secret: str
+
+
 def gmail_token_path() -> Path:
     return get_open_model_settings().google_oauth_token_path
+
+
+def gmail_user_token_path(user_key: str) -> Path:
+    digest = hashlib.sha256(user_key.strip().lower().encode("utf-8")).hexdigest()
+    return get_open_model_settings().google_oauth_token_dir / f"{digest}.json"
 
 
 def gmail_state_path() -> Path:
     return get_open_model_settings().google_oauth_state_path
 
 
-def has_gmail_credentials() -> bool:
-    return gmail_token_path().exists()
+def has_gmail_credentials(*, user_key: str | None = None) -> bool:
+    return _resolve_token_path(user_key).exists()
+
+
+def _resolve_token_path(user_key: str | None = None) -> Path:
+    if user_key:
+        return gmail_user_token_path(user_key)
+    return gmail_token_path()
 
 
 def _oauth_client_config() -> dict[str, dict[str, object]]:
@@ -117,6 +142,64 @@ def _read_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _scopes_from_scope_string(scope: str | None) -> list[str]:
+    scopes = [item for item in (scope or "").split() if item]
+    return scopes or GMAIL_SCOPES
+
+
+def _expiry_from_timestamp(expires_at: int | None) -> str | None:
+    if not expires_at:
+        return None
+    return datetime.fromtimestamp(expires_at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _authorized_user_info(payload: GmailSessionToken, refresh_token: str | None) -> dict[str, object]:
+    info: dict[str, object] = {
+        "token": payload.access_token,
+        "refresh_token": refresh_token,
+        "token_uri": GOOGLE_TOKEN_URI,
+        "client_id": payload.client_id,
+        "client_secret": payload.client_secret,
+        "scopes": _scopes_from_scope_string(payload.scope),
+        "email": payload.email,
+        "token_type": payload.token_type,
+    }
+    expiry = _expiry_from_timestamp(payload.expires_at)
+    if expiry:
+        info["expiry"] = expiry
+    return {key: value for key, value in info.items() if value is not None}
+
+
+def store_gmail_session_token(payload: GmailSessionToken) -> GmailConnectionStatus:
+    if not payload.user_id.strip():
+        raise AuthError("Google user identity is missing.")
+    if not payload.access_token.strip():
+        raise AuthError("Google access token is missing.")
+    if GMAIL_READONLY_SCOPE not in _scopes_from_scope_string(payload.scope):
+        raise AuthError("Google sign-in did not grant Gmail read-only access.")
+
+    token_path = gmail_user_token_path(payload.user_id)
+    refresh_token = payload.refresh_token
+    if not refresh_token and token_path.exists():
+        try:
+            existing = json.loads(_read_encrypted_token(token_path))
+            refresh_token = existing.get("refresh_token") or None
+        except Exception:
+            refresh_token = None
+    if not refresh_token:
+        raise AuthError("Google did not return a refresh token. Sign in with Google again.")
+
+    _write_encrypted_token(
+        token_path,
+        json.dumps(_authorized_user_info(payload, refresh_token), ensure_ascii=False),
+    )
+    return GmailConnectionStatus(
+        connected=True,
+        email=payload.email,
+        scopes=_scopes_from_scope_string(payload.scope),
+    )
+
+
 def start_gmail_oauth_flow() -> str:
     state = secrets.token_urlsafe(32)
     flow = _build_flow(state=state)
@@ -148,10 +231,10 @@ def complete_gmail_oauth_flow(*, code: str, state: str | None) -> None:
     state_path.unlink(missing_ok=True)
 
 
-def load_authorized_credentials() -> Credentials:
-    token_path = gmail_token_path()
+def load_authorized_credentials(*, user_key: str | None = None) -> Credentials:
+    token_path = _resolve_token_path(user_key)
     if not token_path.exists():
-        raise AuthError("Gmail is not connected.")
+        raise AuthError("Gmail is not connected. Sign in with Google to let the agent read mail.")
 
     try:
         credentials = Credentials.from_authorized_user_info(
@@ -172,11 +255,11 @@ def load_authorized_credentials() -> Credentials:
     return credentials
 
 
-def get_gmail_status() -> GmailConnectionStatus:
-    if not has_gmail_credentials():
+def get_gmail_status(*, user_key: str | None = None) -> GmailConnectionStatus:
+    if not has_gmail_credentials(user_key=user_key):
         return GmailConnectionStatus(connected=False, scopes=[])
     try:
-        credentials = load_authorized_credentials()
+        credentials = load_authorized_credentials(user_key=user_key)
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
         profile = service.users().getProfile(userId="me").execute()
         return GmailConnectionStatus(
@@ -191,4 +274,10 @@ def get_gmail_status() -> GmailConnectionStatus:
 def disconnect_gmail() -> GmailConnectionStatus:
     gmail_token_path().unlink(missing_ok=True)
     gmail_state_path().unlink(missing_ok=True)
+    return GmailConnectionStatus(connected=False, scopes=[])
+
+
+def disconnect_gmail_user(user_key: str | None) -> GmailConnectionStatus:
+    if user_key:
+        gmail_user_token_path(user_key).unlink(missing_ok=True)
     return GmailConnectionStatus(connected=False, scopes=[])
