@@ -10,6 +10,8 @@ web/.codex-logs/
 .env
 .env.*
 !.env.example
+secrets/*
+!secrets/*.example
 
 .cache/
 data/raw/train.jsonl

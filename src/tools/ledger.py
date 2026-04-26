@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy import func, insert, select, update
+
+from ..server.db import (
+    default_ledger_database_url,
+    get_session,
+    initialize_schema,
+    send_approvals,
+    send_ledger,
+    sqlite_url_from_path,
+)
 from ..utils import ROOT_DIR
 from .schemas import SendRequest
 
-
-DEFAULT_LEDGER_DB_PATH = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
+DEFAULT_LEDGER_DB_PATH = ROOT_DIR / "outputs" / "app" / "ledger.sqlite3"
 
 
 def utcnow_iso() -> str:
@@ -34,166 +42,134 @@ class ApprovalRow:
 
 @dataclass
 class SendLedger:
-    db_path: Path = DEFAULT_LEDGER_DB_PATH
+    db_path: Path | None = DEFAULT_LEDGER_DB_PATH
+    database_url: str | None = None
+    _initialized: bool = field(default=False, init=False)
+    _initialize_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self) -> None:
-        self.db_path = Path(self.db_path).expanduser().resolve()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
-        connection.row_factory = sqlite3.Row
-        return connection
-
-    def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS send_ledger (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  sent_at TEXT NOT NULL,
-                  subject TEXT NOT NULL,
-                  first_recipient TEXT NOT NULL,
-                  status TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS send_approvals (
-                  id TEXT PRIMARY KEY,
-                  created_at TEXT NOT NULL,
-                  payload_json TEXT NOT NULL,
-                  status TEXT NOT NULL DEFAULT 'pending',
-                  decided_at TEXT,
-                  decided_by TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_send_ledger_sent_at ON send_ledger(sent_at);
-                CREATE INDEX IF NOT EXISTS idx_send_approvals_status ON send_approvals(status);
-                """
+        if self.database_url is None:
+            self.database_url = (
+                sqlite_url_from_path(self.db_path)
+                if self.db_path is not None
+                else default_ledger_database_url()
             )
+        if self.db_path is not None:
+            self.db_path = Path(self.db_path).expanduser().resolve()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if not self._initialized:
+                await initialize_schema(self.database_url)
+                self._initialized = True
 
     async def today_count(self) -> int:
-        return await asyncio.to_thread(self._today_count_sync)
-
-    def _today_count_sync(self) -> int:
+        await self.initialize()
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM send_ledger
-                WHERE sent_at >= ? AND status IN ('sent', 'dry_run')
-                """,
-                (start.isoformat(timespec="seconds").replace("+00:00", "Z"),),
-            ).fetchone()
-        return int(row["count"])
+        stmt = (
+            select(func.count())
+            .select_from(send_ledger)
+            .where(
+                send_ledger.c.sent_at >= start.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                send_ledger.c.status.in_(["sent", "dry_run"]),
+            )
+        )
+        async with get_session(self.database_url) as session:
+            return int((await session.execute(stmt)).scalar_one())
 
     async def recent_duplicate(
         self, subject: str, first_recipient: str, window_s: int = 60
     ) -> bool:
-        return await asyncio.to_thread(
-            self._recent_duplicate_sync, subject, first_recipient, window_s
-        )
-
-    def _recent_duplicate_sync(self, subject: str, first_recipient: str, window_s: int) -> bool:
+        await self.initialize()
         since = datetime.now(UTC) - timedelta(seconds=window_s)
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT 1
-                FROM send_ledger
-                WHERE subject = ? AND first_recipient = ? AND sent_at >= ?
-                  AND status IN ('sent', 'dry_run')
-                LIMIT 1
-                """,
-                (
-                    subject,
-                    first_recipient,
-                    since.isoformat(timespec="seconds").replace("+00:00", "Z"),
-                ),
-            ).fetchone()
-        return row is not None
+        stmt = (
+            select(send_ledger.c.id)
+            .where(
+                send_ledger.c.subject == subject,
+                send_ledger.c.first_recipient == first_recipient,
+                send_ledger.c.sent_at >= since.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                send_ledger.c.status.in_(["sent", "dry_run"]),
+            )
+            .limit(1)
+        )
+        async with get_session(self.database_url) as session:
+            return (await session.execute(stmt)).first() is not None
 
     async def duplicate_count_today(self, subject: str, first_recipient: str) -> int:
-        return await asyncio.to_thread(self._duplicate_count_today_sync, subject, first_recipient)
-
-    def _duplicate_count_today_sync(self, subject: str, first_recipient: str) -> int:
+        await self.initialize()
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM send_ledger
-                WHERE subject = ? AND first_recipient = ? AND sent_at >= ?
-                  AND status IN ('sent', 'dry_run')
-                """,
-                (
-                    subject,
-                    first_recipient,
-                    start.isoformat(timespec="seconds").replace("+00:00", "Z"),
-                ),
-            ).fetchone()
-        return int(row["count"])
+        stmt = (
+            select(func.count())
+            .select_from(send_ledger)
+            .where(
+                send_ledger.c.subject == subject,
+                send_ledger.c.first_recipient == first_recipient,
+                send_ledger.c.sent_at >= start.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                send_ledger.c.status.in_(["sent", "dry_run"]),
+            )
+        )
+        async with get_session(self.database_url) as session:
+            return int((await session.execute(stmt)).scalar_one())
 
     async def record(self, status: str, subject: str, first_recipient: str) -> None:
-        await asyncio.to_thread(self._record_sync, status, subject, first_recipient)
-
-    def _record_sync(self, status: str, subject: str, first_recipient: str) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO send_ledger (sent_at, subject, first_recipient, status)
-                VALUES (?, ?, ?, ?)
-                """,
-                (utcnow_iso(), subject, first_recipient, status),
-            )
+        await self.initialize()
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                await session.execute(
+                    insert(send_ledger).values(
+                        sent_at=utcnow_iso(),
+                        subject=subject,
+                        first_recipient=first_recipient,
+                        status=status,
+                    )
+                )
 
     async def create_approval(self, req: SendRequest) -> str:
-        return await asyncio.to_thread(self._create_approval_sync, req)
-
-    def _create_approval_sync(self, req: SendRequest) -> str:
+        await self.initialize()
         approval_id = str(uuid4())
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO send_approvals (id, created_at, payload_json, status)
-                VALUES (?, ?, ?, 'pending')
-                """,
-                (approval_id, utcnow_iso(), req.model_dump_json()),
-            )
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                await session.execute(
+                    insert(send_approvals).values(
+                        id=approval_id,
+                        created_at=utcnow_iso(),
+                        payload_json=req.model_dump_json(),
+                        status="pending",
+                    )
+                )
         return approval_id
 
     async def get_approval(self, approval_id: str) -> ApprovalRow | None:
-        return await asyncio.to_thread(self._get_approval_sync, approval_id)
-
-    def _get_approval_sync(self, approval_id: str) -> ApprovalRow | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT id, created_at, payload_json, status, decided_at, decided_by
-                FROM send_approvals
-                WHERE id = ?
-                """,
-                (approval_id,),
-            ).fetchone()
+        await self.initialize()
+        stmt = select(
+            send_approvals.c.id,
+            send_approvals.c.created_at,
+            send_approvals.c.payload_json,
+            send_approvals.c.status,
+            send_approvals.c.decided_at,
+            send_approvals.c.decided_by,
+        ).where(send_approvals.c.id == approval_id)
+        async with get_session(self.database_url) as session:
+            row = (await session.execute(stmt)).mappings().first()
         return ApprovalRow(**dict(row)) if row is not None else None
 
     async def decide_approval(self, approval_id: str, status: str, decided_by: str) -> ApprovalRow:
-        return await asyncio.to_thread(self._decide_approval_sync, approval_id, status, decided_by)
-
-    def _decide_approval_sync(self, approval_id: str, status: str, decided_by: str) -> ApprovalRow:
         if status not in {"approved", "rejected", "expired"}:
             raise ValueError(f"Unsupported approval status: {status}")
-        with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE send_approvals
-                SET status = ?, decided_at = ?, decided_by = ?
-                WHERE id = ?
-                """,
-                (status, utcnow_iso(), decided_by, approval_id),
-            )
-        row = self._get_approval_sync(approval_id)
+        await self.initialize()
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(send_approvals)
+                    .where(send_approvals.c.id == approval_id)
+                    .values(status=status, decided_at=utcnow_iso(), decided_by=decided_by)
+                )
+        if not result.rowcount:
+            raise KeyError(approval_id)
+        row = await self.get_approval(approval_id)
         if row is None:
             raise KeyError(approval_id)
         return row

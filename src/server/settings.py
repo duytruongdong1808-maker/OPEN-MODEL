@@ -21,7 +21,9 @@ class OpenModelSettings(BaseSettings):
     open_model_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
+    open_model_database_url: str | None = None
     open_model_db_path: Path = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
+    open_model_ledger_database_url: str | None = None
     open_model_ledger_db_path: Path = ROOT_DIR / "outputs" / "app" / "ledger.sqlite3"
     open_model_max_request_bytes: int = Field(default=256 * 1024, ge=1)
     open_model_log_level: str = "INFO"
@@ -45,6 +47,20 @@ class OpenModelSettings(BaseSettings):
     def split_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("open_model_database_url", mode="before")
+    @classmethod
+    def blank_database_url_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("open_model_ledger_database_url", mode="before")
+    @classmethod
+    def blank_ledger_database_url_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator("internal_hmac_secret")

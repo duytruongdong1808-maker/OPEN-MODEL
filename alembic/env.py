@@ -7,6 +7,7 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from src.server.db import metadata, sqlite_url_from_path, sync_migration_url
 from src.utils import ROOT_DIR
 
 config = context.config
@@ -14,7 +15,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = None
+target_metadata = metadata
 
 
 def database_url() -> str:
@@ -26,12 +27,12 @@ def database_url() -> str:
     db_path = Path(raw_path).expanduser()
     if not db_path.is_absolute():
         db_path = ROOT_DIR / db_path
-    return f"sqlite:///{db_path.resolve().as_posix()}"
+    return sqlite_url_from_path(db_path)
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=database_url(),
+        url=sync_migration_url(database_url()),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -44,7 +45,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = database_url()
+    configuration["sqlalchemy.url"] = sync_migration_url(database_url())
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",

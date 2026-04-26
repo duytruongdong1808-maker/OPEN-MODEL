@@ -8,35 +8,35 @@ from src.server.storage import ConversationStore, derive_conversation_title
 
 
 def test_vietnamese_title_truncation_uses_utf8_ellipsis() -> None:
-    title = derive_conversation_title("Xin chào " * 20)
+    title = derive_conversation_title("Xin chao " * 20)
 
-    assert title.endswith("…")
-    assert "â€¦" not in title
+    assert title.endswith("\u2026")
+    assert "Ã¢â‚¬Â¦" not in title
 
 
-def test_store_lists_only_requested_user_conversations(tmp_path: Path) -> None:
+async def test_store_lists_only_requested_user_conversations(tmp_path: Path) -> None:
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    user_a = store.create_conversation("user-a")
-    store.create_conversation("user-b")
+    user_a = await store.create_conversation("user-a")
+    await store.create_conversation("user-b")
 
-    conversations = store.list_conversations("user-a")
+    conversations = await store.list_conversations("user-a")
 
     assert [conversation.id for conversation in conversations] == [user_a.id]
 
 
-def test_store_hides_cross_user_conversation_details(tmp_path: Path) -> None:
+async def test_store_hides_cross_user_conversation_details(tmp_path: Path) -> None:
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    conversation = store.create_conversation("user-b")
+    conversation = await store.create_conversation("user-b")
 
     with pytest.raises(KeyError):
-        store.get_conversation(conversation.id, "user-a")
+        await store.get_conversation(conversation.id, "user-a")
 
 
-def test_store_blocks_cross_user_message_writes(tmp_path: Path) -> None:
+async def test_store_blocks_cross_user_message_writes(tmp_path: Path) -> None:
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    conversation = store.create_conversation("user-b")
+    conversation = await store.create_conversation("user-b")
 
     with pytest.raises(KeyError):
-        store.save_user_message(conversation.id, "user-a", "Nope.")
+        await store.save_user_message(conversation.id, "user-a", "Nope.")
 
-    assert store.get_conversation(conversation.id, "user-b").messages == []
+    assert (await store.get_conversation(conversation.id, "user-b")).messages == []

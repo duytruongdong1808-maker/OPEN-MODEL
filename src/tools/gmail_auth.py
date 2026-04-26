@@ -5,7 +5,6 @@ import hashlib
 import json
 import logging
 import secrets
-import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,11 +16,13 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from sqlalchemy import create_engine, delete, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .errors import AuthError, ToolError
+from ..server.db import default_database_url, gmail_credentials, metadata, sync_migration_url
 from ..server.settings import get_open_model_settings
 from ..server.storage import utcnow_iso
-
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SCOPES = [GMAIL_READONLY_SCOPE]
@@ -65,6 +66,7 @@ class OAuthStateEntry:
 # OAuth state is intentionally process-local. In multi-instance deployments, the OAuth callback
 # must route back to the same instance that created the state token, for example via sticky sessions.
 _OAUTH_STATES: dict[str, OAuthStateEntry] = {}
+_ENGINE_BY_URL = {}
 
 
 def legacy_gmail_token_path() -> Path:
@@ -76,32 +78,14 @@ def warn_if_legacy_token_file_exists() -> None:
         logger.warning(LEGACY_TOKEN_WARNING)
 
 
-def _db_path() -> Path:
-    db_path = Path(get_open_model_settings().open_model_db_path).expanduser()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return db_path
-
-
-def _connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(_db_path())
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
-
-
-def _ensure_gmail_credentials_table(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gmail_credentials (
-            user_id TEXT PRIMARY KEY,
-            encrypted_token BLOB NOT NULL,
-            email TEXT,
-            scopes TEXT,
-            connected_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
+def _engine():
+    url = sync_migration_url(default_database_url())
+    engine = _ENGINE_BY_URL.get(url)
+    if engine is None:
+        engine = create_engine(url, future=True)
+        metadata.create_all(engine)
+        _ENGINE_BY_URL[url] = engine
+    return engine
 
 
 def _oauth_client_config() -> dict[str, dict[str, object]]:
@@ -219,17 +203,17 @@ def _authorized_user_info(
     return {key: value for key, value in info.items() if value is not None}
 
 
-def _load_credential_row(user_id: str) -> sqlite3.Row | None:
-    with _connect() as connection:
-        _ensure_gmail_credentials_table(connection)
-        return connection.execute(
-            """
-            SELECT user_id, encrypted_token, email, scopes, connected_at, updated_at
-            FROM gmail_credentials
-            WHERE user_id = ?
-            """,
-            (user_id,),
-        ).fetchone()
+def _load_credential_row(user_id: str):
+    stmt = select(
+        gmail_credentials.c.user_id,
+        gmail_credentials.c.encrypted_token,
+        gmail_credentials.c.email,
+        gmail_credentials.c.scopes,
+        gmail_credentials.c.connected_at,
+        gmail_credentials.c.updated_at,
+    ).where(gmail_credentials.c.user_id == user_id)
+    with _engine().connect() as connection:
+        return connection.execute(stmt).mappings().first()
 
 
 def _store_token_row(
@@ -241,32 +225,40 @@ def _store_token_row(
 ) -> None:
     timestamp = utcnow_iso()
     encrypted_token = _encrypt_token(token_json)
-    with _connect() as connection:
-        _ensure_gmail_credentials_table(connection)
-        existing = connection.execute(
-            "SELECT connected_at FROM gmail_credentials WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        connected_at = existing["connected_at"] if existing is not None else timestamp
-        connection.execute(
-            """
-            INSERT INTO gmail_credentials (
-                user_id,
-                encrypted_token,
-                email,
-                scopes,
-                connected_at,
-                updated_at
+    with _engine().begin() as connection:
+        existing = (
+            connection.execute(
+                select(gmail_credentials.c.connected_at).where(
+                    gmail_credentials.c.user_id == user_id
+                )
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                encrypted_token = excluded.encrypted_token,
-                email = excluded.email,
-                scopes = excluded.scopes,
-                updated_at = excluded.updated_at
-            """,
-            (user_id, encrypted_token, email, _scope_json(scopes or []), connected_at, timestamp),
+            .mappings()
+            .first()
         )
+        connected_at = existing["connected_at"] if existing is not None else timestamp
+        values = {
+            "user_id": user_id,
+            "encrypted_token": encrypted_token,
+            "email": email,
+            "scopes": _scope_json(scopes or []),
+            "connected_at": connected_at,
+            "updated_at": timestamp,
+        }
+        if connection.dialect.name == "postgresql":
+            statement = pg_insert(gmail_credentials).values(**values)
+            statement = statement.on_conflict_do_update(
+                index_elements=[gmail_credentials.c.user_id],
+                set_={
+                    "encrypted_token": statement.excluded.encrypted_token,
+                    "email": statement.excluded.email,
+                    "scopes": statement.excluded.scopes,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        else:
+            statement = insert(gmail_credentials).values(**values)
+            statement = statement.prefix_with("OR REPLACE")
+        connection.execute(statement)
 
 
 def has_gmail_credentials(user_id: str) -> bool:
@@ -416,7 +408,6 @@ def get_gmail_status(user_id: str) -> GmailConnectionStatus:
 
 
 def disconnect_gmail(user_id: str) -> GmailConnectionStatus:
-    with _connect() as connection:
-        _ensure_gmail_credentials_table(connection)
-        connection.execute("DELETE FROM gmail_credentials WHERE user_id = ?", (user_id,))
+    with _engine().begin() as connection:
+        connection.execute(delete(gmail_credentials).where(gmail_credentials.c.user_id == user_id))
     return GmailConnectionStatus(connected=False, scopes=[])

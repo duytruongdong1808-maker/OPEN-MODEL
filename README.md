@@ -462,7 +462,8 @@ This repo now includes a ChatGPT-style internal MVP with:
 
 - a `FastAPI` backend under `src/server/`
 - a `Next.js` frontend under `web/`
-- local conversation storage in SQLite
+- conversation, audit, Gmail credential, and send-ledger storage through SQLAlchemy with
+  PostgreSQL for compose/prod and SQLite fallback for local dev
 - streaming assistant replies over `SSE`
 - a read-only mail agent that can inspect inbox summaries and full emails, then produce prioritized briefs with action items
 
@@ -481,7 +482,10 @@ Optional environment variables:
 - `OPEN_MODEL_MODEL_REVISION`
 - `OPEN_MODEL_LOAD_IN_4BIT`
 - `OPEN_MODEL_DB_PATH`
+- `OPEN_MODEL_DATABASE_URL`
+- `OPEN_MODEL_DATABASE_PASSWORD_FILE`
 - `OPEN_MODEL_LEDGER_DB_PATH`
+- `OPEN_MODEL_LEDGER_DATABASE_URL`
 - `OPEN_MODEL_CORS_ORIGINS`
 - `OPEN_MODEL_MAX_REQUEST_BYTES`
 - `OPEN_MODEL_MAX_NEW_TOKENS`
@@ -563,9 +567,19 @@ http://localhost:3000
 
 ### Run with Docker Compose
 
+Create the Postgres password secret before the first compose boot:
+
+```bash
+mkdir -p secrets
+openssl rand -base64 32 > secrets/postgres_password
+chmod 600 secrets/postgres_password
+```
+
 ```powershell
 docker compose up --build
 ```
+
+The compose stack starts Postgres first, waits for it to become healthy, and then starts the backend with `OPEN_MODEL_DATABASE_URL=postgresql+psycopg://openmodel@postgres:5432/openmodel`. The password is read from the Docker secret mount, not baked into the image or `.env`.
 
 The compose stack only publishes the web app on `http://localhost:3000`. The FastAPI backend is exposed on the internal Docker network as `http://backend:8000` so browser traffic must pass through the authenticated Next.js proxy.
 
@@ -577,7 +591,7 @@ docker compose exec backend curl -fsS http://localhost:8000/health
 
 ### Database migrations
 
-Conversation storage is managed with Alembic. By default migrations read `OPEN_MODEL_DB_PATH` and build a SQLite SQLAlchemy URL for that file. To use an explicit SQLAlchemy URL instead, set `OPEN_MODEL_DATABASE_URL`.
+Application storage is managed with Alembic. By default migrations read `OPEN_MODEL_DB_PATH` and build a SQLite SQLAlchemy URL for that file. To use Postgres or another explicit SQLAlchemy URL, set `OPEN_MODEL_DATABASE_URL`.
 
 Run migrations from the repo root:
 
@@ -592,6 +606,24 @@ python scripts/backfill_user_id.py --user-id local-user
 ```
 
 Migration `0003` adds `gmail_credentials` for per-user encrypted Gmail OAuth tokens. Legacy `gmail_token.json` files are ignored; each user must reconnect Gmail so credentials can be stored under their verified user ID.
+
+Migration `0005` changes `audit_log.detail_json` to `JSONB` on Postgres. SQLite keeps text storage for local compatibility.
+
+### Migrating from SQLite to Postgres
+
+Start with an empty Postgres database whose schema is at the current Alembic head, then run:
+
+```bash
+python scripts/migrate_sqlite_to_postgres.py \
+  --sqlite-path ./outputs/app/chat.sqlite3 \
+  --postgres-url postgresql+psycopg://openmodel:REDACTED@localhost:5432/openmodel
+```
+
+The script copies rows in batches of 500 and uses `ON CONFLICT DO NOTHING`, so it is safe to retry. It verifies row counts after the copy and exits non-zero if any table differs. Use `--dry-run` to print the source row counts without writing.
+
+### Postgres backups
+
+The included `scripts/backup_postgres.sh` is cron-compatible and runs `pg_dump --format=custom` to `/backups/openmodel-YYYY-MM-DD-HHMM.dump`. Production operators should schedule a daily backup and copy it to durable object storage such as S3 or GCS; cloud backup automation is intentionally outside this ticket.
 
 ## Common Troubleshooting
 

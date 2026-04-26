@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import asyncio
 import sqlite3
 import subprocess
 import sys
@@ -17,7 +18,6 @@ from src.server.runtime import GenerationStream
 from src.server.settings import get_open_model_settings
 from src.server.storage import ConversationStore
 from src.tools.schemas import EmailSummary
-
 
 TEST_INTERNAL_HMAC_SECRET = "test-internal-hmac-secret-at-least-32-bytes"
 
@@ -158,7 +158,7 @@ def test_failed_login_emits_audit_with_no_password(tmp_path: Path, monkeypatch) 
 
 def test_audit_purge_respects_days(tmp_path: Path) -> None:
     db_path = tmp_path / "chat.sqlite3"
-    AuditLogger(db_path)
+    asyncio.run(AuditLogger(db_path).initialize())
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     old = (
         (datetime.now(timezone.utc) - timedelta(days=120))

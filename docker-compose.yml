@@ -28,6 +28,39 @@ services:
         limits:
           memory: 256m
 
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: openmodel
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: openmodel
+    read_only: false
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openmodel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
   backend:
     build:
       context: .
@@ -42,6 +75,9 @@ services:
     env_file:
       - .env
     environment:
+      OPEN_MODEL_DATABASE_URL: postgresql+psycopg://openmodel@postgres:5432/openmodel
+      OPEN_MODEL_LEDGER_DATABASE_URL: postgresql+psycopg://openmodel@postgres:5432/openmodel
+      OPEN_MODEL_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       OPEN_MODEL_DB_PATH: /app/outputs/app/chat.sqlite3
       OPEN_MODEL_LEDGER_DB_PATH: /app/outputs/app/ledger.sqlite3
       GOOGLE_OAUTH_TOKEN_PATH: /app/outputs/app/gmail_token.json
@@ -49,8 +85,13 @@ services:
       OPEN_MODEL_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     volumes:
       - open-model-outputs:/app/outputs
+    secrets:
+      - postgres_password
     expose:
       - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
       interval: 30s
@@ -95,4 +136,9 @@ services:
 
 volumes:
   open-model-outputs:
+  postgres-data:
   redis-data:
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:-./secrets/postgres_password}
