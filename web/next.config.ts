@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   productionBrowserSourceMaps: false,
+  output: "standalone",
   experimental: {
     optimizePackageImports: ["react", "react-dom"],
   },

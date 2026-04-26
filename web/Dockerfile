@@ -14,13 +14,15 @@ FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    INTERNAL_HMAC_SECRET=""
+    INTERNAL_HMAC_SECRET="" \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
 
-COPY --from=builder /app/package.json /app/package-lock.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/next.config.ts ./next.config.ts
+# Next.js standalone output ships only the production deps required at runtime,
+# so dev tools (vite, vitest, esbuild, picomatch, ...) are not baked into the image.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
 
-CMD ["npm", "run", "start"]
+CMD ["node", "server.js"]
