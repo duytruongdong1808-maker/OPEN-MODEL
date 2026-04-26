@@ -1,0 +1,25 @@
+title = "Open Model gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "open-model-env-secret-assignment"
+description = "Detect non-empty secret-like environment assignments"
+path = '''(^|/)\.env(\..*)?$'''
+regex = '''(?i)^[A-Z0-9_]*(?:PASSWORD|PASS|SECRET|TOKEN|ENCRYPTION_KEY)[ \t]*=[ \t]*["']?[^ \t\r\n"'#<>]+'''
+keywords = [
+  "password",
+  "pass",
+  "secret",
+  "token",
+  "PASSWORD",
+  "PASS",
+  "SECRET",
+  "TOKEN",
+]
+
+[[rules.allowlists]]
+paths = [
+  '''(^|/)\.env\.example$''',
+]

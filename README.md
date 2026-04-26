@@ -602,6 +602,8 @@ If you use the curated pipeline, review rows are written separately and should n
 ## Security Notes
 
 - This repo keeps `trust_remote_code=False` in the model-loading paths.
+- Rotate every value that has ever appeared in a local `.env` before deployment. See [P0 Secret Rotation Runbook](docs/SECRET_ROTATION.md).
+- Publish a privacy and retention policy before enabling public Gmail OAuth traffic. See [Open Model Privacy and Data Retention Policy](docs/PRIVACY.md).
 - Treat `data/raw/` as sensitive local input. Do not put PII, secrets, or proprietary data there unless you are intentionally working in a secure environment.
 - Review any third-party dataset or base model license before redistribution of derived artifacts.
 

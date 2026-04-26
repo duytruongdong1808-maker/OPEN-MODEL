@@ -20,7 +20,7 @@ jobs:
             | sh -s -- -b "$PWD" v8.18.0
 
       - name: Secret scan
-        run: ./gitleaks detect --source . --redact --verbose
+        run: ./gitleaks detect --source . --log-opts="--all" --redact --verbose
 
       - name: Set up Python
         uses: actions/setup-python@v5
