@@ -4,7 +4,6 @@ import asyncio
 
 from .config import get_email_settings
 from .email_client import IMAPReader
-from .errors import AuthError
 from .gmail_auth import has_gmail_credentials
 from .gmail_reader import GmailReader
 from .ledger import SendLedger
@@ -15,37 +14,23 @@ from .registry import tool
 
 
 @tool(name="read_inbox", description="List recent email summaries from the configured inbox.")
-async def read_inbox(limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
+async def read_inbox(
+    user_id: str, limit: int = 20, unread_only: bool = True
+) -> list[EmailSummary]:
     """List recent email summaries."""
-    if has_gmail_credentials():
-        return await asyncio.to_thread(GmailReader().list_inbox, limit, unread_only)
+    if has_gmail_credentials(user_id):
+        return await asyncio.to_thread(GmailReader(user_id).list_inbox, limit, unread_only)
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.list_inbox(limit=limit, unread_only=unread_only)
 
 
 @tool(name="get_email", description="Read a full email by IMAP UID.")
-async def get_email(uid: str) -> EmailMessage:
+async def get_email(user_id: str, uid: str) -> EmailMessage:
     """Read a full email by IMAP UID."""
-    if has_gmail_credentials():
-        return await asyncio.to_thread(GmailReader().get_email, uid)
+    if has_gmail_credentials(user_id):
+        return await asyncio.to_thread(GmailReader(user_id).get_email, uid)
     async with IMAPReader(get_email_settings()) as reader:
         return await reader.get_email(uid)
-
-
-async def read_inbox_for_google_user(
-    user_key: str | None, limit: int = 20, unread_only: bool = True
-) -> list[EmailSummary]:
-    """List inbox summaries for the authenticated Google web user."""
-    if not user_key:
-        raise AuthError("Sign in with Google to let the agent read your Gmail.")
-    return await asyncio.to_thread(GmailReader(user_key=user_key).list_inbox, limit, unread_only)
-
-
-async def get_email_for_google_user(user_key: str | None, uid: str) -> EmailMessage:
-    """Read a full email for the authenticated Google web user."""
-    if not user_key:
-        raise AuthError("Sign in with Google to let the agent read your Gmail.")
-    return await asyncio.to_thread(GmailReader(user_key=user_key).get_email, uid)
 
 
 @tool(name="send_email", description="Send an email after safety checks, dry-run, and approval gates.")
@@ -86,13 +71,14 @@ async def send_request(req: SendRequest) -> SendResult:
 
 @tool(name="reply_email", description="Reply to an existing email by UID with threading headers.")
 async def reply_email(
+    user_id: str,
     uid: str,
     body_text: str,
     body_html: str | None = None,
     quote_original: bool = True,
 ) -> SendResult:
     """Reply to an existing email by UID."""
-    original = await get_email(uid)
+    original = await get_email(user_id, uid)
     subject = original.subject if original.subject.lower().startswith("re:") else f"Re: {original.subject}"
     reply_text = body_text
     reply_html = body_html

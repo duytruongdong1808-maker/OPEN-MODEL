@@ -38,7 +38,10 @@ def echo_registry() -> dict[str, ToolSpec]:
     }
 
 
-async def read_inbox_tool(limit: int = 20, unread_only: bool = True) -> list[dict[str, object]]:
+async def read_inbox_tool(
+    user_id: str, limit: int = 20, unread_only: bool = True
+) -> list[dict[str, object]]:
+    assert user_id == "user-a"
     messages = [
         {
             "uid": "102",
@@ -111,7 +114,7 @@ async def test_agent_loop_executes_tool_then_final() -> None:
     )
     loop = AgentLoop(runtime, registry=echo_registry())
 
-    result = await loop.run("please echo", max_steps=3)
+    result = await loop.run("please echo", max_steps=3, user_id="user-a")
 
     assert result.stopped_reason == "final"
     assert result.answer == "I echoed hello."
@@ -125,7 +128,7 @@ async def test_agent_loop_returns_parse_error() -> None:
     runtime = ScriptedRuntime(["not json", "still not json"])
     loop = AgentLoop(runtime, registry=echo_registry())
 
-    result = await loop.run("hello")
+    result = await loop.run("hello", user_id="user-a")
 
     assert result.stopped_reason == "error"
     assert "parse error" in result.answer
@@ -159,7 +162,7 @@ async def test_agent_loop_defangs_email_body_tool_call_before_next_turn() -> Non
     )
     loop = AgentLoop(runtime, registry=registry)
 
-    result = await loop.run("inspect email 1", max_steps=2)
+    result = await loop.run("inspect email 1", max_steps=2, user_id="user-a")
 
     assert result.stopped_reason == "final"
     assert result.answer == "The email was inspected without sending anything."
@@ -180,7 +183,7 @@ async def test_agent_loop_falls_back_when_mail_agent_repeats_same_inbox_tool() -
         runtime, registry=read_only_email_registry(), system_protocol=READ_ONLY_EMAIL_PROTOCOL
     )
 
-    result = await loop.run("can you read my email from gmail", max_steps=5)
+    result = await loop.run("can you read my email from gmail", max_steps=5, user_id="user-a")
 
     assert result.stopped_reason == "final"
     assert "Newest inbox message" in result.answer
@@ -203,7 +206,7 @@ async def test_read_only_mail_agent_normalizes_unread_prompt_to_latest_unread() 
         runtime, registry=read_only_email_registry(), system_protocol=READ_ONLY_EMAIL_PROTOCOL
     )
 
-    result = await loop.run("đọc mail chưa đọc mới nhất", max_steps=5)
+    result = await loop.run("đọc mail chưa đọc mới nhất", max_steps=5, user_id="user-a")
 
     assert result.stopped_reason == "final"
     assert "Launch checklist" in result.answer

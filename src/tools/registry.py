@@ -56,6 +56,8 @@ def _params_schema(handler: ToolCallable, name: str) -> dict[str, Any]:
     type_hints = get_type_hints(handler)
     fields: dict[str, tuple[Any, Any]] = {}
     for param_name, parameter in signature.parameters.items():
+        if param_name == "user_id":
+            continue
         annotation = type_hints.get(param_name, Any)
         default = parameter.default if parameter.default is not inspect.Signature.empty else ...
         fields[param_name] = (annotation, default)

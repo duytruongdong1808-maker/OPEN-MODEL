@@ -74,6 +74,15 @@ class ConversationStore:
                     FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS gmail_credentials (
+                    user_id TEXT PRIMARY KEY,
+                    encrypted_token BLOB NOT NULL,
+                    email TEXT,
+                    scopes TEXT,
+                    connected_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_message_sources_message_id ON message_sources(message_id, position);

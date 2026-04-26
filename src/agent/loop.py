@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import unicodedata
 from collections.abc import Mapping
@@ -86,6 +87,7 @@ class AgentLoop:
         system_prompt: str | None = None,
         max_steps: int = 5,
         on_step: AgentStepCallback | None = None,
+        user_id: str,
     ) -> AgentRunResult:
         steps: list[AgentStep] = []
         messages = [{"role": "user", "content": message}]
@@ -156,7 +158,7 @@ class AgentLoop:
                 index=index, kind="tool", status="ok", tool_name=tool_name, arguments=arguments
             )
             try:
-                result = await self._execute_tool(tool_name, arguments)
+                result = await self._execute_tool(tool_name, arguments, user_id=user_id)
                 step.result = to_jsonable(result)
                 messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
@@ -211,7 +213,7 @@ class AgentLoop:
             raise
         return "".join(chunks).strip()
 
-    async def _execute_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+    async def _execute_tool(self, name: str, arguments: dict[str, Any], *, user_id: str) -> Any:
         try:
             spec = self.registry[name]
         except KeyError as exc:
@@ -220,7 +222,10 @@ class AgentLoop:
                 f"Tool '{name}' is not available in this agent mode. "
                 f"Available tools: {available}."
             ) from exc
-        return await asyncio.wait_for(spec.handler(**arguments), timeout=self.tool_timeout_s)
+        handler_arguments = dict(arguments)
+        if "user_id" in inspect.signature(spec.handler).parameters:
+            handler_arguments["user_id"] = user_id
+        return await asyncio.wait_for(spec.handler(**handler_arguments), timeout=self.tool_timeout_s)
 
     def _normalize_tool_arguments(
         self, message: str, tool_name: str, arguments: dict[str, Any]

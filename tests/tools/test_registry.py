@@ -26,6 +26,12 @@ def test_registered_tool_has_pydantic_schemas() -> None:
     assert "status" in spec.returns_schema["properties"]
 
 
+def test_user_id_is_hidden_from_tool_schema() -> None:
+    spec = get_tool("read_inbox")
+
+    assert "user_id" not in spec.params_schema.get("properties", {})
+
+
 def test_get_tool_rejects_unknown_name() -> None:
     with pytest.raises(KeyError):
         get_tool("missing_tool")

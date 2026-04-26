@@ -101,7 +101,7 @@ class FakeService:
 
 def test_gmail_reader_lists_unread_inbox_summaries():
     service = FakeService()
-    reader = GmailReader(service=service)
+    reader = GmailReader("user-a", service=service)
 
     items = reader.list_inbox(limit=2, unread_only=True)
 
@@ -120,7 +120,7 @@ def test_gmail_reader_lists_unread_inbox_summaries():
 
 def test_gmail_reader_gets_full_message():
     service = FakeService()
-    reader = GmailReader(service=service)
+    reader = GmailReader("user-a", service=service)
 
     message = reader.get_email("msg-1")
 
@@ -139,7 +139,7 @@ def test_gmail_reader_gets_full_message():
 
 def test_gmail_reader_omits_query_when_listing_all_inbox():
     service = FakeService()
-    reader = GmailReader(service=service)
+    reader = GmailReader("user-a", service=service)
 
     reader.list_inbox(limit=1, unread_only=False)
 
@@ -151,7 +151,7 @@ def test_gmail_reader_omits_query_when_listing_all_inbox():
 
 
 def test_gmail_reader_sanitizes_html_body():
-    reader = GmailReader(service=FakeService())
+    reader = GmailReader("user-a", service=FakeService())
 
     message = reader.get_email("msg-2")
 

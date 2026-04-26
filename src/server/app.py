@@ -36,10 +36,11 @@ from ..tools.errors import AuthError, PolicyError, ToolError
 from ..tools.gmail_auth import (
     GmailSessionToken,
     complete_gmail_oauth_flow,
-    disconnect_gmail_user,
+    disconnect_gmail,
     get_gmail_status,
     start_gmail_oauth_flow,
     store_gmail_session_token,
+    warn_if_legacy_token_file_exists,
 )
 from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from .runtime import LocalModelChatService, SupportsStreamingReply
@@ -55,11 +56,6 @@ from .schemas import (
 )
 from .settings import OpenModelSettings, get_open_model_settings
 from .storage import ConversationStore
-
-class WebUserContext(BaseModel):
-    google_user_id: str | None = None
-    google_email: str | None = None
-
 
 class GmailSessionTokenRequest(BaseModel):
     user_id: str = Field(min_length=1)
@@ -90,19 +86,10 @@ def build_steps(mode: str) -> list[tuple[str, str]]:
     ]
 
 
-def get_web_agent_registry(user_key: str | None = None) -> dict[str, ToolSpec]:
-    read_spec = TOOL_REGISTRY["read_inbox"]
-    get_spec = TOOL_REGISTRY["get_email"]
-
-    async def read_user_inbox(limit: int = 20, unread_only: bool = True):
-        return await email_tools.read_inbox_for_google_user(user_key, limit, unread_only)
-
-    async def get_user_email(uid: str):
-        return await email_tools.get_email_for_google_user(user_key, uid)
-
+def get_web_agent_registry() -> dict[str, ToolSpec]:
     return {
-        "read_inbox": read_spec.model_copy(update={"handler": read_user_inbox}),
-        "get_email": get_spec.model_copy(update={"handler": get_user_email}),
+        "read_inbox": TOOL_REGISTRY["read_inbox"],
+        "get_email": TOOL_REGISTRY["get_email"],
     }
 
 
@@ -119,16 +106,6 @@ def get_runtime(request: Request) -> SupportsStreamingReply:
 
 def get_app_settings(request: Request) -> OpenModelSettings:
     return request.app.state.settings
-
-
-def get_web_user_context(
-    x_open_model_google_user_id: str | None = Header(default=None),
-    x_open_model_google_email: str | None = Header(default=None),
-) -> WebUserContext:
-    return WebUserContext(
-        google_user_id=(x_open_model_google_user_id or "").strip() or None,
-        google_email=(x_open_model_google_email or "").strip() or None,
-    )
 
 
 def verify_tools_token(authorization: str | None = Header(default=None)) -> None:
@@ -208,6 +185,7 @@ def create_app(
 ) -> FastAPI:
     settings = get_open_model_settings()
     configure_logging(settings.open_model_log_level)
+    warn_if_legacy_token_file_exists()
 
     @asynccontextmanager
     async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
@@ -274,10 +252,9 @@ def create_app(
         checks["model"] = {"status": "ok" if model_is_ready else "not_ready"}
         ready = ready and model_is_ready
 
-        gmail_status = get_gmail_status()
         checks["gmail"] = {
-            "status": "connected" if gmail_status.connected else "not_connected",
-            "email": gmail_status.email,
+            "status": "not_checked",
+            "detail": "Gmail status is per-user and requires authenticated user headers.",
         }
 
         return JSONResponse(
@@ -286,9 +263,9 @@ def create_app(
         )
 
     @app.get("/auth/gmail/login", dependencies=[Depends(verify_tools_token)])
-    def gmail_login_endpoint() -> RedirectResponse:
+    def gmail_login_endpoint(user_id: str = Depends(get_current_user_id)) -> RedirectResponse:
         try:
-            return RedirectResponse(start_gmail_oauth_flow(), status_code=302)
+            return RedirectResponse(start_gmail_oauth_flow(user_id), status_code=302)
         except Exception as exc:
             raise tool_http_error(exc) from exc
 
@@ -297,40 +274,38 @@ def create_app(
         code: str | None = Query(default=None),
         state: str | None = Query(default=None),
         error: str | None = Query(default=None),
+        user_id: str = Depends(get_current_user_id),
     ) -> RedirectResponse:
+        _ = user_id
         if error:
             raise HTTPException(status_code=400, detail=f"Gmail OAuth denied: {error}")
         if not code:
             raise HTTPException(status_code=400, detail="Missing Gmail OAuth authorization code.")
         try:
-            complete_gmail_oauth_flow(code=code, state=state)
+            complete_gmail_oauth_flow(code=code, state=state or "")
         except Exception as exc:
             raise tool_http_error(exc) from exc
         return RedirectResponse("/", status_code=302)
 
     @app.get("/auth/gmail/status", dependencies=[Depends(verify_tools_token)])
     def gmail_status_endpoint(
-        web_user: WebUserContext = Depends(get_web_user_context),
+        user_id: str = Depends(get_current_user_id),
     ) -> dict[str, object]:
-        status_payload = (
-            get_gmail_status(user_key=web_user.google_user_id)
-            if web_user.google_user_id
-            else None
-        )
+        status_payload = get_gmail_status(user_id)
         return {
-            "connected": status_payload.connected if status_payload else False,
-            "email": (status_payload.email if status_payload else None) or web_user.google_email,
-            "scopes": status_payload.scopes if status_payload else [],
+            "connected": status_payload.connected,
+            "email": status_payload.email,
+            "scopes": status_payload.scopes or [],
         }
 
     @app.post("/auth/gmail/logout", dependencies=[Depends(verify_tools_token)])
     def gmail_logout_endpoint(
-        web_user: WebUserContext = Depends(get_web_user_context),
+        user_id: str = Depends(get_current_user_id),
     ) -> dict[str, object]:
-        status_payload = disconnect_gmail_user(web_user.google_user_id)
+        status_payload = disconnect_gmail(user_id)
         return {
             "connected": status_payload.connected,
-            "email": status_payload.email or web_user.google_email,
+            "email": status_payload.email,
             "scopes": status_payload.scopes or [],
         }
 
@@ -363,9 +338,13 @@ def create_app(
         response_model=list[EmailSummary],
         dependencies=[Depends(verify_tools_token)],
     )
-    async def tools_inbox_endpoint(limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
+    async def tools_inbox_endpoint(
+        limit: int = 20,
+        unread_only: bool = True,
+        user_id: str = Depends(get_current_user_id),
+    ) -> list[EmailSummary]:
         try:
-            return await email_tools.read_inbox(limit=limit, unread_only=unread_only)
+            return await email_tools.read_inbox(user_id, limit=limit, unread_only=unread_only)
         except Exception as exc:
             raise tool_http_error(exc) from exc
 
@@ -374,9 +353,12 @@ def create_app(
         response_model=EmailMessage,
         dependencies=[Depends(verify_tools_token)],
     )
-    async def tools_email_endpoint(uid: str) -> EmailMessage:
+    async def tools_email_endpoint(
+        uid: str,
+        user_id: str = Depends(get_current_user_id),
+    ) -> EmailMessage:
         try:
-            return await email_tools.get_email(uid)
+            return await email_tools.get_email(user_id, uid)
         except Exception as exc:
             raise tool_http_error(exc) from exc
 
@@ -399,12 +381,14 @@ def create_app(
     async def agent_run_endpoint(
         payload: AgentRunRequest,
         chat_runtime: SupportsStreamingReply = Depends(get_runtime),
+        user_id: str = Depends(get_current_user_id),
     ) -> AgentRunResult:
         try:
             return await AgentLoop(chat_runtime).run(
                 payload.message,
                 system_prompt=payload.system_prompt,
                 max_steps=payload.max_steps,
+                user_id=user_id,
             )
         except Exception as exc:
             raise tool_http_error(exc) from exc
@@ -503,7 +487,6 @@ def create_app(
         request: Request,
         conversation_store: ConversationStore = Depends(get_store),
         chat_runtime: SupportsStreamingReply = Depends(get_runtime),
-        web_user: WebUserContext = Depends(get_web_user_context),
         user_id: str = Depends(get_current_user_id),
     ) -> StreamingResponse:
         if not conversation_store.conversation_exists(conversation_id, user_id):
@@ -528,7 +511,7 @@ def create_app(
 
             agent = AgentLoop(
                 chat_runtime,
-                registry=get_web_agent_registry(web_user.google_user_id),
+                registry=get_web_agent_registry(),
                 system_protocol=READ_ONLY_EMAIL_PROTOCOL,
             )
             run_task = asyncio.create_task(
@@ -537,6 +520,7 @@ def create_app(
                     system_prompt=payload.system_prompt,
                     max_steps=payload.max_steps,
                     on_step=on_step,
+                    user_id=user_id,
                 )
             )
 

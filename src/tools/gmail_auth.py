@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import json
-import secrets
 import base64
 import hashlib
+import json
+import logging
+import secrets
+import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,12 +20,20 @@ from googleapiclient.discovery import build
 
 from .errors import AuthError, ToolError
 from ..server.settings import get_open_model_settings
+from ..server.storage import utcnow_iso
 
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SCOPES = [GMAIL_READONLY_SCOPE]
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+OAUTH_STATE_TTL_SECONDS = 10 * 60
+LEGACY_TOKEN_WARNING = (
+    "Legacy gmail_token.json detected — Gmail is now per-user. Ask each user to reconnect Gmail. "
+    "The legacy file will be ignored."
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,27 +56,52 @@ class GmailSessionToken:
     client_secret: str
 
 
-def gmail_token_path() -> Path:
+@dataclass(frozen=True)
+class OAuthStateEntry:
+    user_id: str
+    expires_at: float
+
+
+# OAuth state is intentionally process-local. In multi-instance deployments, the OAuth callback
+# must route back to the same instance that created the state token, for example via sticky sessions.
+_OAUTH_STATES: dict[str, OAuthStateEntry] = {}
+
+
+def legacy_gmail_token_path() -> Path:
     return get_open_model_settings().google_oauth_token_path
 
 
-def gmail_user_token_path(user_key: str) -> Path:
-    digest = hashlib.sha256(user_key.strip().lower().encode("utf-8")).hexdigest()
-    return get_open_model_settings().google_oauth_token_dir / f"{digest}.json"
+def warn_if_legacy_token_file_exists() -> None:
+    if legacy_gmail_token_path().exists():
+        logger.warning(LEGACY_TOKEN_WARNING)
 
 
-def gmail_state_path() -> Path:
-    return get_open_model_settings().google_oauth_state_path
+def _db_path() -> Path:
+    db_path = Path(get_open_model_settings().open_model_db_path).expanduser()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return db_path
 
 
-def has_gmail_credentials(*, user_key: str | None = None) -> bool:
-    return _resolve_token_path(user_key).exists()
+def _connect() -> sqlite3.Connection:
+    connection = sqlite3.connect(_db_path())
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
 
 
-def _resolve_token_path(user_key: str | None = None) -> Path:
-    if user_key:
-        return gmail_user_token_path(user_key)
-    return gmail_token_path()
+def _ensure_gmail_credentials_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gmail_credentials (
+            user_id TEXT PRIMARY KEY,
+            encrypted_token BLOB NOT NULL,
+            email TEXT,
+            scopes TEXT,
+            connected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
 
 def _oauth_client_config() -> dict[str, dict[str, object]]:
@@ -120,31 +156,42 @@ def _token_cipher() -> Fernet:
     return Fernet(derived)
 
 
-def _write_encrypted_token(path: Path, token_json: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_token_cipher().encrypt(token_json.encode("utf-8")))
+def _encrypt_token(token_json: str) -> bytes:
+    return _token_cipher().encrypt(token_json.encode("utf-8"))
 
 
-def _read_encrypted_token(path: Path) -> str:
-    raw = path.read_bytes()
+def _decrypt_token(raw: bytes) -> str:
     try:
         return _token_cipher().decrypt(raw).decode("utf-8")
     except InvalidToken as exc:
         raise AuthError("Stored Gmail credentials could not be decrypted.") from exc
 
 
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _read_encrypted_token(raw: bytes | Path) -> str:
+    if isinstance(raw, Path):
+        raw = raw.read_bytes()
+    return _decrypt_token(raw)
 
 
 def _scopes_from_scope_string(scope: str | None) -> list[str]:
     scopes = [item for item in (scope or "").split() if item]
     return scopes or GMAIL_SCOPES
+
+
+def _scope_json(scopes: list[str]) -> str:
+    return json.dumps(scopes, ensure_ascii=False)
+
+
+def _parse_scope_json(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        scopes = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(scopes, list):
+        return []
+    return [str(scope) for scope in scopes if str(scope)]
 
 
 def _expiry_from_timestamp(expires_at: int | None) -> str | None:
@@ -170,56 +217,141 @@ def _authorized_user_info(payload: GmailSessionToken, refresh_token: str | None)
     return {key: value for key, value in info.items() if value is not None}
 
 
+def _load_credential_row(user_id: str) -> sqlite3.Row | None:
+    with _connect() as connection:
+        _ensure_gmail_credentials_table(connection)
+        return connection.execute(
+            """
+            SELECT user_id, encrypted_token, email, scopes, connected_at, updated_at
+            FROM gmail_credentials
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+
+def _store_token_row(
+    user_id: str,
+    token_json: str,
+    *,
+    email: str | None = None,
+    scopes: list[str] | None = None,
+) -> None:
+    timestamp = utcnow_iso()
+    encrypted_token = _encrypt_token(token_json)
+    with _connect() as connection:
+        _ensure_gmail_credentials_table(connection)
+        existing = connection.execute(
+            "SELECT connected_at FROM gmail_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        connected_at = existing["connected_at"] if existing is not None else timestamp
+        connection.execute(
+            """
+            INSERT INTO gmail_credentials (
+                user_id,
+                encrypted_token,
+                email,
+                scopes,
+                connected_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                encrypted_token = excluded.encrypted_token,
+                email = excluded.email,
+                scopes = excluded.scopes,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, encrypted_token, email, _scope_json(scopes or []), connected_at, timestamp),
+        )
+
+
+def has_gmail_credentials(user_id: str) -> bool:
+    user_id = user_id.strip()
+    if not user_id:
+        return False
+    return _load_credential_row(user_id) is not None
+
+
+def _prune_oauth_states(now: float | None = None) -> None:
+    now = _state_now() if now is None else now
+    expired = [state for state, entry in _OAUTH_STATES.items() if entry.expires_at <= now]
+    for state in expired:
+        _OAUTH_STATES.pop(state, None)
+
+
+def _state_now() -> float:
+    return time.time()
+
+
+def _consume_oauth_state(state: str | None) -> str:
+    if not state:
+        raise AuthError("Invalid Gmail OAuth state. Start sign-in again.")
+    now = _state_now()
+    _prune_oauth_states(now)
+    entry = _OAUTH_STATES.pop(state, None)
+    if entry is None:
+        raise AuthError("Invalid Gmail OAuth state. Start sign-in again.")
+    if entry.expires_at <= now:
+        raise AuthError("Gmail OAuth state expired. Start sign-in again.")
+    return entry.user_id
+
+
 def store_gmail_session_token(payload: GmailSessionToken) -> GmailConnectionStatus:
-    if not payload.user_id.strip():
+    user_id = payload.user_id.strip()
+    if not user_id:
         raise AuthError("Google user identity is missing.")
     if not payload.access_token.strip():
         raise AuthError("Google access token is missing.")
-    if GMAIL_READONLY_SCOPE not in _scopes_from_scope_string(payload.scope):
+    scopes = _scopes_from_scope_string(payload.scope)
+    if GMAIL_READONLY_SCOPE not in scopes:
         raise AuthError("Google sign-in did not grant Gmail read-only access.")
 
-    token_path = gmail_user_token_path(payload.user_id)
     refresh_token = payload.refresh_token
-    if not refresh_token and token_path.exists():
-        try:
-            existing = json.loads(_read_encrypted_token(token_path))
-            refresh_token = existing.get("refresh_token") or None
-        except Exception:
-            refresh_token = None
+    if not refresh_token:
+        existing = _load_credential_row(user_id)
+        if existing is not None:
+            try:
+                existing_payload = json.loads(_decrypt_token(existing["encrypted_token"]))
+                refresh_token = existing_payload.get("refresh_token") or None
+            except Exception:
+                refresh_token = None
     if not refresh_token:
         raise AuthError("Google did not return a refresh token. Sign in with Google again.")
 
-    _write_encrypted_token(
-        token_path,
+    _store_token_row(
+        user_id,
         json.dumps(_authorized_user_info(payload, refresh_token), ensure_ascii=False),
-    )
-    return GmailConnectionStatus(
-        connected=True,
         email=payload.email,
-        scopes=_scopes_from_scope_string(payload.scope),
+        scopes=scopes,
     )
+    return GmailConnectionStatus(connected=True, email=payload.email, scopes=scopes)
 
 
-def start_gmail_oauth_flow() -> str:
+def start_gmail_oauth_flow(user_id: str) -> str:
+    user_id = user_id.strip()
+    if not user_id:
+        raise AuthError("Google user identity is missing.")
     state = secrets.token_urlsafe(32)
+    _prune_oauth_states()
+    _OAUTH_STATES[state] = OAuthStateEntry(
+        user_id=user_id, expires_at=_state_now() + OAUTH_STATE_TTL_SECONDS
+    )
     flow = _build_flow(state=state)
     authorization_url, returned_state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
-    _write_json(gmail_state_path(), {"state": returned_state or state})
+    if returned_state and returned_state != state:
+        entry = _OAUTH_STATES.pop(state)
+        _OAUTH_STATES[returned_state] = entry
     return authorization_url
 
 
-def complete_gmail_oauth_flow(*, code: str, state: str | None) -> None:
-    state_path = gmail_state_path()
-    if not state_path.exists():
-        raise AuthError("Missing Gmail OAuth state. Start sign-in again.")
-    expected_state = str(_read_json(state_path).get("state", ""))
-    if not state or not secrets.compare_digest(state, expected_state):
-        raise AuthError("Invalid Gmail OAuth state. Start sign-in again.")
-
+def complete_gmail_oauth_flow(code: str, state: str) -> str:
+    user_id = _consume_oauth_state(state)
     flow = _build_flow(state=state)
     try:
         flow.fetch_token(code=code)
@@ -227,19 +359,25 @@ def complete_gmail_oauth_flow(*, code: str, state: str | None) -> None:
         raise AuthError("Gmail OAuth token exchange failed.") from exc
 
     credentials = flow.credentials
-    _write_encrypted_token(gmail_token_path(), credentials.to_json())
-    state_path.unlink(missing_ok=True)
+    token_payload = json.loads(credentials.to_json())
+    scopes = [str(scope) for scope in token_payload.get("scopes") or GMAIL_SCOPES]
+    _store_token_row(
+        user_id,
+        credentials.to_json(),
+        email=token_payload.get("email"),
+        scopes=scopes,
+    )
+    return user_id
 
 
-def load_authorized_credentials(*, user_key: str | None = None) -> Credentials:
-    token_path = _resolve_token_path(user_key)
-    if not token_path.exists():
+def load_authorized_credentials(user_id: str) -> Credentials:
+    row = _load_credential_row(user_id)
+    if row is None:
         raise AuthError("Gmail is not connected. Sign in with Google to let the agent read mail.")
 
     try:
-        credentials = Credentials.from_authorized_user_info(
-            json.loads(_read_encrypted_token(token_path)), GMAIL_SCOPES
-        )
+        token_payload = json.loads(_decrypt_token(row["encrypted_token"]))
+        credentials = Credentials.from_authorized_user_info(token_payload, GMAIL_SCOPES)
     except Exception as exc:
         raise AuthError("Stored Gmail credentials could not be loaded.") from exc
 
@@ -248,36 +386,35 @@ def load_authorized_credentials(*, user_key: str | None = None) -> Credentials:
             credentials.refresh(GoogleAuthRequest())
         except (RefreshError, GoogleAuthError) as exc:
             raise AuthError("Gmail authorization expired. Sign in again.") from exc
-        _write_encrypted_token(token_path, credentials.to_json())
+        _store_token_row(
+            user_id,
+            credentials.to_json(),
+            email=row["email"],
+            scopes=list(credentials.scopes or _parse_scope_json(row["scopes"]) or GMAIL_SCOPES),
+        )
 
     if not credentials.valid:
         raise AuthError("Gmail authorization is invalid. Sign in again.")
     return credentials
 
 
-def get_gmail_status(*, user_key: str | None = None) -> GmailConnectionStatus:
-    if not has_gmail_credentials(user_key=user_key):
+def get_gmail_status(user_id: str) -> GmailConnectionStatus:
+    row = _load_credential_row(user_id)
+    if row is None:
         return GmailConnectionStatus(connected=False, scopes=[])
     try:
-        credentials = load_authorized_credentials(user_key=user_key)
+        credentials = load_authorized_credentials(user_id)
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
         profile = service.users().getProfile(userId="me").execute()
-        return GmailConnectionStatus(
-            connected=True,
-            email=profile.get("emailAddress"),
-            scopes=list(credentials.scopes or GMAIL_SCOPES),
-        )
+        email = profile.get("emailAddress") or row["email"]
+        scopes = list(credentials.scopes or _parse_scope_json(row["scopes"]) or GMAIL_SCOPES)
+        return GmailConnectionStatus(connected=True, email=email, scopes=scopes)
     except Exception:
         return GmailConnectionStatus(connected=False, scopes=[])
 
 
-def disconnect_gmail() -> GmailConnectionStatus:
-    gmail_token_path().unlink(missing_ok=True)
-    gmail_state_path().unlink(missing_ok=True)
-    return GmailConnectionStatus(connected=False, scopes=[])
-
-
-def disconnect_gmail_user(user_key: str | None) -> GmailConnectionStatus:
-    if user_key:
-        gmail_user_token_path(user_key).unlink(missing_ok=True)
+def disconnect_gmail(user_id: str) -> GmailConnectionStatus:
+    with _connect() as connection:
+        _ensure_gmail_credentials_table(connection)
+        connection.execute("DELETE FROM gmail_credentials WHERE user_id = ?", (user_id,))
     return GmailConnectionStatus(connected=False, scopes=[])

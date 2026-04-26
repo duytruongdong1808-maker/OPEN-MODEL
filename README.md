@@ -493,7 +493,7 @@ If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lor
 
 The chat API endpoints use the same bearer token as the tools API plus signed internal user headers. Set `AGENT_OPS_TOKEN` and `INTERNAL_HMAC_SECRET` on both the backend and the Next.js server. The Next.js app below sends the bearer token and HMAC-signed user identity server-side through its API proxy, so the browser bundle never receives either secret.
 
-The web chat runs the mail agent in read-only mode by default. For this workflow, configure the `AGENT_IMAP_*` variables and `AGENT_OPS_TOKEN`; SMTP settings are only needed for the separate send-mail workflow and are not used by the web summarizer.
+The web chat runs the mail agent in read-only mode by default. Gmail OAuth credentials are encrypted and stored per verified web user in the application database. If a user has not connected Gmail, the mail tools can still fall back to the shared `AGENT_IMAP_*` configuration for ops/internal use; that IMAP fallback is not per-user.
 
 ### Run the frontend
 
@@ -534,7 +534,7 @@ Add this authorized redirect URI in Google Cloud:
 http://localhost:3000/api/auth/callback/google
 ```
 
-These `AUTH_GOOGLE_*` settings are for web sign-in. The older `GOOGLE_OAUTH_*` settings are only for the separate legacy Gmail connect flow.
+These `AUTH_GOOGLE_*` settings are for web sign-in. The `GOOGLE_OAUTH_*` settings configure the separate Gmail connect flow. Gmail OAuth state is kept in process memory for 10 minutes, so multi-instance deployments must route the Google callback back to the same backend instance that started the flow, for example with sticky sessions.
 
 Then open:
 
@@ -571,6 +571,8 @@ Migration `0002` adds `conversations.user_id` with a default value of `legacy` f
 ```powershell
 python scripts/backfill_user_id.py --user-id local-user
 ```
+
+Migration `0003` adds `gmail_credentials` for per-user encrypted Gmail OAuth tokens. Legacy `gmail_token.json` files are ignored; each user must reconnect Gmail so credentials can be stored under their verified user ID.
 
 ## Common Troubleshooting
 

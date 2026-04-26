@@ -171,14 +171,14 @@ def _message_from_full(message: dict[str, Any]) -> EmailMessage:
 
 
 class GmailReader:
-    def __init__(self, service: Any | None = None, *, user_key: str | None = None):
+    def __init__(self, user_id: str, service: Any | None = None):
         self._service = service
-        self._user_key = user_key
+        self._user_id = user_id
 
     @property
     def service(self) -> Any:
         if self._service is None:
-            credentials = load_authorized_credentials(user_key=self._user_key)
+            credentials = load_authorized_credentials(self._user_id)
             self._service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
         return self._service
 
