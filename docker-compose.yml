@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   backend:
     build:
       context: .
@@ -31,11 +43,15 @@ services:
     environment:
       OPEN_MODEL_API_BASE_URL: http://backend:8000
       NEXTAUTH_URL: http://localhost:3000
+      REDIS_URL: redis://redis:6379
     ports:
       - "3000:3000"
     depends_on:
       backend:
         condition: service_started
+      redis:
+        condition: service_healthy
 
 volumes:
   open-model-outputs:
+  redis-data:

@@ -522,6 +522,23 @@ $env:INTERNAL_HMAC_SECRET="<at-least-32-byte-secret>"
 
 Do not expose this token with a `NEXT_PUBLIC_*` variable; anything with that prefix is bundled into client-side JavaScript.
 
+### Redis rate limiting
+
+The authenticated Next.js backend proxy rate-limits each user before forwarding to FastAPI. Defaults are `120` requests per `60` seconds and can be changed with:
+
+```powershell
+$env:AUTH_RATE_LIMIT_MAX_REQUESTS="120"
+$env:AUTH_RATE_LIMIT_WINDOW_MS="60000"
+```
+
+Set `REDIS_URL` to share rate-limit state across Next.js processes and restarts:
+
+```powershell
+$env:REDIS_URL="redis://127.0.0.1:6379"
+```
+
+If `REDIS_URL` is not set, local development falls back to an in-memory limiter. If Redis is configured but unavailable, the proxy logs the limiter error and fails open so chat traffic keeps flowing. Rate-limited proxy responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`; blocked requests also include `Retry-After`.
+
 To use `Continue with Google` and let the web mail agent read the signed-in account's Gmail, configure the Next.js environment with:
 
 ```powershell

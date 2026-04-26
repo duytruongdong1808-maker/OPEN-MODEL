@@ -2,17 +2,16 @@ import { createHmac } from "crypto";
 import { type NextRequest } from "next/server";
 
 import { auth } from "@/auth";
+import {
+  createPassThroughRateLimitResult,
+  getRateLimiter,
+  rateLimitHeaders,
+  type RateLimitResult,
+} from "@/lib/rate-limit";
+
+export const runtime = "nodejs";
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
-const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
-const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 120;
-
-type RateBucket = {
-  windowStart: number;
-  count: number;
-};
-
-const rateBuckets = new Map<string, RateBucket>();
 
 type RouteContext = {
   params: Promise<{ path?: string[] }>;
@@ -48,41 +47,27 @@ function signUserId(userId: string): string {
   return createHmac("sha256", resolveInternalHmacSecret()).update(userId).digest("hex");
 }
 
-function resolvePositiveInteger(name: string, fallback: number): number {
-  const rawValue = process.env[name]?.trim();
-  if (!rawValue) return fallback;
-  const value = Number.parseInt(rawValue, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function rateLimitResponse(userKey: string): Response | null {
-  const windowMs = resolvePositiveInteger("AUTH_RATE_LIMIT_WINDOW_MS", DEFAULT_RATE_LIMIT_WINDOW_MS);
-  const maxRequests = resolvePositiveInteger(
-    "AUTH_RATE_LIMIT_MAX_REQUESTS",
-    DEFAULT_RATE_LIMIT_MAX_REQUESTS,
-  );
-  const now = Date.now();
-  const current = rateBuckets.get(userKey);
-  const bucket =
-    current && now - current.windowStart < windowMs
-      ? current
-      : { windowStart: now, count: 0 };
-
-  bucket.count += 1;
-  rateBuckets.set(userKey, bucket);
-
-  if (bucket.count <= maxRequests) return null;
-
-  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.windowStart + windowMs - now) / 1000));
+function rateLimitResponse(rateLimit: RateLimitResult): Response {
   return Response.json(
     { detail: "Rate limit exceeded." },
     {
       status: 429,
-      headers: {
-        "Retry-After": String(retryAfterSeconds),
-      },
+      headers: rateLimitHeaders(rateLimit),
     },
   );
+}
+
+function withRateLimitHeaders(response: Response, rateLimit: RateLimitResult): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(rateLimitHeaders(rateLimit))) {
+    headers.set(name, value);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function buildBackendUrl(request: NextRequest, pathParts: string[] = []): string {
@@ -175,20 +160,35 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
     return forwardRequest(request, pathParts, buildPublicProxyHeaders(request));
   }
 
+  const passThroughRateLimit = createPassThroughRateLimitResult();
   const session = await auth();
   if (!session?.user) {
-    return Response.json({ detail: "Authentication required." }, { status: 401 });
+    return Response.json(
+      { detail: "Authentication required." },
+      { status: 401, headers: rateLimitHeaders(passThroughRateLimit) },
+    );
   }
   const sessionWithGoogle = session as typeof session & SessionWithGoogle;
   const userId = sessionWithGoogle.user?.id?.trim();
   if (!userId) {
-    return Response.json({ detail: "Authenticated session is missing a user id." }, { status: 401 });
+    return Response.json(
+      { detail: "Authenticated session is missing a user id." },
+      { status: 401, headers: rateLimitHeaders(passThroughRateLimit) },
+    );
   }
   const userKey = sessionWithGoogle.googleUserId ?? session.user.email ?? session.user.name ?? "local-user";
-  const limited = rateLimitResponse(userKey);
-  if (limited) return limited;
+  let rateLimit: RateLimitResult;
+  try {
+    rateLimit = await getRateLimiter().check(userKey);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Redis rate limiter error.";
+    console.error("Rate limiter failed open:", message);
+    rateLimit = passThroughRateLimit;
+  }
+  if (!rateLimit.allowed) return rateLimitResponse(rateLimit);
 
-  return forwardRequest(request, pathParts, buildProxyHeaders(request, sessionWithGoogle, userId));
+  const response = await forwardRequest(request, pathParts, buildProxyHeaders(request, sessionWithGoogle, userId));
+  return withRateLimitHeaders(response, rateLimit);
 }
 
 export async function GET(request: NextRequest, context: RouteContext): Promise<Response> {
