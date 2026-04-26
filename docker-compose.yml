@@ -13,8 +13,8 @@ services:
       OPEN_MODEL_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     volumes:
       - open-model-outputs:/app/outputs
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/ready"]
       interval: 30s

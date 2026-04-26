@@ -11,6 +11,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh \
+            | sh -s -- -b "$PWD" v8.18.0
+
+      - name: Secret scan
+        run: ./gitleaks detect --source . --redact --verbose
 
       - name: Set up Python
         uses: actions/setup-python@v5

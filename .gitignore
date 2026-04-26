@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.codex-logs/
+web/.codex-logs/
 
 .env
 .env.*
@@ -12,11 +14,15 @@ __pycache__/
 .cache/
 data/raw/train.jsonl
 data/processed/*.jsonl
+data/processed/*.metadata.json
 
 outputs/*
 !outputs/app/
 outputs/app/gmail_token.json
 outputs/app/gmail_oauth_state.json
+outputs/app/gmail_tokens/
+outputs/app/*.sqlite3
+outputs/app/*.sqlite3-*
 web/.next/
 web/node_modules/
 web/coverage/

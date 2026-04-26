@@ -540,6 +540,20 @@ Then open:
 http://localhost:3000
 ```
 
+### Run with Docker Compose
+
+```powershell
+docker compose up --build
+```
+
+The compose stack only publishes the web app on `http://localhost:3000`. The FastAPI backend is exposed on the internal Docker network as `http://backend:8000` so browser traffic must pass through the authenticated Next.js proxy.
+
+To debug the backend directly from inside the compose network:
+
+```powershell
+docker compose exec backend curl -fsS http://localhost:8000/health
+```
+
 ## Common Troubleshooting
 
 ### `bitsandbytes` install or runtime errors
