@@ -35,4 +35,3 @@ def test_user_id_is_hidden_from_tool_schema() -> None:
 def test_get_tool_rejects_unknown_name() -> None:
     with pytest.raises(KeyError):
         get_tool("missing_tool")
-

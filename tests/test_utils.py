@@ -51,7 +51,10 @@ def test_render_training_record_golden_output() -> None:
         "prompt": json.dumps(
             [
                 {"role": "system", "content": "You are concise."},
-                {"role": "user", "content": "Instruction:\nExplain LoRA simply.\n\nInput:\nFor a beginner."},
+                {
+                    "role": "user",
+                    "content": "Instruction:\nExplain LoRA simply.\n\nInput:\nFor a beginner.",
+                },
             ],
             ensure_ascii=False,
         ),
@@ -98,7 +101,9 @@ def test_should_default_to_4bit_returns_false_when_torch_is_missing(monkeypatch)
 
 
 def test_format_missing_dependency_error_mentions_virtualenv_for_torch() -> None:
-    message = format_missing_dependency_error(ModuleNotFoundError("No module named 'torch'", name="torch"))
+    message = format_missing_dependency_error(
+        ModuleNotFoundError("No module named 'torch'", name="torch")
+    )
 
     assert "Missing dependency: torch." in message
     assert "pip install -r requirements.txt" in message
@@ -141,7 +146,10 @@ def test_read_yaml_dict_round_trip(tmp_path) -> None:
 
 
 def test_format_user_message_matches_training_chat_structure() -> None:
-    assert format_user_message("say something in vietnamese") == "Instruction:\nsay something in vietnamese"
+    assert (
+        format_user_message("say something in vietnamese")
+        == "Instruction:\nsay something in vietnamese"
+    )
 
 
 def test_read_write_jsonl_round_trip(tmp_path) -> None:
@@ -158,11 +166,17 @@ def test_read_write_jsonl_round_trip(tmp_path) -> None:
 
 def test_normalize_row_skips_rows_with_empty_required_fields() -> None:
     assert (
-        normalize_row({"instruction": "   ", "context": "ctx", "response": "answer"}, "databricks/databricks-dolly-15k")
+        normalize_row(
+            {"instruction": "   ", "context": "ctx", "response": "answer"},
+            "databricks/databricks-dolly-15k",
+        )
         is None
     )
     assert (
-        normalize_row({"instruction": "question", "context": "ctx", "response": "   "}, "databricks/databricks-dolly-15k")
+        normalize_row(
+            {"instruction": "question", "context": "ctx", "response": "   "},
+            "databricks/databricks-dolly-15k",
+        )
         is None
     )
     assert normalize_row(

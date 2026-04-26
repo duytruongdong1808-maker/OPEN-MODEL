@@ -31,6 +31,8 @@ except ImportError:
         resolve_model_revision,
         sync_model_tokenizer_padding,
     )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge a LoRA adapter into the base model.")
     parser.add_argument("--base_model", type=str, default=DEFAULT_BASE_MODEL)

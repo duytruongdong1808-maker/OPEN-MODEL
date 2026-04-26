@@ -22,7 +22,10 @@ from src.curate_data import (
     normalize_text,
 )
 from src.prepare_data import parse_args as parse_prepare_data_args
-from src.generate_mail_triage_seed import DEFAULT_TOTAL_ROWS, build_rows as build_mail_triage_seed_rows
+from src.generate_mail_triage_seed import (
+    DEFAULT_TOTAL_ROWS,
+    build_rows as build_mail_triage_seed_rows,
+)
 from src.utils import (
     DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH,
     DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH,
@@ -48,7 +51,9 @@ def test_normalize_text_fixes_common_mojibake_and_whitespace() -> None:
 def test_classify_task_type_handles_core_chat_variants() -> None:
     assert classify_task_type("Viết lại tin nhắn cho lịch sự hơn.", "", "x") == TASK_TYPE_REWRITE
     assert classify_task_type("Summarize the note in one sentence.", "", "x") == TASK_TYPE_SUMMARIZE
-    assert classify_task_type("Phân loại các mục thành hai nhóm.", "", "x") == TASK_TYPE_CLASSIFICATION
+    assert (
+        classify_task_type("Phân loại các mục thành hai nhóm.", "", "x") == TASK_TYPE_CLASSIFICATION
+    )
     assert classify_task_type("Trả lời ngắn gọn và rõ ràng.", "LoRA là gì?", "x") == TASK_TYPE_QA
 
 
@@ -65,8 +70,16 @@ def test_detect_language_handles_email_triage_prompts() -> None:
 
 def test_classify_task_type_handles_email_triage_variants() -> None:
     assert classify_task_type("Tóm tắt email sau trong một câu.", "", "x") == TASK_TYPE_SUMMARIZE
-    assert classify_task_type("Classify the priority of this email as high, medium, or low.", "", "x") == TASK_TYPE_CLASSIFICATION
-    assert classify_task_type("Extract the action items and deadlines from this email.", "", "- Call the client") == "list_extraction"
+    assert (
+        classify_task_type("Classify the priority of this email as high, medium, or low.", "", "x")
+        == TASK_TYPE_CLASSIFICATION
+    )
+    assert (
+        classify_task_type(
+            "Extract the action items and deadlines from this email.", "", "- Call the client"
+        )
+        == "list_extraction"
+    )
     assert (
         classify_task_type(
             "Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót.",
@@ -78,7 +91,9 @@ def test_classify_task_type_handles_email_triage_variants() -> None:
 
 
 def test_curate_row_drops_missing_output() -> None:
-    curated = curate_row({"instruction": "Answer clearly.", "input": "", "output": ""}, source="test")
+    curated = curate_row(
+        {"instruction": "Answer clearly.", "input": "", "output": ""}, source="test"
+    )
 
     assert curated["action"] == "drop"
     assert "missing_output" in curated["flags"]
@@ -86,7 +101,11 @@ def test_curate_row_drops_missing_output() -> None:
 
 def test_curate_row_drops_unresolved_mojibake() -> None:
     curated = curate_row(
-        {"instruction": "Answer clearly.", "input": "", "output": "This response contains Ã unresolved text."},
+        {
+            "instruction": "Answer clearly.",
+            "input": "",
+            "output": "This response contains Ã unresolved text.",
+        },
         source="test",
     )
 
@@ -141,7 +160,9 @@ def test_curate_row_keeps_combined_email_triage_as_generation() -> None:
     assert curated["domain"] == "billing"
 
 
-def test_build_dataset_parse_args_defaults_include_mail_seed_and_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_dataset_parse_args_defaults_include_mail_seed_and_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(sys, "argv", ["build_dataset.py"])
 
     args = build_dataset_module.parse_args()
@@ -309,8 +330,12 @@ def test_build_dataset_rows_balances_mail_profile_and_email_bucket() -> None:
             }
         )
 
-    built_once = build_dataset_rows(rows, target_profile="mail_triage_en_ops_support", total_rows=20, seed=11)
-    built_twice = build_dataset_rows(rows, target_profile="mail_triage_en_ops_support", total_rows=20, seed=11)
+    built_once = build_dataset_rows(
+        rows, target_profile="mail_triage_en_ops_support", total_rows=20, seed=11
+    )
+    built_twice = build_dataset_rows(
+        rows, target_profile="mail_triage_en_ops_support", total_rows=20, seed=11
+    )
 
     assert built_once == built_twice
     counts = Counter(row["sampling_bucket"] for row in built_once)
@@ -320,7 +345,9 @@ def test_build_dataset_rows_balances_mail_profile_and_email_bucket() -> None:
     assert counts["general_concise"] == 2
     assert counts["mixed_utility"] == 2
     assert all(
-        row["source"] == "seed_mail_triage_vi_en" for row in built_once if row["sampling_bucket"].startswith("mail_")
+        row["source"] == "seed_mail_triage_vi_en"
+        for row in built_once
+        if row["sampling_bucket"].startswith("mail_")
     )
     assert all(
         row["domain"] in {"ops", "support"}
@@ -333,17 +360,40 @@ def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
     rows = build_mail_triage_seed_rows(DEFAULT_TOTAL_ROWS)
 
     assert len(rows) == DEFAULT_TOTAL_ROWS
-    assert len({(row["instruction"], row["input"], row["output"]) for row in rows}) == DEFAULT_TOTAL_ROWS
+    assert (
+        len({(row["instruction"], row["input"], row["output"]) for row in rows})
+        == DEFAULT_TOTAL_ROWS
+    )
 
     instruction_counts = Counter(row["instruction"] for row in rows)
     assert instruction_counts["Summarize this email in one short sentence."] == 170
     assert instruction_counts["Classify the priority of this email as high, medium, or low."] == 170
-    assert instruction_counts["Extract the action items and deadlines from this email as a short bullet list."] == 170
-    assert instruction_counts["Read this email and return a triage block with Summary, Priority, Action items, and Deadlines."] == 170
+    assert (
+        instruction_counts[
+            "Extract the action items and deadlines from this email as a short bullet list."
+        ]
+        == 170
+    )
+    assert (
+        instruction_counts[
+            "Read this email and return a triage block with Summary, Priority, Action items, and Deadlines."
+        ]
+        == 170
+    )
     assert instruction_counts["Tóm tắt email sau trong một câu ngắn."] == 80
     assert instruction_counts["Cho biết mức ưu tiên của email này là high, medium, hay low."] == 80
-    assert instruction_counts["Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn."] == 80
-    assert instruction_counts["Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót."] == 80
+    assert (
+        instruction_counts[
+            "Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn."
+        ]
+        == 80
+    )
+    assert (
+        instruction_counts[
+            "Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót."
+        ]
+        == 80
+    )
 
     domain_counts = Counter(row["domain"] for row in rows)
     assert domain_counts["ops"] == 460
@@ -355,13 +405,20 @@ def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
 
 
 def test_generated_mail_triage_seed_matches_committed_raw_file() -> None:
-    assert read_jsonl(DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH) == build_mail_triage_seed_rows(DEFAULT_TOTAL_ROWS)
+    assert read_jsonl(DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH) == build_mail_triage_seed_rows(
+        DEFAULT_TOTAL_ROWS
+    )
 
 
 def test_generated_mail_triage_seed_rows_parse_cleanly() -> None:
     rows = build_mail_triage_seed_rows(DEFAULT_TOTAL_ROWS)
 
-    triage_rows = [row for row in rows if "triage block" in row["instruction"].lower() or "bản triage" in row["instruction"].lower()]
+    triage_rows = [
+        row
+        for row in rows
+        if "triage block" in row["instruction"].lower()
+        or "bản triage" in row["instruction"].lower()
+    ]
     action_rows = [
         row
         for row in rows
@@ -385,15 +442,25 @@ def test_generated_mail_triage_seed_keeps_launch_blocker_and_product_request_pat
 
     assert any("Share any blocker in" in output and "before" in output for output in outputs)
     assert any("Log the scheduled report export request" in output for output in outputs)
-    assert any("launch sync" in input.lower() and "high" in output.lower() for input, output in zip(inputs, outputs))
+    assert any(
+        "launch sync" in input.lower() and "high" in output.lower()
+        for input, output in zip(inputs, outputs)
+    )
 
 
 def test_committed_mail_triage_report_tracks_en_first_distribution() -> None:
-    report = json.loads(Path("data/curated/mail_triage_vi_en_seed_report.json").read_text(encoding="utf-8"))
+    report = json.loads(
+        Path("data/curated/mail_triage_vi_en_seed_report.json").read_text(encoding="utf-8")
+    )
 
     assert report["action_counts"] == {"keep": 1000}
     assert report["language_distribution"] == {"en": 680, "vi": 320}
-    assert report["domain_distribution"] == {"ops": 460, "support": 320, "billing": 140, "product": 80}
+    assert report["domain_distribution"] == {
+        "ops": 460,
+        "support": 320,
+        "billing": 140,
+        "product": 80,
+    }
 
 
 def test_committed_built_dataset_keeps_mail_focus_and_clean_phrasing() -> None:
@@ -406,7 +473,10 @@ def test_committed_built_dataset_keeps_mail_focus_and_clean_phrasing() -> None:
         "general_concise": 156,
         "mixed_utility": 156,
     }
-    assert Counter(row["language"] for row in rows)["en"] > Counter(row["language"] for row in rows)["vi"]
+    assert (
+        Counter(row["language"] for row in rows)["en"]
+        > Counter(row["language"] for row in rows)["vi"]
+    )
     assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") >= 1200
     assert not any(
         pattern in row.get("input", "") or pattern in row.get("output", "")
@@ -436,7 +506,9 @@ def test_render_training_record_accepts_curated_metadata_fields() -> None:
     assert "prompt" in rendered
 
 
-def test_prepare_data_accepts_val_split_and_val_ratio_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_data_accepts_val_split_and_val_ratio_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         sys,
         "argv",

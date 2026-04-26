@@ -21,7 +21,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backfill legacy conversation rows to a specific user_id."
     )
-    parser.add_argument("--user-id", required=True, help="User id to assign to legacy conversations.")
+    parser.add_argument(
+        "--user-id", required=True, help="User id to assign to legacy conversations."
+    )
     parser.add_argument(
         "--db-path",
         type=Path,

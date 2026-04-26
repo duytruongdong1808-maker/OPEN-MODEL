@@ -41,8 +41,10 @@ def main() -> None:
             cursor = connection.execute("DELETE FROM audit_log")
         else:
             cutoff = (
-                datetime.now(timezone.utc) - timedelta(days=args.days)
-            ).isoformat(timespec="seconds").replace("+00:00", "Z")
+                (datetime.now(timezone.utc) - timedelta(days=args.days))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z")
+            )
             cursor = connection.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
 
     # Production deployments should schedule this script via cron or a Kubernetes CronJob.

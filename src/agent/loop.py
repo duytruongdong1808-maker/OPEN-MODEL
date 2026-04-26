@@ -61,9 +61,7 @@ def build_tools_prompt(
         for spec in specs.values()
     ]
     return (
-        protocol
-        + "\n\nAvailable tools:\n"
-        + json.dumps(tool_payload, ensure_ascii=False, indent=2)
+        protocol + "\n\nAvailable tools:\n" + json.dumps(tool_payload, ensure_ascii=False, indent=2)
     )
 
 
@@ -222,13 +220,14 @@ class AgentLoop:
         except KeyError as exc:
             available = ", ".join(sorted(self.registry)) or "none"
             raise ValueError(
-                f"Tool '{name}' is not available in this agent mode. "
-                f"Available tools: {available}."
+                f"Tool '{name}' is not available in this agent mode. Available tools: {available}."
             ) from exc
         handler_arguments = dict(arguments)
         if "user_id" in inspect.signature(spec.handler).parameters:
             handler_arguments["user_id"] = user_id
-        return await asyncio.wait_for(spec.handler(**handler_arguments), timeout=self.tool_timeout_s)
+        return await asyncio.wait_for(
+            spec.handler(**handler_arguments), timeout=self.tool_timeout_s
+        )
 
     def _normalize_tool_arguments(
         self, message: str, tool_name: str, arguments: dict[str, Any]
@@ -334,11 +333,7 @@ def build_email_fallback_answer(message: str, steps: list[AgentStep]) -> str | N
         return None
 
     latest_read_inbox_args = next(
-        (
-            step.arguments or {}
-            for step in reversed(email_steps)
-            if step.tool_name == "read_inbox"
-        ),
+        (step.arguments or {} for step in reversed(email_steps) if step.tool_name == "read_inbox"),
         {},
     )
     unread_only = bool(latest_read_inbox_args.get("unread_only", _requests_unread_mail(message)))
@@ -375,8 +370,10 @@ def _format_inbox_answer(message: str, items: list[Any], unread_only: bool) -> s
             else f"Mình đã kiểm tra {mailbox_label} để tìm thư {query_label} mới nhất và không thấy thư phù hợp."
         )
 
-    heading = f"I checked only {mailbox_label}. Latest {query_label} message found:" if english else (
-        f"Mình chỉ kiểm tra {mailbox_label}. Thư {query_label} mới nhất tìm thấy:"
+    heading = (
+        f"I checked only {mailbox_label}. Latest {query_label} message found:"
+        if english
+        else (f"Mình chỉ kiểm tra {mailbox_label}. Thư {query_label} mới nhất tìm thấy:")
     )
     lines = [heading]
     for index, raw_item in enumerate(items[:10], start=1):
@@ -427,9 +424,7 @@ def _format_email_fields(
     ]
 
 
-def _format_full_email_answer(
-    message: str, items: list[dict[str, Any]], unread_only: bool
-) -> str:
+def _format_full_email_answer(message: str, items: list[dict[str, Any]], unread_only: bool) -> str:
     english = _prefers_english(message)
     mailbox_label = _mailbox_label(english)
     query_label = _query_label(english, unread_only)

@@ -45,8 +45,12 @@ except ImportError:
         should_default_to_4bit,
         str_to_bool,
     )
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Start a basic local chat loop with the fine-tuned model.")
+    parser = argparse.ArgumentParser(
+        description="Start a basic local chat loop with the fine-tuned model."
+    )
     parser.add_argument(
         "--preset",
         type=str,

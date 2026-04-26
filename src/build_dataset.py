@@ -144,7 +144,9 @@ def is_en_core(row: dict[str, Any]) -> bool:
 def is_mixed_utility(row: dict[str, Any]) -> bool:
     language = row.get("language")
     task_type = row.get("task_type")
-    return language == "mixed" or (task_type in MIXED_UTILITY_TASK_TYPES and language in {"vi", "en", "unknown"})
+    return language == "mixed" or (
+        task_type in MIXED_UTILITY_TASK_TYPES and language in {"vi", "en", "unknown"}
+    )
 
 
 def is_email_triage(row: dict[str, Any]) -> bool:
@@ -214,7 +216,9 @@ def sample_bucket_rows(
     return sampled
 
 
-def annotate_rows(rows: list[dict[str, Any]], bucket_name: str, profile_name: str) -> list[dict[str, Any]]:
+def annotate_rows(
+    rows: list[dict[str, Any]], bucket_name: str, profile_name: str
+) -> list[dict[str, Any]]:
     annotated = []
     for row in rows:
         updated = dict(row)
@@ -278,7 +282,9 @@ def build_dataset_rows(
         sampled_rows.extend(annotate_rows(bucket_rows, bucket_name, target_profile))
 
     if len(sampled_rows) < resolved_total_rows:
-        fallback_rows = sample_bucket_rows(keep_rows, resolved_total_rows - len(sampled_rows), seed=seed + 99)
+        fallback_rows = sample_bucket_rows(
+            keep_rows, resolved_total_rows - len(sampled_rows), seed=seed + 99
+        )
         sampled_rows.extend(annotate_rows(fallback_rows, "fallback", target_profile))
 
     rng = random.Random(seed + 1234)

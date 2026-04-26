@@ -254,7 +254,9 @@ def validate_mail_output(
             drop_flags.append("mail_malformed_triage_block")
             return review_flags, drop_flags
 
-        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(parsed, input_text=input_text)
+        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(
+            parsed, input_text=input_text
+        )
         review_flags.extend(parsed_review_flags)
         drop_flags.extend(parsed_drop_flags)
         return review_flags, drop_flags
@@ -273,8 +275,12 @@ def validate_mail_output(
             deadlines=parsed.deadlines,
             language=parsed.language,
         )
-        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(proxy_triage, input_text=input_text)
-        review_flags.extend(flag for flag in parsed_review_flags if flag not in {"mail_summary_not_single_sentence"})
+        parsed_review_flags, parsed_drop_flags = validate_parsed_triage(
+            proxy_triage, input_text=input_text
+        )
+        review_flags.extend(
+            flag for flag in parsed_review_flags if flag not in {"mail_summary_not_single_sentence"}
+        )
         drop_flags.extend(parsed_drop_flags)
         return review_flags, drop_flags
 
@@ -362,7 +368,9 @@ def detect_language(*parts: str) -> str:
     tokens = set(re.findall(r"[a-zA-ZÀ-ỹ]+", combined))
     has_vietnamese_chars = any(char in VIETNAMESE_CHARACTERS for char in combined)
     has_vi = has_vietnamese_chars or bool(tokens & VIETNAMESE_HINTS)
-    has_en = bool(tokens & ENGLISH_HINTS) or bool(re.search(r"\b(the|and|please|answer|rewrite)\b", combined))
+    has_en = bool(tokens & ENGLISH_HINTS) or bool(
+        re.search(r"\b(the|and|please|answer|rewrite)\b", combined)
+    )
 
     if has_vi and has_en:
         return "mixed"
@@ -380,7 +388,10 @@ def classify_task_type(instruction: str, input_text: str, output: str) -> str:
     input_lower = input_text.strip().lower()
     output_lower = output.strip().lower()
 
-    if any(keyword in instruction_lower for keyword in ("rewrite", "rephrase", "sound more professional", "viết lại")):
+    if any(
+        keyword in instruction_lower
+        for keyword in ("rewrite", "rephrase", "sound more professional", "viết lại")
+    ):
         return TASK_TYPE_REWRITE
     if any(keyword in instruction_lower for keyword in EMAIL_TRIAGE_GENERATION_MARKERS):
         return TASK_TYPE_GENERATION
@@ -390,16 +401,32 @@ def classify_task_type(instruction: str, input_text: str, output: str) -> str:
         return TASK_TYPE_CLASSIFICATION
     if any(keyword in instruction_lower for keyword in EMAIL_ACTION_MARKERS):
         return TASK_TYPE_LIST_EXTRACTION
-    if any(keyword in instruction_lower for keyword in ("summarize", "summary", "tóm tắt", "briefly summarize")):
+    if any(
+        keyword in instruction_lower
+        for keyword in ("summarize", "summary", "tóm tắt", "briefly summarize")
+    ):
         return TASK_TYPE_SUMMARIZE
     if any(
         keyword in instruction_lower
-        for keyword in ("extract", "list down", "comma separated", "pipe symbol", "separate them", "danh sách")
+        for keyword in (
+            "extract",
+            "list down",
+            "comma separated",
+            "pipe symbol",
+            "separate them",
+            "danh sách",
+        )
     ):
         return TASK_TYPE_LIST_EXTRACTION
     if any(
         keyword in instruction_lower
-        for keyword in ("classify", "identify which", "which of the following", "divisible by", "either a")
+        for keyword in (
+            "classify",
+            "identify which",
+            "which of the following",
+            "divisible by",
+            "either a",
+        )
     ):
         return TASK_TYPE_CLASSIFICATION
     if any(keyword in instruction_lower for keyword in ("phân loại",)):
@@ -426,7 +453,9 @@ def classify_task_type(instruction: str, input_text: str, output: str) -> str:
         )
     ):
         return TASK_TYPE_GENERATION
-    if any(keyword in instruction_lower for keyword in ("trả lời", "answer", "giải thích", "explain")):
+    if any(
+        keyword in instruction_lower for keyword in ("trả lời", "answer", "giải thích", "explain")
+    ):
         return TASK_TYPE_QA
     if (
         instruction_lower.endswith("?")
@@ -464,7 +493,10 @@ def score_row_quality(
         score -= 50
         drop_flags.append("weak_output_phrase")
 
-    if task_type in {TASK_TYPE_REWRITE, TASK_TYPE_SUMMARIZE, TASK_TYPE_GENERATION} and output_word_count < 5:
+    if (
+        task_type in {TASK_TYPE_REWRITE, TASK_TYPE_SUMMARIZE, TASK_TYPE_GENERATION}
+        and output_word_count < 5
+    ):
         score -= 40
         drop_flags.append("underspecified_output")
 
@@ -550,7 +582,10 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
     input_text = normalize_text(input_text)
     output = normalize_text(output)
 
-    had_mojibake_before = any(contains_mojibake(str(row.get(field, "") or "")) for field in ("instruction", "input", "output"))
+    had_mojibake_before = any(
+        contains_mojibake(str(row.get(field, "") or ""))
+        for field in ("instruction", "input", "output")
+    )
     unresolved_mojibake = any(contains_mojibake(text) for text in (instruction, input_text, output))
     if had_mojibake_before:
         flags.append("mojibake_normalized")
@@ -604,8 +639,12 @@ def build_report(curated_rows: list[dict[str, Any]]) -> dict[str, Any]:
     action_counts = Counter(row["action"] for row in curated_rows)
     task_counts = Counter(row["task_type"] for row in curated_rows if row["action"] == "keep")
     language_counts = Counter(row["language"] for row in curated_rows if row["action"] == "keep")
-    domain_counts = Counter(row["domain"] for row in curated_rows if row["action"] == "keep" and row.get("domain"))
-    mojibake_rows = sum(1 for row in curated_rows if any("mojibake" in flag for flag in row["flags"]))
+    domain_counts = Counter(
+        row["domain"] for row in curated_rows if row["action"] == "keep" and row.get("domain")
+    )
+    mojibake_rows = sum(
+        1 for row in curated_rows if any("mojibake" in flag for flag in row["flags"])
+    )
     review_reason_counts = Counter(
         flag
         for row in curated_rows
@@ -614,10 +653,7 @@ def build_report(curated_rows: list[dict[str, Any]]) -> dict[str, Any]:
         if "mojibake_normalized" not in flag
     )
     drop_reason_counts = Counter(
-        flag
-        for row in curated_rows
-        if row["action"] == "drop"
-        for flag in row["flags"]
+        flag for row in curated_rows if row["action"] == "drop" for flag in row["flags"]
     )
 
     return {

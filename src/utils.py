@@ -72,7 +72,9 @@ def should_show_windows_4bit_disabled_banner(
     return resolved_system_name == "Windows" and not load_in_4bit and not load_in_4bit_was_set
 
 
-def log_runtime_mode(logger: logging.Logger, load_in_4bit: bool, load_in_4bit_was_set: bool) -> None:
+def log_runtime_mode(
+    logger: logging.Logger, load_in_4bit: bool, load_in_4bit_was_set: bool
+) -> None:
     if should_show_windows_4bit_disabled_banner(load_in_4bit, load_in_4bit_was_set):
         logger.warning(WINDOWS_4BIT_DISABLED_MESSAGE)
 
@@ -206,7 +208,9 @@ def build_messages(
     ]
 
 
-def trim_chat_messages(messages: list[dict[str, str]], max_history_turns: int) -> list[dict[str, str]]:
+def trim_chat_messages(
+    messages: list[dict[str, str]], max_history_turns: int
+) -> list[dict[str, str]]:
     if max_history_turns <= 0:
         raise ValueError("max_history_turns must be greater than 0.")
 

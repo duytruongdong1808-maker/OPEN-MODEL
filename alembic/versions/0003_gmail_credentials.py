@@ -1,4 +1,5 @@
 """add per-user Gmail credentials"""
+
 from __future__ import annotations
 
 from alembic import op

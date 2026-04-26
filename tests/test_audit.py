@@ -161,8 +161,10 @@ def test_audit_purge_respects_days(tmp_path: Path) -> None:
     AuditLogger(db_path)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     old = (
-        datetime.now(timezone.utc) - timedelta(days=120)
-    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(days=120))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
             """

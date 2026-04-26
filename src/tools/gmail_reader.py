@@ -91,7 +91,11 @@ def _attachment_meta(part: dict[str, Any]) -> AttachmentMeta | None:
     attachment_id = body.get("attachmentId")
     headers = _header_map(part)
     disposition = _header(headers, "Content-Disposition") or None
-    if not filename and not attachment_id and not (disposition and "attachment" in disposition.lower()):
+    if (
+        not filename
+        and not attachment_id
+        and not (disposition and "attachment" in disposition.lower())
+    ):
         return None
     return AttachmentMeta(
         filename=filename,
@@ -212,9 +216,6 @@ class GmailReader:
 
     def get_email(self, uid: str) -> EmailMessage:
         message = (
-            self.service.users()
-            .messages()
-            .get(userId="me", id=str(uid), format="full")
-            .execute()
+            self.service.users().messages().get(userId="me", id=str(uid), format="full").execute()
         )
         return _message_from_full(message)

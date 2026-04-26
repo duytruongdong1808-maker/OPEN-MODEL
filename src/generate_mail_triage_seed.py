@@ -439,9 +439,7 @@ def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
                 f", and share any blocker in {item['channel_en']} before {variant['event_en']}."
             )
         else:
-            blocker_clause_en = (
-                f". If anything slips, post it in {item['channel_en']} immediately."
-            )
+            blocker_clause_en = f". If anything slips, post it in {item['channel_en']} immediately."
         email = (
             f"Subject: {item['subject_en']}\n\n"
             f"Hi ops team,\n\n"
@@ -469,9 +467,7 @@ def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
                 f", và báo blocker trên {item['channel_vi']} trước {variant['event_vi']}."
             )
         else:
-            blocker_clause_vi = (
-                f". Nếu phát sinh vấn đề, vui lòng thông báo trên {item['channel_vi']} ngay lập tức."
-            )
+            blocker_clause_vi = f". Nếu phát sinh vấn đề, vui lòng thông báo trên {item['channel_vi']} ngay lập tức."
         email = (
             f"Chủ đề: {item['subject_vi']}\n\n"
             f"Chào team ops,\n\n"
@@ -621,12 +617,13 @@ def build_support_incident_record(language: str, index: int) -> GoldTriageRecord
             f"and {variant['update_en']}. If engineering is not ready, please {item['workaround_en']}.\n\n"
             "Thanks."
         )
-        summary = (
-            f"Support needs to respond because {item['issue_en']} and {item['impact_en']}."
-        )
+        summary = f"Support needs to respond because {item['issue_en']} and {item['impact_en']}."
         actions = [
             variant["owner_en"].replace("confirm ", "Confirm ").replace("capture ", "Capture "),
-            variant["update_en"].replace("send ", "Send ").replace("share ", "Share ").replace("reply ", "Reply "),
+            variant["update_en"]
+            .replace("send ", "Send ")
+            .replace("share ", "Share ")
+            .replace("reply ", "Reply "),
             item["workaround_en"].capitalize(),
         ]
         deadlines = [
@@ -714,7 +711,9 @@ def build_support_fyi_record(language: str, index: int) -> GoldTriageRecord:
             "someone finds an inaccurate detail.\n\n"
             "Thanks."
         )
-        summary = "The support notes are available for reference and do not require immediate action."
+        summary = (
+            "The support notes are available for reference and do not require immediate action."
+        )
     else:
         email = (
             f"Chủ đề: {item['subject_vi']}\n\n"
@@ -835,7 +834,9 @@ def build_product_record(language: str, index: int) -> GoldTriageRecord:
             actions = [
                 f"Ghi nhận yêu cầu {item['request_vi']}",
             ]
-        summary = f"Team sản phẩm nên ghi nhận yêu cầu {item['request_vi']} cho {item['review_vi']}."
+        summary = (
+            f"Team sản phẩm nên ghi nhận yêu cầu {item['request_vi']} cho {item['review_vi']}."
+        )
 
     return GoldTriageRecord(
         domain="product",
@@ -864,24 +865,48 @@ def build_record_catalog() -> list[GoldTriageRecord]:
         build_domain_records(
             "en",
             80,
-            [build_ops_release_record, build_ops_schedule_record, build_ops_schedule_record, build_ops_fyi_record],
+            [
+                build_ops_release_record,
+                build_ops_schedule_record,
+                build_ops_schedule_record,
+                build_ops_fyi_record,
+            ],
         )
     )
     records.extend(
         build_domain_records(
             "en",
             60,
-            [build_support_incident_record, build_support_followup_record, build_support_fyi_record],
+            [
+                build_support_incident_record,
+                build_support_followup_record,
+                build_support_fyi_record,
+            ],
         )
     )
     records.extend(
         build_domain_records(
             "vi",
             35,
-            [build_ops_release_record, build_ops_schedule_record, build_ops_schedule_record, build_ops_fyi_record],
+            [
+                build_ops_release_record,
+                build_ops_schedule_record,
+                build_ops_schedule_record,
+                build_ops_fyi_record,
+            ],
         )
     )
-    records.extend(build_domain_records("vi", 20, [build_support_incident_record, build_support_followup_record, build_support_fyi_record]))
+    records.extend(
+        build_domain_records(
+            "vi",
+            20,
+            [
+                build_support_incident_record,
+                build_support_followup_record,
+                build_support_fyi_record,
+            ],
+        )
+    )
     records.extend(build_domain_records("en", 20, [build_billing_record]))
     records.extend(build_domain_records("en", 10, [build_product_record]))
     records.extend(build_domain_records("vi", 15, [build_billing_record]))

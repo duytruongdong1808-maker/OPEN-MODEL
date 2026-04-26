@@ -47,7 +47,15 @@ class SMTPSender:
 
         await self.safety.record_sent(req)
         message_id = str(message["Message-ID"])
-        logger.info(json.dumps({"action": "smtp_send", "recipients": len(recipients), "subject_len": len(req.subject)}))
+        logger.info(
+            json.dumps(
+                {
+                    "action": "smtp_send",
+                    "recipients": len(recipients),
+                    "subject_len": len(req.subject),
+                }
+            )
+        )
         return SendResult(status="sent", message_id=message_id)
 
     def _build_mime(self, req: SendRequest) -> MIMEEmailMessage:
@@ -112,4 +120,3 @@ class SMTPSender:
             return bool(client.supports_extension("auth"))
         except Exception:
             return True
-

@@ -60,7 +60,9 @@ FAKE_MESSAGES = {
                 header("Subject", "HTML note"),
                 header("Date", MESSAGE_DATE),
             ],
-            "body": {"data": encode_body("<p>Hello <strong>there</strong></p><script>x()</script>")},
+            "body": {
+                "data": encode_body("<p>Hello <strong>there</strong></p><script>x()</script>")
+            },
         },
     },
 }

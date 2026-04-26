@@ -14,9 +14,7 @@ from .registry import tool
 
 
 @tool(name="read_inbox", description="List recent email summaries from the configured inbox.")
-async def read_inbox(
-    user_id: str, limit: int = 20, unread_only: bool = True
-) -> list[EmailSummary]:
+async def read_inbox(user_id: str, limit: int = 20, unread_only: bool = True) -> list[EmailSummary]:
     """List recent email summaries."""
     if has_gmail_credentials(user_id):
         return await asyncio.to_thread(GmailReader(user_id).list_inbox, limit, unread_only)
@@ -33,7 +31,9 @@ async def get_email(user_id: str, uid: str) -> EmailMessage:
         return await reader.get_email(uid)
 
 
-@tool(name="send_email", description="Send an email after safety checks, dry-run, and approval gates.")
+@tool(
+    name="send_email", description="Send an email after safety checks, dry-run, and approval gates."
+)
 async def send_email(
     to: list[str],
     subject: str,
@@ -79,12 +79,18 @@ async def reply_email(
 ) -> SendResult:
     """Reply to an existing email by UID."""
     original = await get_email(user_id, uid)
-    subject = original.subject if original.subject.lower().startswith("re:") else f"Re: {original.subject}"
+    subject = (
+        original.subject
+        if original.subject.lower().startswith("re:")
+        else f"Re: {original.subject}"
+    )
     reply_text = body_text
     reply_html = body_html
     if quote_original:
         quoted = "\n".join(f"> {line}" for line in original.body_text.splitlines())
-        reply_text = f"{body_text}\n\nOn {original.date.isoformat()}, {original.from_} wrote:\n{quoted}"
+        reply_text = (
+            f"{body_text}\n\nOn {original.date.isoformat()}, {original.from_} wrote:\n{quoted}"
+        )
         if body_html is not None and original.body_html is not None:
             reply_html = f"{body_html}<blockquote>{original.body_html}</blockquote>"
     references = [*original.references]

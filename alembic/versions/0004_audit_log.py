@@ -1,4 +1,5 @@
 """add append-only audit log"""
+
 from __future__ import annotations
 
 from alembic import op
@@ -25,14 +26,8 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts "
-        "ON audit_log(user_id, ts DESC)"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts "
-        "ON audit_log(action, ts DESC)"
-    )
+    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts ON audit_log(user_id, ts DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts ON audit_log(action, ts DESC)")
 
 
 def downgrade() -> None:

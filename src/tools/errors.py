@@ -15,4 +15,3 @@ class RateLimitError(ToolError):
 
 class PolicyError(ToolError):
     """Raised when a tool action violates a configured safety policy."""
-

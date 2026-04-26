@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from src.email_triage import ParsedTriage, parse_action_extraction_output, parse_full_triage_output, score_triage_output
+from src.email_triage import (
+    ParsedTriage,
+    parse_action_extraction_output,
+    parse_full_triage_output,
+    score_triage_output,
+)
 from src.eval import load_eval_prompts
 
 
@@ -37,9 +42,7 @@ def test_parse_full_triage_output_handles_vietnamese_labels() -> None:
 
 def test_parse_action_extraction_output_requires_deadline_bullet() -> None:
     parsed = parse_action_extraction_output(
-        "- Draft the response\n"
-        "- Attach the workaround note\n"
-        "- Deadlines: by 4 PM today"
+        "- Draft the response\n- Attach the workaround note\n- Deadlines: by 4 PM today"
     )
 
     assert parsed.action_items == ["Draft the response", "Attach the workaround note"]

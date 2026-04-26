@@ -275,7 +275,10 @@ def test_store_gmail_session_token_writes_user_scoped_encrypted_token(monkeypatc
 
 def test_user_scoped_tokens_do_not_overlap(monkeypatch, tmp_path):
     configure_google_env(monkeypatch, tmp_path)
-    for user_id, email in [("google-user-1", "one@example.com"), ("google-user-2", "two@example.com")]:
+    for user_id, email in [
+        ("google-user-1", "one@example.com"),
+        ("google-user-2", "two@example.com"),
+    ]:
         store_gmail_session_token(
             GmailSessionToken(
                 user_id=user_id,
@@ -291,10 +294,14 @@ def test_user_scoped_tokens_do_not_overlap(monkeypatch, tmp_path):
         )
 
     first = json.loads(
-        gmail_auth._read_encrypted_token(credential_row(tmp_path, "google-user-1")["encrypted_token"])
+        gmail_auth._read_encrypted_token(
+            credential_row(tmp_path, "google-user-1")["encrypted_token"]
+        )
     )
     second = json.loads(
-        gmail_auth._read_encrypted_token(credential_row(tmp_path, "google-user-2")["encrypted_token"])
+        gmail_auth._read_encrypted_token(
+            credential_row(tmp_path, "google-user-2")["encrypted_token"]
+        )
     )
 
     assert first["refresh_token"] == "refresh-google-user-1"
@@ -303,7 +310,10 @@ def test_user_scoped_tokens_do_not_overlap(monkeypatch, tmp_path):
 
 def test_disconnect_only_affects_calling_user(monkeypatch, tmp_path):
     configure_google_env(monkeypatch, tmp_path)
-    for user_id, email in [("google-user-1", "one@example.com"), ("google-user-2", "two@example.com")]:
+    for user_id, email in [
+        ("google-user-1", "one@example.com"),
+        ("google-user-2", "two@example.com"),
+    ]:
         store_gmail_session_token(
             GmailSessionToken(
                 user_id=user_id,
@@ -359,9 +369,7 @@ class UserMailboxService:
                     {"name": "Subject", "value": self.subject},
                     {
                         "name": "Date",
-                        "value": format_datetime(
-                            datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
-                        ),
+                        "value": format_datetime(datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)),
                     },
                 ]
             },

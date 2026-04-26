@@ -21,7 +21,22 @@ from .schemas import BODY_CHAR_CAP, SNIPPET_CHAR_CAP, AttachmentMeta, EmailMessa
 
 
 logger = logging.getLogger(__name__)
-SAFE_TAGS = ["a", "b", "blockquote", "br", "code", "div", "em", "li", "ol", "p", "pre", "span", "strong", "ul"]
+SAFE_TAGS = [
+    "a",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "div",
+    "em",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "span",
+    "strong",
+    "ul",
+]
 SAFE_ATTRS = {"a": ["href", "title"], "*": ["class"]}
 
 
@@ -122,7 +137,9 @@ def _parse_summary_fetch(lines: list[bytes]) -> list[tuple[str, set[str], bytes,
             uid_match = re.search(rb"\bUID\s+(\d+)", line)
             flags_match = re.search(rb"FLAGS\s+\(([^)]*)\)", line)
             current_uid = uid_match.group(1).decode() if uid_match else ""
-            current_flags = set((flags_match.group(1).decode(errors="replace") if flags_match else "").split())
+            current_flags = set(
+                (flags_match.group(1).decode(errors="replace") if flags_match else "").split()
+            )
             current_header = b""
             current_snippet = b""
         if b"BODY[HEADER]" in line and index + 1 < len(lines):
@@ -143,7 +160,11 @@ def _parse_summary_fetch(lines: list[bytes]) -> list[tuple[str, set[str], bytes,
 
 def _parse_rfc822_fetch(lines: list[bytes]) -> bytes:
     for index, line in enumerate(lines):
-        if b"FETCH" in line and (b"RFC822" in line or b"BODY.PEEK[]" in line or b"BODY[]" in line) and index + 1 < len(lines):
+        if (
+            b"FETCH" in line
+            and (b"RFC822" in line or b"BODY.PEEK[]" in line or b"BODY[]" in line)
+            and index + 1 < len(lines)
+        ):
             return lines[index + 1]
     raise ToolError("IMAP RFC822 fetch returned no message literal.")
 
@@ -213,7 +234,9 @@ def _extract_message(uid: str, raw: bytes, flags: set[str]) -> EmailMessage:
         truncated = True
 
     references = _decode_header(parsed.get("References")).split()
-    summary = _summary_from_headers(uid, parsed, flags, body_text or bleach.clean(body_html or "", tags=[], strip=True))
+    summary = _summary_from_headers(
+        uid, parsed, flags, body_text or bleach.clean(body_html or "", tags=[], strip=True)
+    )
     return EmailMessage(
         **summary.model_dump(by_alias=True),
         body_text=body_text,
@@ -227,7 +250,9 @@ def _extract_message(uid: str, raw: bytes, flags: set[str]) -> EmailMessage:
     )
 
 
-def _summary_from_headers(uid: str, message: Message, flags: set[str], snippet_source: str) -> EmailSummary:
+def _summary_from_headers(
+    uid: str, message: Message, flags: set[str], snippet_source: str
+) -> EmailSummary:
     return EmailSummary(
         uid=str(uid),
         **{"from": _first_address(message.get("From"))},
@@ -258,8 +283,12 @@ class IMAPReader:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                client_cls = aioimaplib.IMAP4_SSL if self.settings.imap_use_ssl else aioimaplib.IMAP4
-                self._client = client_cls(host=self.settings.imap_host, port=self.settings.imap_port)
+                client_cls = (
+                    aioimaplib.IMAP4_SSL if self.settings.imap_use_ssl else aioimaplib.IMAP4
+                )
+                self._client = client_cls(
+                    host=self.settings.imap_host, port=self.settings.imap_port
+                )
                 await self._client.wait_hello_from_server()
                 login_response = await self._client.login(self.settings.imap_user, secret)
                 result, _ = _response_parts(login_response)
@@ -267,7 +296,9 @@ class IMAPReader:
                     raise AuthError("IMAP authentication failed.")
                 _ensure_ok(await self._client.select(self.settings.imap_mailbox), action="select")
                 self._capabilities = await _load_capabilities(self._client)
-                logger.info(json.dumps({"action": "imap_connect", "mailbox": self.settings.imap_mailbox}))
+                logger.info(
+                    json.dumps({"action": "imap_connect", "mailbox": self.settings.imap_mailbox})
+                )
                 return
             except AuthError:
                 raise
@@ -293,15 +324,23 @@ class IMAPReader:
             return []
         uid_set = ",".join(selected_uids)
         fetch_items = "(UID FLAGS ENVELOPE RFC822.SIZE BODY.PEEK[HEADER] BODY.PEEK[1]<0.200>)"
-        records = _parse_summary_fetch(_ensure_ok(await client.uid("FETCH", uid_set, fetch_items), action="fetch"))
+        records = _parse_summary_fetch(
+            _ensure_ok(await client.uid("FETCH", uid_set, fetch_items), action="fetch")
+        )
         summaries = []
         for uid, flags, header, snippet_bytes in records:
             parsed = BytesParser(policy=policy.default).parsebytes(header)
-            snippet = snippet_bytes.decode(parsed.get_content_charset() or "utf-8", errors="replace")
+            snippet = snippet_bytes.decode(
+                parsed.get_content_charset() or "utf-8", errors="replace"
+            )
             summary = _summary_from_headers(uid, parsed, flags, snippet)
             # Header-only fetches cannot authoritatively detect attachments; get_email has the full MIME tree.
             summaries.append(summary.model_copy(update={"has_attachments": False}))
-        logger.info(json.dumps({"action": "list_inbox", "count": len(summaries), "unread_only": unread_only}))
+        logger.info(
+            json.dumps(
+                {"action": "list_inbox", "count": len(summaries), "unread_only": unread_only}
+            )
+        )
         return summaries
 
     async def get_email(self, uid: str) -> EmailMessage:
@@ -330,10 +369,14 @@ class IMAPReader:
     async def archive(self, uid: str) -> None:
         client = self._require_client()
         if "MOVE" in self._capabilities:
-            _ensure_ok(await client.uid("MOVE", str(uid), self.settings.archive_mailbox), action="move")
+            _ensure_ok(
+                await client.uid("MOVE", str(uid), self.settings.archive_mailbox), action="move"
+            )
             return
         _ensure_ok(await client.uid("COPY", str(uid), self.settings.archive_mailbox), action="copy")
-        _ensure_ok(await client.uid("STORE", str(uid), "+FLAGS", "(\\Deleted)"), action="store_deleted")
+        _ensure_ok(
+            await client.uid("STORE", str(uid), "+FLAGS", "(\\Deleted)"), action="store_deleted"
+        )
         if hasattr(client, "expunge"):
             _ensure_ok(await client.expunge(), action="expunge")
         else:

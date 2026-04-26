@@ -24,6 +24,7 @@ class OpenModelSettings(BaseSettings):
     open_model_ledger_db_path: Path = ROOT_DIR / "outputs" / "app" / "ledger.sqlite3"
     open_model_max_request_bytes: int = Field(default=256 * 1024, ge=1)
     open_model_log_level: str = "INFO"
+    open_model_skip_model_load: bool = False
 
     agent_ops_token: SecretStr | None = None
 

@@ -128,13 +128,17 @@ DEFAULT_TARGET_MODULES = [
     "up_proj",
     "down_proj",
 ]
+
+
 def load_training_config(config_path: Path | None) -> dict[str, object]:
     if config_path is None:
         return {}
 
     raw_config = read_yaml_dict(config_path)
     if "val_dataset_path" in raw_config and "eval_dataset_path" in raw_config:
-        raise ValueError("Use only one of val_dataset_path or eval_dataset_path in the training config.")
+        raise ValueError(
+            "Use only one of val_dataset_path or eval_dataset_path in the training config."
+        )
     unknown_keys = sorted(set(raw_config) - TRAIN_CONFIG_FIELDS)
     if unknown_keys:
         raise ValueError(f"Unknown training config keys: {', '.join(unknown_keys)}")
@@ -142,7 +146,10 @@ def load_training_config(config_path: Path | None) -> dict[str, object]:
     normalized_config: dict[str, object] = {}
     for key, value in raw_config.items():
         normalized_key = "val_dataset_path" if key == "eval_dataset_path" else key
-        if normalized_key in {"dataset_path", "val_dataset_path", "output_dir"} and value is not None:
+        if (
+            normalized_key in {"dataset_path", "val_dataset_path", "output_dir"}
+            and value is not None
+        ):
             normalized_config[normalized_key] = Path(value)
         elif key == "load_in_4bit" and value is not None:
             normalized_config[normalized_key] = str_to_bool(value)
@@ -165,7 +172,9 @@ def load_training_config(config_path: Path | None) -> dict[str, object]:
 def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a small open model with LoRA or QLoRA.")
     parser.add_argument("--config", type=Path, default=config_defaults.get("config"))
-    parser.add_argument("--base_model", type=str, default=config_defaults.get("base_model", DEFAULT_BASE_MODEL))
+    parser.add_argument(
+        "--base_model", type=str, default=config_defaults.get("base_model", DEFAULT_BASE_MODEL)
+    )
     parser.add_argument(
         "--dataset_path",
         type=Path,
@@ -191,7 +200,9 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
         help=f"Optional hardware preset, for example {DEFAULT_RUNTIME_PRESET}.",
     )
     parser.add_argument("--max_length", type=int, default=config_defaults.get("max_length"))
-    parser.add_argument("--num_train_epochs", type=float, default=config_defaults.get("num_train_epochs", 3.0))
+    parser.add_argument(
+        "--num_train_epochs", type=float, default=config_defaults.get("num_train_epochs", 3.0)
+    )
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
@@ -202,15 +213,25 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
         type=int,
         default=config_defaults.get("gradient_accumulation_steps"),
     )
-    parser.add_argument("--learning_rate", type=float, default=config_defaults.get("learning_rate", 1e-4))
-    parser.add_argument("--warmup_ratio", type=float, default=config_defaults.get("warmup_ratio", 0.03))
-    parser.add_argument("--logging_steps", type=int, default=config_defaults.get("logging_steps", 10))
+    parser.add_argument(
+        "--learning_rate", type=float, default=config_defaults.get("learning_rate", 1e-4)
+    )
+    parser.add_argument(
+        "--warmup_ratio", type=float, default=config_defaults.get("warmup_ratio", 0.03)
+    )
+    parser.add_argument(
+        "--logging_steps", type=int, default=config_defaults.get("logging_steps", 10)
+    )
     parser.add_argument("--save_steps", type=int, default=config_defaults.get("save_steps", 50))
-    parser.add_argument("--save_total_limit", type=int, default=config_defaults.get("save_total_limit", 2))
+    parser.add_argument(
+        "--save_total_limit", type=int, default=config_defaults.get("save_total_limit", 2)
+    )
     parser.add_argument("--seed", type=int, default=config_defaults.get("seed", 42))
     parser.add_argument("--lora_r", type=int, default=config_defaults.get("lora_r", 16))
     parser.add_argument("--lora_alpha", type=int, default=config_defaults.get("lora_alpha", 32))
-    parser.add_argument("--lora_dropout", type=float, default=config_defaults.get("lora_dropout", 0.05))
+    parser.add_argument(
+        "--lora_dropout", type=float, default=config_defaults.get("lora_dropout", 0.05)
+    )
     parser.add_argument(
         "--model_revision",
         type=str,
@@ -255,7 +276,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = build_parser(config_values)
     args = parser.parse_args(effective_argv)
     explicit_option_names = collect_cli_option_names(effective_argv)
-    args.load_in_4bit_was_set = "load_in_4bit" in explicit_option_names or "load_in_4bit" in config_values
+    args.load_in_4bit_was_set = (
+        "load_in_4bit" in explicit_option_names or "load_in_4bit" in config_values
+    )
     preset_defaults = resolve_runtime_preset(
         preset_name=args.preset,
         scope="train",
@@ -303,7 +326,9 @@ def load_dataset_metadata(dataset_path: Path) -> tuple[Path, dict[str, object] |
     return metadata_path, payload
 
 
-def validate_dataset_metadata(dataset_label: str, dataset_path: Path, expected_base_model: str, logger) -> None:
+def validate_dataset_metadata(
+    dataset_label: str, dataset_path: Path, expected_base_model: str, logger
+) -> None:
     metadata_path, metadata = load_dataset_metadata(dataset_path)
     if metadata is None:
         logger.warning(
@@ -448,9 +473,14 @@ def main() -> int:
         assert_response_template_present(dataset, logger)
         eval_dataset = None
         if jsonl_has_rows(args.val_dataset_path):
-            eval_dataset = load_dataset("json", data_files=str(args.val_dataset_path), split="train")
+            eval_dataset = load_dataset(
+                "json", data_files=str(args.val_dataset_path), split="train"
+            )
         else:
-            logger.warning("Validation dataset not found or empty at: %s. Skipping eval.", args.val_dataset_path)
+            logger.warning(
+                "Validation dataset not found or empty at: %s. Skipping eval.",
+                args.val_dataset_path,
+            )
         model = load_model(args, tokenizer)
         logger.debug("train_lora args: %s", vars(args))
         logger.debug(
@@ -539,7 +569,9 @@ def main() -> int:
         final_adapter_dir.mkdir(parents=True, exist_ok=True)
         trainer.model.save_pretrained(str(final_adapter_dir))
         tokenizer.save_pretrained(str(final_adapter_dir))
-        training_config_path = save_training_config(args.output_dir, args, training_args, dataset_size)
+        training_config_path = save_training_config(
+            args.output_dir, args, training_args, dataset_size
+        )
 
         logger.info("Training finished.")
         logger.info("Checkpoints saved under: %s", args.output_dir.resolve())

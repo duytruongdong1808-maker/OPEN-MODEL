@@ -109,12 +109,58 @@ function buildProxyHeaders(request: NextRequest, session: SessionWithGoogle, use
   return headers;
 }
 
+function buildPublicProxyHeaders(request: NextRequest): Headers {
+  const headers = new Headers();
+  const accept = request.headers.get("accept");
+  if (accept) headers.set("accept", accept);
+  return headers;
+}
+
 async function getPathParts(context: RouteContext): Promise<string[]> {
   const params = await context.params;
   return params.path ?? [];
 }
 
+function isPublicBackendPath(pathParts: string[]): boolean {
+  return pathParts.join("/") === "health/live";
+}
+
+async function forwardRequest(
+  request: NextRequest,
+  pathParts: string[],
+  headers: Headers,
+): Promise<Response> {
+  const method = request.method.toUpperCase();
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const response = await fetch(buildBackendUrl(request, pathParts), {
+    method,
+    headers,
+    body: hasBody ? request.body : undefined,
+    duplex: hasBody ? "half" : undefined,
+    redirect: "manual",
+    cache: "no-store",
+  } as RequestInit & { duplex?: "half" });
+
+  const responseHeaders = new Headers();
+  const contentType = response.headers.get("content-type");
+  const location = response.headers.get("location");
+  if (contentType) responseHeaders.set("content-type", contentType);
+  if (location) responseHeaders.set("location", location);
+  responseHeaders.set("cache-control", "no-cache");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders,
+  });
+}
+
 async function proxyRequest(request: NextRequest, context: RouteContext): Promise<Response> {
+  const pathParts = await getPathParts(context);
+  if (isPublicBackendPath(pathParts)) {
+    return forwardRequest(request, pathParts, buildPublicProxyHeaders(request));
+  }
+
   const session = await auth();
   if (!session?.user) {
     return Response.json({ detail: "Authentication required." }, { status: 401 });
@@ -128,29 +174,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
   const limited = rateLimitResponse(userKey);
   if (limited) return limited;
 
-  const method = request.method.toUpperCase();
-  const hasBody = method !== "GET" && method !== "HEAD";
-  const response = await fetch(buildBackendUrl(request, await getPathParts(context)), {
-    method,
-    headers: buildProxyHeaders(request, sessionWithGoogle, userId),
-    body: hasBody ? request.body : undefined,
-    duplex: hasBody ? "half" : undefined,
-    redirect: "manual",
-    cache: "no-store",
-  } as RequestInit & { duplex?: "half" });
-
-  const headers = new Headers();
-  const contentType = response.headers.get("content-type");
-  const location = response.headers.get("location");
-  if (contentType) headers.set("content-type", contentType);
-  if (location) headers.set("location", location);
-  headers.set("cache-control", "no-cache");
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return forwardRequest(request, pathParts, buildProxyHeaders(request, sessionWithGoogle, userId));
 }
 
 export async function GET(request: NextRequest, context: RouteContext): Promise<Response> {

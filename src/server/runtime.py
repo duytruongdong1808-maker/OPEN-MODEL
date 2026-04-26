@@ -111,7 +111,9 @@ class LocalModelChatService:
         prompt_messages = [{"role": "system", "content": system_prompt.strip()}]
         for message in messages:
             if message["role"] == "user":
-                prompt_messages.append({"role": "user", "content": format_user_message(message["content"])})
+                prompt_messages.append(
+                    {"role": "user", "content": format_user_message(message["content"])}
+                )
             else:
                 prompt_messages.append({"role": "assistant", "content": message["content"]})
 

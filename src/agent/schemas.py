@@ -33,4 +33,3 @@ class ApprovalDecisionResult(BaseModel):
     status: Literal["approved", "rejected", "expired", "pending"]
     decided_at: str | None = None
     decided_by: str | None = None
-

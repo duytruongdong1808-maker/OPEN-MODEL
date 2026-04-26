@@ -200,7 +200,9 @@ def _expiry_from_timestamp(expires_at: int | None) -> str | None:
     return datetime.fromtimestamp(expires_at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _authorized_user_info(payload: GmailSessionToken, refresh_token: str | None) -> dict[str, object]:
+def _authorized_user_info(
+    payload: GmailSessionToken, refresh_token: str | None
+) -> dict[str, object]:
     info: dict[str, object] = {
         "token": payload.access_token,
         "refresh_token": refresh_token,

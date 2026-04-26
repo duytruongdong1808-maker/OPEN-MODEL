@@ -73,4 +73,3 @@ class SendResult(ToolBaseModel):
     message_id: str | None = None
     reason: str | None = None
     approval_id: str | None = None
-

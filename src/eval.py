@@ -67,9 +67,13 @@ def parse_expected_triage(row: dict[str, object], *, index: int, path: Path) -> 
         raise ValueError(f"Eval row {index} in {path} has an invalid expected.summary.")
     if not isinstance(priority, str) or not priority.strip():
         raise ValueError(f"Eval row {index} in {path} has an invalid expected.priority.")
-    if not isinstance(action_items, list) or not all(isinstance(item, str) and item.strip() for item in action_items):
+    if not isinstance(action_items, list) or not all(
+        isinstance(item, str) and item.strip() for item in action_items
+    ):
         raise ValueError(f"Eval row {index} in {path} has an invalid expected.action_items.")
-    if not isinstance(deadlines, list) or not all(isinstance(item, str) and item.strip() for item in deadlines):
+    if not isinstance(deadlines, list) or not all(
+        isinstance(item, str) and item.strip() for item in deadlines
+    ):
         raise ValueError(f"Eval row {index} in {path} has an invalid expected.deadlines.")
     if not isinstance(language, str) or not language.strip():
         raise ValueError(f"Eval row {index} in {path} has an invalid language.")
@@ -103,7 +107,9 @@ def load_eval_prompts(path: Path) -> list[dict[str, object]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a quick local inference check with the fine-tuned adapter.")
+    parser = argparse.ArgumentParser(
+        description="Run a quick local inference check with the fine-tuned adapter."
+    )
     parser.add_argument(
         "--preset",
         type=str,

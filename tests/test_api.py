@@ -161,7 +161,10 @@ def test_user_a_cannot_delete_user_b_conversation(tmp_path: Path) -> None:
     response = client.delete(f"/conversations/{conversation_id}")
 
     assert response.status_code == 404
-    assert client.get(f"/conversations/{conversation_id}", headers=user_headers("user-b")).status_code == 200
+    assert (
+        client.get(f"/conversations/{conversation_id}", headers=user_headers("user-b")).status_code
+        == 200
+    )
 
 
 def test_user_a_cannot_stream_into_user_b_conversation(tmp_path: Path) -> None:
@@ -174,7 +177,9 @@ def test_user_a_cannot_stream_into_user_b_conversation(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 404
-    conversation = client.get(f"/conversations/{conversation_id}", headers=user_headers("user-b")).json()
+    conversation = client.get(
+        f"/conversations/{conversation_id}", headers=user_headers("user-b")
+    ).json()
     assert conversation["messages"] == []
 
 
@@ -311,7 +316,9 @@ def test_web_agent_registry_is_read_only() -> None:
     assert "mark_read" not in registry
 
 
-def test_agent_mode_streams_read_only_steps_and_persists_summary(tmp_path: Path, monkeypatch) -> None:
+def test_agent_mode_streams_read_only_steps_and_persists_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
     runtime = ScriptedAgentRuntime(
         [
             '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":true}}}',
@@ -396,7 +403,9 @@ def test_agent_mode_rejects_unavailable_write_tool(tmp_path: Path, monkeypatch) 
 
     assert response.status_code == 200
     events = parse_sse_events(response.text)
-    tool_step = [payload for name, payload in events if name == "agent_step" and payload["kind"] == "tool"][0]
+    tool_step = [
+        payload for name, payload in events if name == "agent_step" and payload["kind"] == "tool"
+    ][0]
     assert tool_step["status"] == "error"
     assert "not available" in tool_step["error"]
     assert events[-1][0] == "message_complete"
@@ -420,7 +429,9 @@ def tools_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
 
 
-def google_tools_headers(user_id: str = "google-user-1", email: str = "reader@example.com") -> dict[str, str]:
+def google_tools_headers(
+    user_id: str = "google-user-1", email: str = "reader@example.com"
+) -> dict[str, str]:
     return {
         **tools_headers(),
         "X-Open-Model-Google-User-Id": user_id,
@@ -447,9 +458,7 @@ def test_conversations_require_bearer_token_by_default(tmp_path: Path, monkeypat
     assert response.status_code == 401
 
 
-def test_delete_conversation_requires_bearer_token_by_default(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_delete_conversation_requires_bearer_token_by_default(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
     store = ConversationStore(tmp_path / "chat.sqlite3")
     conversation = store.create_conversation(DEFAULT_USER_ID)
@@ -577,11 +586,18 @@ def test_agent_run_endpoint_requires_bearer_token(tmp_path: Path, monkeypatch) -
 
 def test_gmail_auth_status_endpoint_reports_disconnected(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
-    monkeypatch.setattr("src.server.app.get_gmail_status", lambda user_id: type("Status", (), {
-        "connected": False,
-        "email": None,
-        "scopes": [],
-    })())
+    monkeypatch.setattr(
+        "src.server.app.get_gmail_status",
+        lambda user_id: type(
+            "Status",
+            (),
+            {
+                "connected": False,
+                "email": None,
+                "scopes": [],
+            },
+        )(),
+    )
     client = create_test_client(tmp_path)
 
     response = client.get("/auth/gmail/status", headers=google_tools_headers())
@@ -590,19 +606,21 @@ def test_gmail_auth_status_endpoint_reports_disconnected(tmp_path: Path, monkeyp
     assert response.json() == {"connected": False, "email": None, "scopes": []}
 
 
-def test_gmail_status_uses_verified_user_id(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_gmail_status_uses_verified_user_id(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
     seen: list[str] = []
 
     def fake_status(user_id: str):
         seen.append(user_id)
-        return type("Status", (), {
-        "connected": True,
-        "email": f"{user_id}@example.com",
-        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
-        })()
+        return type(
+            "Status",
+            (),
+            {
+                "connected": True,
+                "email": f"{user_id}@example.com",
+                "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            },
+        )()
 
     monkeypatch.setattr("src.server.app.get_gmail_status", fake_status)
     client = create_test_client(tmp_path)
@@ -655,11 +673,15 @@ def test_gmail_logout_endpoint_disconnects(tmp_path: Path, monkeypatch) -> None:
 
     def fake_disconnect(user_id: str):
         calls.append(user_id)
-        return type("Status", (), {
-        "connected": False,
-        "email": None,
-        "scopes": [],
-        })()
+        return type(
+            "Status",
+            (),
+            {
+                "connected": False,
+                "email": None,
+                "scopes": [],
+            },
+        )()
 
     monkeypatch.setattr("src.server.app.disconnect_gmail", fake_disconnect)
     client = create_test_client(tmp_path)
@@ -677,11 +699,15 @@ def test_gmail_session_token_endpoint_stores_user_token(tmp_path: Path, monkeypa
 
     def fake_store(payload):
         calls.append(payload)
-        return type("Status", (), {
-            "connected": True,
-            "email": payload.email,
-            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
-        })()
+        return type(
+            "Status",
+            (),
+            {
+                "connected": True,
+                "email": payload.email,
+                "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            },
+        )()
 
     monkeypatch.setattr("src.server.app.store_gmail_session_token", fake_store)
     client = create_test_client(tmp_path)
@@ -707,9 +733,7 @@ def test_gmail_session_token_endpoint_stores_user_token(tmp_path: Path, monkeypa
     assert calls[0].user_id == "google-user-1"
 
 
-def test_agent_mode_passes_verified_user_id_to_read_tool(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_agent_mode_passes_verified_user_id_to_read_tool(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
 
     async def require_user_id(user_id: str, limit: int = 20, unread_only: bool = True):
@@ -744,7 +768,9 @@ def test_agent_mode_passes_verified_user_id_to_read_tool(
 
     assert response.status_code == 200
     events = parse_sse_events(response.text)
-    tool_step = [payload for name, payload in events if name == "agent_step" and payload["kind"] == "tool"][0]
+    tool_step = [
+        payload for name, payload in events if name == "agent_step" and payload["kind"] == "tool"
+    ][0]
     assert tool_step["status"] == "error"
     assert "Sign in with Google" in tool_step["error"]
 

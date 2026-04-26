@@ -166,7 +166,11 @@ def _extract_label_value(line: str, allowed_labels: dict[str, str]) -> tuple[str
 
 
 def parse_action_extraction_output(text: str) -> ParsedTriage:
-    lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n") if line.strip()]
+    lines = [
+        line.strip()
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
+        if line.strip()
+    ]
     if len(lines) < 2:
         raise ValueError("Action extraction output must contain action items and a deadlines line.")
 
@@ -199,7 +203,11 @@ def parse_action_extraction_output(text: str) -> ParsedTriage:
 
 
 def parse_full_triage_output(text: str) -> ParsedTriage:
-    lines = [line.rstrip() for line in text.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n") if line.strip()]
+    lines = [
+        line.rstrip()
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
+        if line.strip()
+    ]
     if len(lines) < 4:
         raise ValueError("Full triage output must contain four sections.")
 
@@ -208,7 +216,12 @@ def parse_full_triage_output(text: str) -> ParsedTriage:
     action_match = _extract_label_value(lines[2], ACTION_LABELS)
     deadline_match = _extract_label_value(lines[-1], DEADLINE_LABELS)
 
-    if summary_match is None or priority_match is None or action_match is None or deadline_match is None:
+    if (
+        summary_match is None
+        or priority_match is None
+        or action_match is None
+        or deadline_match is None
+    ):
         raise ValueError("Full triage output is missing one or more required labels.")
 
     language = summary_match[0]
@@ -406,7 +419,9 @@ def _semantic_tokens(value: str, *, strip_action_deadline: bool = False) -> list
     return tokens
 
 
-def _semantic_similarity(actual: str, expected: str, *, strip_action_deadline: bool = False) -> float:
+def _semantic_similarity(
+    actual: str, expected: str, *, strip_action_deadline: bool = False
+) -> float:
     actual_tokens = set(_semantic_tokens(actual, strip_action_deadline=strip_action_deadline))
     expected_tokens = set(_semantic_tokens(expected, strip_action_deadline=strip_action_deadline))
     if not actual_tokens and not expected_tokens:
@@ -479,7 +494,9 @@ def score_triage_output(
         parse_success=True,
         summary_match=_summary_match(actual.summary, expected.summary),
         priority_match=actual.priority == expected.priority,
-        action_items_match=_list_match(actual.action_items, expected.action_items, matcher=_action_match),
+        action_items_match=_list_match(
+            actual.action_items, expected.action_items, matcher=_action_match
+        ),
         deadlines_match=sorted(_strip_deadline_prefix(value) for value in actual.deadlines)
         == sorted(_strip_deadline_prefix(value) for value in expected.deadlines),
         actual=actual,
@@ -492,7 +509,9 @@ def output_tokens_supported_by_input(output_parts: Sequence[str], input_text: st
         return True
 
     for part in output_parts:
-        candidate_tokens = [token.lower() for token in CONTENT_WORDS.findall(part) if len(token) > 2]
+        candidate_tokens = [
+            token.lower() for token in CONTENT_WORDS.findall(part) if len(token) > 2
+        ]
         if not candidate_tokens:
             continue
         if any(token in input_tokens for token in candidate_tokens):
@@ -501,7 +520,9 @@ def output_tokens_supported_by_input(output_parts: Sequence[str], input_text: st
     return True
 
 
-def validate_parsed_triage(parsed: ParsedTriage, *, input_text: str = "") -> tuple[list[str], list[str]]:
+def validate_parsed_triage(
+    parsed: ParsedTriage, *, input_text: str = ""
+) -> tuple[list[str], list[str]]:
     review_flags: list[str] = []
     drop_flags: list[str] = []
 
@@ -532,10 +553,18 @@ def validate_parsed_triage(parsed: ParsedTriage, *, input_text: str = "") -> tup
     if parsed.action_items == ["None"] and parsed.deadlines != ["None"]:
         drop_flags.append("mail_none_action_with_deadline")
 
-    if input_text and parsed.deadlines != ["None"] and not output_tokens_supported_by_input(parsed.deadlines, input_text):
+    if (
+        input_text
+        and parsed.deadlines != ["None"]
+        and not output_tokens_supported_by_input(parsed.deadlines, input_text)
+    ):
         review_flags.append("mail_deadline_not_in_input")
 
-    if input_text and parsed.action_items != ["None"] and not output_tokens_supported_by_input(parsed.action_items, input_text):
+    if (
+        input_text
+        and parsed.action_items != ["None"]
+        and not output_tokens_supported_by_input(parsed.action_items, input_text)
+    ):
         review_flags.append("mail_action_not_in_input")
 
     return review_flags, drop_flags

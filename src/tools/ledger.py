@@ -88,8 +88,12 @@ class SendLedger:
             ).fetchone()
         return int(row["count"])
 
-    async def recent_duplicate(self, subject: str, first_recipient: str, window_s: int = 60) -> bool:
-        return await asyncio.to_thread(self._recent_duplicate_sync, subject, first_recipient, window_s)
+    async def recent_duplicate(
+        self, subject: str, first_recipient: str, window_s: int = 60
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._recent_duplicate_sync, subject, first_recipient, window_s
+        )
 
     def _recent_duplicate_sync(self, subject: str, first_recipient: str, window_s: int) -> bool:
         since = datetime.now(UTC) - timedelta(seconds=window_s)
@@ -102,7 +106,11 @@ class SendLedger:
                   AND status IN ('sent', 'dry_run')
                 LIMIT 1
                 """,
-                (subject, first_recipient, since.isoformat(timespec="seconds").replace("+00:00", "Z")),
+                (
+                    subject,
+                    first_recipient,
+                    since.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                ),
             ).fetchone()
         return row is not None
 
@@ -119,7 +127,11 @@ class SendLedger:
                 WHERE subject = ? AND first_recipient = ? AND sent_at >= ?
                   AND status IN ('sent', 'dry_run')
                 """,
-                (subject, first_recipient, start.isoformat(timespec="seconds").replace("+00:00", "Z")),
+                (
+                    subject,
+                    first_recipient,
+                    start.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                ),
             ).fetchone()
         return int(row["count"])
 
@@ -185,4 +197,3 @@ class SendLedger:
         if row is None:
             raise KeyError(approval_id)
         return row
-

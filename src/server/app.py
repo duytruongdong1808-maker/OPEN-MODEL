@@ -58,6 +58,7 @@ from .schemas import (
 from .settings import OpenModelSettings, get_open_model_settings
 from .storage import ConversationStore
 
+
 class GmailSessionTokenRequest(BaseModel):
     user_id: str = Field(min_length=1)
     email: str | None = None
@@ -264,7 +265,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
-        if fastapi_app.state.runtime is None:
+        if (
+            fastapi_app.state.runtime is None
+            and not fastapi_app.state.settings.open_model_skip_model_load
+        ):
             resolved_runtime = resolve_runtime()
             if isinstance(resolved_runtime, LocalModelChatService):
                 resolved_runtime._ensure_loaded()
@@ -634,6 +638,7 @@ def create_app(
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> AgentRunResult:
         try:
+
             async def on_tool_call(tool_name: str, arguments: dict[str, object]) -> None:
                 await audit_agent_tool_call(audit, user_id, tool_name, arguments, request)
 
@@ -761,7 +766,9 @@ def create_app(
         if not conversation_store.conversation_exists(conversation_id, user_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
-        user_message = conversation_store.save_user_message(conversation_id, user_id, payload.message)
+        user_message = conversation_store.save_user_message(
+            conversation_id, user_id, payload.message
+        )
         conversation = conversation_store.get_conversation(conversation_id, user_id)
         summary = conversation_store.get_conversation_summary(conversation_id, user_id)
         await audit.log_async(
@@ -820,7 +827,9 @@ def create_app(
 
                 result = await run_task
                 if result.stopped_reason == "error":
-                    yield sse_event("error", ErrorPayload(message=result.answer).model_dump(mode="json"))
+                    yield sse_event(
+                        "error", ErrorPayload(message=result.answer).model_dump(mode="json")
+                    )
                     return
 
                 assistant_message = conversation_store.save_assistant_message(
@@ -829,7 +838,9 @@ def create_app(
                     result.answer,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(conversation_id, user_id)
+                updated_summary = conversation_store.get_conversation_summary(
+                    conversation_id, user_id
+                )
                 yield sse_event(
                     "message_complete",
                     MessageCompletePayload(
@@ -919,7 +930,9 @@ def create_app(
                     assistant_text,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(conversation_id, user_id)
+                updated_summary = conversation_store.get_conversation_summary(
+                    conversation_id, user_id
+                )
 
                 if len(steps) > 1:
                     draft_step_id, draft_step_label = steps[-1]

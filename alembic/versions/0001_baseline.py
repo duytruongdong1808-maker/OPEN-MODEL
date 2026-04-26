@@ -1,4 +1,5 @@
 """baseline conversation schema"""
+
 from __future__ import annotations
 
 from alembic import op
@@ -47,8 +48,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversations_updated_at "
-        "ON conversations(updated_at DESC)"
+        "CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC)"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_conversation_id "
