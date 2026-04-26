@@ -1,3 +1,4 @@
+import { createHmac } from "crypto";
 import { type NextRequest } from "next/server";
 
 import { auth } from "@/auth";
@@ -20,6 +21,11 @@ type RouteContext = {
 type SessionWithGoogle = {
   googleUserId?: string;
   googleEmail?: string;
+  user?: {
+    id?: string | null;
+    email?: string | null;
+    name?: string | null;
+  };
 };
 
 function resolveBackendUrl(): string {
@@ -28,6 +34,18 @@ function resolveBackendUrl(): string {
 
 function resolveOpsToken(): string | null {
   return process.env.AGENT_OPS_TOKEN?.trim() || null;
+}
+
+function resolveInternalHmacSecret(): string {
+  const secret = process.env.INTERNAL_HMAC_SECRET?.trim();
+  if (!secret || Buffer.byteLength(secret, "utf8") < 32) {
+    throw new Error("INTERNAL_HMAC_SECRET must be configured with at least 32 bytes.");
+  }
+  return secret;
+}
+
+function signUserId(userId: string): string {
+  return createHmac("sha256", resolveInternalHmacSecret()).update(userId).digest("hex");
 }
 
 function resolvePositiveInteger(name: string, fallback: number): number {
@@ -74,7 +92,7 @@ function buildBackendUrl(request: NextRequest, pathParts: string[] = []): string
   return url.toString();
 }
 
-function buildProxyHeaders(request: NextRequest, session: SessionWithGoogle): Headers {
+function buildProxyHeaders(request: NextRequest, session: SessionWithGoogle, userId: string): Headers {
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
   const accept = request.headers.get("accept");
@@ -83,6 +101,8 @@ function buildProxyHeaders(request: NextRequest, session: SessionWithGoogle): He
   if (contentType) headers.set("content-type", contentType);
   if (accept) headers.set("accept", accept);
   if (token) headers.set("authorization", `Bearer ${token}`);
+  headers.set("x-user-id", userId);
+  headers.set("x-user-id-sig", signUserId(userId));
   if (session.googleUserId) headers.set("x-open-model-google-user-id", session.googleUserId);
   if (session.googleEmail) headers.set("x-open-model-google-email", session.googleEmail);
 
@@ -100,6 +120,10 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
     return Response.json({ detail: "Authentication required." }, { status: 401 });
   }
   const sessionWithGoogle = session as typeof session & SessionWithGoogle;
+  const userId = sessionWithGoogle.user?.id?.trim();
+  if (!userId) {
+    return Response.json({ detail: "Authenticated session is missing a user id." }, { status: 401 });
+  }
   const userKey = sessionWithGoogle.googleUserId ?? session.user.email ?? session.user.name ?? "local-user";
   const limited = rateLimitResponse(userKey);
   if (limited) return limited;
@@ -108,7 +132,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
   const hasBody = method !== "GET" && method !== "HEAD";
   const response = await fetch(buildBackendUrl(request, await getPathParts(context)), {
     method,
-    headers: buildProxyHeaders(request, sessionWithGoogle),
+    headers: buildProxyHeaders(request, sessionWithGoogle, userId),
     body: hasBody ? request.body : undefined,
     duplex: hasBody ? "half" : undefined,
     redirect: "manual",

@@ -48,6 +48,7 @@ class ConversationStore:
                 """
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL DEFAULT 'legacy',
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -78,25 +79,38 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_message_sources_message_id ON message_sources(message_id, position);
                 """
             )
+            conversation_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(conversations)")
+            }
+            if "user_id" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN user_id TEXT NOT NULL DEFAULT 'legacy'"
+                )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_user_updated "
+                "ON conversations(user_id, updated_at DESC)"
+            )
 
-    def create_conversation(self, title: str = DEFAULT_CONVERSATION_TITLE) -> ConversationSummary:
+    def create_conversation(
+        self, user_id: str, title: str = DEFAULT_CONVERSATION_TITLE
+    ) -> ConversationSummary:
         conversation_id = str(uuid4())
         timestamp = utcnow_iso()
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO conversations (id, title, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO conversations (id, user_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (conversation_id, title, timestamp, timestamp),
+                (conversation_id, user_id, title, timestamp, timestamp),
             )
-        return self.get_conversation_summary(conversation_id)
+        return self.get_conversation_summary(conversation_id, user_id)
 
-    def conversation_exists(self, conversation_id: str) -> bool:
+    def conversation_exists(self, conversation_id: str, user_id: str) -> bool:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT 1 FROM conversations WHERE id = ?",
-                (conversation_id,),
+                "SELECT 1 FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
             ).fetchone()
         return row is not None
 
@@ -104,15 +118,15 @@ class ConversationStore:
         with self._connect() as connection:
             connection.execute("SELECT 1").fetchone()
 
-    def delete_conversation(self, conversation_id: str) -> bool:
+    def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM conversations WHERE id = ?",
-                (conversation_id,),
+                "DELETE FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
             )
         return cursor.rowcount > 0
 
-    def list_conversations(self) -> list[ConversationSummary]:
+    def list_conversations(self, user_id: str) -> list[ConversationSummary]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -129,12 +143,14 @@ class ConversationStore:
                         LIMIT 1
                     ) AS last_message_preview
                 FROM conversations AS c
+                WHERE c.user_id = ?
                 ORDER BY c.updated_at DESC, c.created_at DESC
-                """
+                """,
+                (user_id,),
             ).fetchall()
         return [ConversationSummary(**dict(row)) for row in rows]
 
-    def get_conversation_summary(self, conversation_id: str) -> ConversationSummary:
+    def get_conversation_summary(self, conversation_id: str, user_id: str) -> ConversationSummary:
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -151,25 +167,26 @@ class ConversationStore:
                         LIMIT 1
                     ) AS last_message_preview
                 FROM conversations AS c
-                WHERE c.id = ?
+                WHERE c.id = ? AND c.user_id = ?
                 """,
-                (conversation_id,),
+                (conversation_id, user_id),
             ).fetchone()
         if row is None:
             raise KeyError(conversation_id)
         return ConversationSummary(**dict(row))
 
-    def get_conversation(self, conversation_id: str) -> ConversationDetail:
-        summary = self.get_conversation_summary(conversation_id)
+    def get_conversation(self, conversation_id: str, user_id: str) -> ConversationDetail:
+        summary = self.get_conversation_summary(conversation_id, user_id)
         with self._connect() as connection:
             message_rows = connection.execute(
                 """
-                SELECT id, role, content, created_at
-                FROM messages
-                WHERE conversation_id = ?
-                ORDER BY rowid ASC
+                SELECT m.id, m.role, m.content, m.created_at
+                FROM messages AS m
+                INNER JOIN conversations AS c ON c.id = m.conversation_id
+                WHERE m.conversation_id = ? AND c.user_id = ?
+                ORDER BY m.rowid ASC
                 """,
-                (conversation_id,),
+                (conversation_id, user_id),
             ).fetchall()
             source_rows = connection.execute(
                 """
@@ -181,10 +198,11 @@ class ConversationStore:
                     ms.url
                 FROM message_sources AS ms
                 INNER JOIN messages AS m ON m.id = ms.message_id
-                WHERE m.conversation_id = ?
+                INNER JOIN conversations AS c ON c.id = m.conversation_id
+                WHERE m.conversation_id = ? AND c.user_id = ?
                 ORDER BY ms.position ASC, ms.id ASC
                 """,
-                (conversation_id,),
+                (conversation_id, user_id),
             ).fetchall()
 
         sources_by_message: dict[str, list[SourceItem]] = {}
@@ -209,20 +227,26 @@ class ConversationStore:
         ]
         return ConversationDetail(**summary.model_dump(), messages=messages)
 
-    def save_user_message(self, conversation_id: str, content: str) -> ChatMessage:
-        return self._save_message(conversation_id, role="user", content=content, sources=[])
+    def save_user_message(self, conversation_id: str, user_id: str, content: str) -> ChatMessage:
+        return self._save_message(
+            conversation_id, user_id, role="user", content=content, sources=[]
+        )
 
     def save_assistant_message(
         self,
         conversation_id: str,
+        user_id: str,
         content: str,
         sources: list[SourceItem],
     ) -> ChatMessage:
-        return self._save_message(conversation_id, role="assistant", content=content, sources=sources)
+        return self._save_message(
+            conversation_id, user_id, role="assistant", content=content, sources=sources
+        )
 
     def _save_message(
         self,
         conversation_id: str,
+        user_id: str,
         *,
         role: str,
         content: str,
@@ -235,6 +259,13 @@ class ConversationStore:
             raise ValueError("Message content cannot be empty.")
 
         with self._connect() as connection:
+            conversation = connection.execute(
+                "SELECT title FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
+            ).fetchone()
+            if conversation is None:
+                raise KeyError(conversation_id)
+
             connection.execute(
                 """
                 INSERT INTO messages (id, conversation_id, role, content, created_at)
@@ -243,19 +274,14 @@ class ConversationStore:
                 (message_id, conversation_id, role, normalized_content, timestamp),
             )
             connection.execute(
-                "UPDATE conversations SET updated_at = ? WHERE id = ?",
-                (timestamp, conversation_id),
+                "UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?",
+                (timestamp, conversation_id, user_id),
             )
-            if role == "user":
-                current_title = connection.execute(
-                    "SELECT title FROM conversations WHERE id = ?",
-                    (conversation_id,),
-                ).fetchone()
-                if current_title is not None and current_title["title"] == DEFAULT_CONVERSATION_TITLE:
-                    connection.execute(
-                        "UPDATE conversations SET title = ? WHERE id = ?",
-                        (derive_conversation_title(normalized_content), conversation_id),
-                    )
+            if role == "user" and conversation["title"] == DEFAULT_CONVERSATION_TITLE:
+                connection.execute(
+                    "UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
+                    (derive_conversation_title(normalized_content), conversation_id, user_id),
+                )
 
             for index, source in enumerate(sources):
                 connection.execute(

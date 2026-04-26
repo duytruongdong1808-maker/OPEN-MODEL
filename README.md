@@ -487,10 +487,11 @@ Optional environment variables:
 - `OPEN_MODEL_MAX_NEW_TOKENS`
 - `OPEN_MODEL_TEMPERATURE`
 - `OPEN_MODEL_TOP_P`
+- `INTERNAL_HMAC_SECRET`
 
 If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lora/final_adapter` first and falls back to the base model if no adapter is present.
 
-The chat API endpoints use the same bearer token as the tools API. Set `AGENT_OPS_TOKEN`, then send `Authorization: Bearer <token>` to `/conversations/*` and `/messages/stream`. The Next.js app below does this server-side through its API proxy, so the browser bundle never receives the token.
+The chat API endpoints use the same bearer token as the tools API plus signed internal user headers. Set `AGENT_OPS_TOKEN` and `INTERNAL_HMAC_SECRET` on both the backend and the Next.js server. The Next.js app below sends the bearer token and HMAC-signed user identity server-side through its API proxy, so the browser bundle never receives either secret.
 
 The web chat runs the mail agent in read-only mode by default. For this workflow, configure the `AGENT_IMAP_*` variables and `AGENT_OPS_TOKEN`; SMTP settings are only needed for the separate send-mail workflow and are not used by the web summarizer.
 
@@ -514,6 +515,7 @@ For local/internal testing against the protected chat API, set the server-side p
 
 ```powershell
 $env:AGENT_OPS_TOKEN="<token>"
+$env:INTERNAL_HMAC_SECRET="<at-least-32-byte-secret>"
 ```
 
 Do not expose this token with a `NEXT_PUBLIC_*` variable; anything with that prefix is bundled into client-side JavaScript.
@@ -552,6 +554,22 @@ To debug the backend directly from inside the compose network:
 
 ```powershell
 docker compose exec backend curl -fsS http://localhost:8000/health
+```
+
+### Database migrations
+
+Conversation storage is managed with Alembic. By default migrations read `OPEN_MODEL_DB_PATH` and build a SQLite SQLAlchemy URL for that file. To use an explicit SQLAlchemy URL instead, set `OPEN_MODEL_DATABASE_URL`.
+
+Run migrations from the repo root:
+
+```powershell
+alembic upgrade head
+```
+
+Migration `0002` adds `conversations.user_id` with a default value of `legacy` for pre-existing rows. Operators must either backfill those rows to a real user ID or accept that legacy chats are inaccessible through the signed per-user API. To assign all legacy conversations to a user:
+
+```powershell
+python scripts/backfill_user_id.py --user-id local-user
 ```
 
 ## Common Troubleshooting

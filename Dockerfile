@@ -14,8 +14,11 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY src ./src
+COPY alembic ./alembic
 COPY configs ./configs
 COPY data ./data
+COPY scripts ./scripts
+COPY alembic.ini ./
 COPY pyproject.toml README.md ./
 
 RUN mkdir -p outputs/app

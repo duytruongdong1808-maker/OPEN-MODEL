@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import secrets
 import asyncio
+import hashlib
+import hmac
 import json
+import secrets
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -137,6 +139,30 @@ def verify_tools_token(authorization: str | None = Header(default=None)) -> None
     presented = (authorization or "").removeprefix("Bearer ").strip()
     if not secrets.compare_digest(presented, expected):
         raise HTTPException(status_code=401, detail="Invalid tools bearer token.")
+
+
+def get_current_user_id(
+    settings: OpenModelSettings = Depends(get_app_settings),
+    x_user_id: str | None = Header(default=None),
+    x_user_id_sig: str | None = Header(default=None),
+) -> str:
+    user_id = (x_user_id or "").strip()
+    signature = (x_user_id_sig or "").strip().lower()
+    if not user_id or not signature:
+        raise HTTPException(status_code=401, detail="Missing user identity headers.")
+
+    secret = settings.internal_hmac_secret
+    if secret is None:
+        raise HTTPException(status_code=503, detail="INTERNAL_HMAC_SECRET is not configured.")
+
+    expected = hmac.new(
+        secret.get_secret_value().encode("utf-8"),
+        user_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not secrets.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid user identity signature.")
+    return user_id
 
 
 def tool_http_error(exc: Exception) -> HTTPException:
@@ -430,14 +456,16 @@ def create_app(
     )
     def list_conversations_endpoint(
         conversation_store: ConversationStore = Depends(get_store),
+        user_id: str = Depends(get_current_user_id),
     ) -> list[ConversationSummary]:
-        return conversation_store.list_conversations()
+        return conversation_store.list_conversations(user_id)
 
     @app.post("/conversations", response_model=ConversationSummary, dependencies=chat_dependencies)
     def create_conversation_endpoint(
         conversation_store: ConversationStore = Depends(get_store),
+        user_id: str = Depends(get_current_user_id),
     ) -> ConversationSummary:
-        return conversation_store.create_conversation()
+        return conversation_store.create_conversation(user_id)
 
     @app.get(
         "/conversations/{conversation_id}",
@@ -447,9 +475,10 @@ def create_app(
     def get_conversation_endpoint(
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
+        user_id: str = Depends(get_current_user_id),
     ) -> ConversationDetail:
         try:
-            return conversation_store.get_conversation(conversation_id)
+            return conversation_store.get_conversation(conversation_id, user_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Conversation not found.") from exc
 
@@ -461,8 +490,9 @@ def create_app(
     def delete_conversation_endpoint(
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
+        user_id: str = Depends(get_current_user_id),
     ) -> Response:
-        if not conversation_store.delete_conversation(conversation_id):
+        if not conversation_store.delete_conversation(conversation_id, user_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -474,13 +504,14 @@ def create_app(
         conversation_store: ConversationStore = Depends(get_store),
         chat_runtime: SupportsStreamingReply = Depends(get_runtime),
         web_user: WebUserContext = Depends(get_web_user_context),
+        user_id: str = Depends(get_current_user_id),
     ) -> StreamingResponse:
-        if not conversation_store.conversation_exists(conversation_id):
+        if not conversation_store.conversation_exists(conversation_id, user_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
-        user_message = conversation_store.save_user_message(conversation_id, payload.message)
-        conversation = conversation_store.get_conversation(conversation_id)
-        summary = conversation_store.get_conversation_summary(conversation_id)
+        user_message = conversation_store.save_user_message(conversation_id, user_id, payload.message)
+        conversation = conversation_store.get_conversation(conversation_id, user_id)
+        summary = conversation_store.get_conversation_summary(conversation_id, user_id)
 
         async def agent_event_stream() -> AsyncIterator[str]:
             yield sse_event(
@@ -531,10 +562,11 @@ def create_app(
 
                 assistant_message = conversation_store.save_assistant_message(
                     conversation_id,
+                    user_id,
                     result.answer,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(conversation_id)
+                updated_summary = conversation_store.get_conversation_summary(conversation_id, user_id)
                 yield sse_event(
                     "message_complete",
                     MessageCompletePayload(
@@ -620,10 +652,11 @@ def create_app(
 
                 assistant_message = conversation_store.save_assistant_message(
                     conversation_id,
+                    user_id,
                     assistant_text,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(conversation_id)
+                updated_summary = conversation_store.get_conversation_summary(conversation_id, user_id)
 
                 if len(steps) > 1:
                     draft_step_id, draft_step_label = steps[-1]

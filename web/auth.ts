@@ -14,6 +14,12 @@ type SessionWithGoogle = {
   googleUserId?: string;
   googleEmail?: string;
   authProvider?: string;
+  user?: {
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+  };
 };
 
 type TokenWithGoogle = {
@@ -142,6 +148,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, token }) {
       const sourceToken = token as typeof token & TokenWithGoogle;
       const nextSession = session as typeof session & SessionWithGoogle;
+      if (nextSession.user && sourceToken.sub) {
+        nextSession.user.id = sourceToken.sub;
+      }
       nextSession.googleUserId = sourceToken.googleUserId;
       nextSession.googleEmail = sourceToken.googleEmail;
       nextSession.authProvider = sourceToken.authProvider;

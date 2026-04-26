@@ -36,6 +36,7 @@ class OpenModelSettings(BaseSettings):
     google_oauth_token_encryption_key: SecretStr | None = None
 
     auth_secret: SecretStr | None = None
+    internal_hmac_secret: SecretStr | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -44,6 +45,16 @@ class OpenModelSettings(BaseSettings):
     def split_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("internal_hmac_secret")
+    @classmethod
+    def validate_internal_hmac_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return value
+        secret = value.get_secret_value()
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("INTERNAL_HMAC_SECRET must be at least 32 bytes.")
         return value
 
 

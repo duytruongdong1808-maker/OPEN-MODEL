@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import asyncio
+import hashlib
+import hmac
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -16,6 +19,9 @@ from src.tools.config import get_email_settings
 from src.tools.errors import AuthError
 from src.tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from src.server.settings import get_open_model_settings
+
+TEST_INTERNAL_HMAC_SECRET = "test-internal-hmac-secret-at-least-32-bytes"
+DEFAULT_USER_ID = "user-a"
 
 
 class FakeChatRuntime:
@@ -70,9 +76,20 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
 
 
 def create_test_client(tmp_path: Path, runtime: FakeChatRuntime | None = None) -> TestClient:
+    os.environ["INTERNAL_HMAC_SECRET"] = TEST_INTERNAL_HMAC_SECRET
+    get_open_model_settings.cache_clear()
     store = ConversationStore(tmp_path / "chat.sqlite3")
     app = create_app(store=store, runtime=runtime or FakeChatRuntime(), protect_chat_routes=False)
-    return TestClient(app)
+    return TestClient(app, headers=user_headers(DEFAULT_USER_ID))
+
+
+def user_headers(user_id: str) -> dict[str, str]:
+    signature = hmac.new(
+        TEST_INTERNAL_HMAC_SECRET.encode("utf-8"),
+        user_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {"X-User-Id": user_id, "X-User-Id-Sig": signature}
 
 
 def test_create_list_and_get_conversation(tmp_path: Path) -> None:
@@ -116,6 +133,72 @@ def test_delete_missing_conversation_returns_not_found(tmp_path: Path) -> None:
     response = client.delete("/conversations/missing")
 
     assert response.status_code == 404
+
+
+def test_user_a_cannot_list_user_b_conversations(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    client.post("/conversations", headers=user_headers("user-b"))
+
+    response = client.get("/conversations")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_user_a_cannot_get_user_b_conversation_returns_404(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    conversation_id = client.post("/conversations", headers=user_headers("user-b")).json()["id"]
+
+    response = client.get(f"/conversations/{conversation_id}")
+
+    assert response.status_code == 404
+
+
+def test_user_a_cannot_delete_user_b_conversation(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    conversation_id = client.post("/conversations", headers=user_headers("user-b")).json()["id"]
+
+    response = client.delete(f"/conversations/{conversation_id}")
+
+    assert response.status_code == 404
+    assert client.get(f"/conversations/{conversation_id}", headers=user_headers("user-b")).status_code == 200
+
+
+def test_user_a_cannot_stream_into_user_b_conversation(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    conversation_id = client.post("/conversations", headers=user_headers("user-b")).json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "This should not cross users.", "mode": "chat"},
+    )
+
+    assert response.status_code == 404
+    conversation = client.get(f"/conversations/{conversation_id}", headers=user_headers("user-b")).json()
+    assert conversation["messages"] == []
+
+
+def test_missing_x_user_id_header_returns_401(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    app = create_app(store=ConversationStore(tmp_path / "chat.sqlite3"), runtime=FakeChatRuntime())
+    client = TestClient(app)
+
+    response = client.get("/conversations", headers=tools_headers())
+
+    assert response.status_code == 401
+
+
+def test_invalid_hmac_signature_returns_401(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    app = create_app(store=ConversationStore(tmp_path / "chat.sqlite3"), runtime=FakeChatRuntime())
+    client = TestClient(app)
+
+    response = client.get(
+        "/conversations",
+        headers={**tools_headers(), "X-User-Id": DEFAULT_USER_ID, "X-User-Id-Sig": "bad"},
+    )
+
+    assert response.status_code == 401
 
 
 def test_stream_message_persists_user_and_assistant_messages(tmp_path: Path) -> None:
@@ -330,6 +413,7 @@ def configure_tools_env(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_SMTP_PASS", "smtp-secret")
     monkeypatch.setenv("AGENT_SMTP_FROM", "Sender <sender@example.com>")
     monkeypatch.setenv("AGENT_OPS_TOKEN", "test-token")
+    monkeypatch.setenv("INTERNAL_HMAC_SECRET", TEST_INTERNAL_HMAC_SECRET)
 
 
 def tools_headers() -> dict[str, str]:
@@ -368,14 +452,14 @@ def test_delete_conversation_requires_bearer_token_by_default(
 ) -> None:
     configure_tools_env(monkeypatch)
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    conversation = store.create_conversation()
+    conversation = store.create_conversation(DEFAULT_USER_ID)
     app = create_app(store=store, runtime=FakeChatRuntime())
     client = TestClient(app)
 
     response = client.delete(f"/conversations/{conversation.id}")
 
     assert response.status_code == 401
-    assert store.conversation_exists(conversation.id)
+    assert store.conversation_exists(conversation.id, DEFAULT_USER_ID)
 
 
 def test_tools_inbox_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> None:
