@@ -425,6 +425,21 @@ def configure_tools_env(monkeypatch) -> None:
     monkeypatch.setenv("INTERNAL_HMAC_SECRET", TEST_INTERNAL_HMAC_SECRET)
 
 
+def test_settings_accept_comma_separated_cors_origins(monkeypatch) -> None:
+    get_open_model_settings.cache_clear()
+    monkeypatch.setenv("OPEN_MODEL_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+
+    try:
+        settings = get_open_model_settings()
+
+        assert settings.open_model_cors_origins == [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    finally:
+        get_open_model_settings.cache_clear()
+
+
 def tools_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
 

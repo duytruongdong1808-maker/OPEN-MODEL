@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ..utils import DEFAULT_BASE_MODEL, ROOT_DIR
 
@@ -17,7 +18,7 @@ class OpenModelSettings(BaseSettings):
     open_model_max_new_tokens: int = Field(default=256, ge=1)
     open_model_temperature: float = Field(default=0.2, ge=0)
     open_model_top_p: float = Field(default=0.9, ge=0, le=1)
-    open_model_cors_origins: list[str] = Field(
+    open_model_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
     open_model_db_path: Path = ROOT_DIR / "outputs" / "app" / "chat.sqlite3"
