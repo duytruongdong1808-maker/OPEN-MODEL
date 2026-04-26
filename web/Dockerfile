@@ -18,6 +18,12 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 
+# The Next.js standalone server runs `node server.js` directly — npm and npx are
+# never invoked at runtime. Their bundled copy of picomatch ships a known ReDoS
+# CVE, so strip the entire npm install from the runner image.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx
+
 # Next.js standalone output ships only the production deps required at runtime,
 # so dev tools (vite, vitest, esbuild, picomatch, ...) are not baked into the image.
 COPY --from=builder /app/.next/standalone ./
