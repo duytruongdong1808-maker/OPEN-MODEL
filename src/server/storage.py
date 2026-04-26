@@ -83,9 +83,23 @@ class ConversationStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target TEXT,
+                    ip TEXT,
+                    user_agent TEXT,
+                    result TEXT NOT NULL CHECK(result IN ('success','denied','error')),
+                    detail_json TEXT
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_message_sources_message_id ON message_sources(message_id, position);
+                CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts ON audit_log(user_id, ts DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts ON audit_log(action, ts DESC);
                 """
             )
             conversation_columns = {

@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .audit import AuditLogger, AuditResult, truncate_ip
 from ..agent import (
     READ_ONLY_EMAIL_PROTOCOL,
     AgentLoop,
@@ -67,6 +68,25 @@ class GmailSessionTokenRequest(BaseModel):
     token_type: str | None = None
     client_id: str = Field(min_length=1)
     client_secret: str = Field(min_length=1)
+
+
+class AuditLoginRequest(BaseModel):
+    user_id: str = Field(min_length=1)
+    result: AuditResult
+    provider: str = "credentials"
+    reason: str | None = None
+
+
+class AuditEventResponse(BaseModel):
+    id: int
+    ts: str
+    user_id: str
+    action: str
+    target: str | None = None
+    ip_truncated: str | None = None
+    user_agent: str | None = None
+    result: str
+    detail: dict[str, object] | None = None
 
 
 def sse_event(event: str, payload: dict) -> str:
@@ -156,6 +176,61 @@ def get_send_ledger(request: Request) -> SendLedger:
     return request.app.state.ledger
 
 
+def get_audit_logger(request: Request) -> AuditLogger:
+    return request.app.state.audit
+
+
+def subject_hash(subject: str | None) -> str | None:
+    if not subject:
+        return None
+    return hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16]
+
+
+def email_domain(address: str | None) -> str | None:
+    if not address or "@" not in address:
+        return None
+    return address.rsplit("@", 1)[1].lower() or None
+
+
+def first_recipient_domain(recipients: list[str]) -> str | None:
+    for recipient in recipients:
+        domain = email_domain(recipient)
+        if domain:
+            return domain
+    return None
+
+
+async def audit_agent_tool_call(
+    audit: AuditLogger,
+    user_id: str,
+    tool_name: str,
+    arguments: dict[str, object],
+    request: Request,
+) -> None:
+    await audit.log_async(
+        user_id,
+        "agent.tool_call",
+        target=tool_name,
+        detail={"arguments_keys": sorted(str(key) for key in arguments)},
+        request=request,
+    )
+    if tool_name == "send_email":
+        recipients = arguments.get("to")
+        recipient_list = recipients if isinstance(recipients, list) else []
+        target = first_recipient_domain([str(recipient) for recipient in recipient_list])
+        await audit.log_async(
+            user_id,
+            "tool.send_email",
+            target=target,
+            detail={
+                "to_count": len(recipient_list),
+                "cc_count": len(arguments.get("cc") or []),
+                "bcc_count": len(arguments.get("bcc") or []),
+            },
+            request=request,
+        )
+
+
 def resolve_runtime() -> LocalModelChatService:
     settings = get_open_model_settings()
     return LocalModelChatService(
@@ -209,6 +284,7 @@ def create_app(
     app.state.store = store or ConversationStore(settings.open_model_db_path)
     app.state.runtime = runtime
     app.state.ledger = SendLedger(settings.open_model_ledger_db_path)
+    app.state.audit = AuditLogger(settings.open_model_db_path)
 
     @app.middleware("http")
     async def reject_large_requests(request: Request, call_next):
@@ -227,6 +303,53 @@ def create_app(
         return await call_next(request)
 
     chat_dependencies = [Depends(verify_tools_token)] if protect_chat_routes else []
+
+    @app.post("/audit/login", dependencies=[Depends(verify_tools_token)])
+    async def audit_login_endpoint(
+        payload: AuditLoginRequest,
+        request: Request,
+        audit: AuditLogger = Depends(get_audit_logger),
+    ) -> dict[str, str]:
+        action = "auth.login.success" if payload.result == "success" else "auth.login.failure"
+        await audit.log_async(
+            payload.user_id,
+            action,
+            result=payload.result,
+            detail={"provider": payload.provider, "reason": payload.reason},
+            request=request,
+        )
+        return {"status": "ok"}
+
+    @app.get(
+        "/audit/me",
+        response_model=list[AuditEventResponse],
+        dependencies=chat_dependencies,
+    )
+    def audit_me_endpoint(
+        action: str | None = Query(default=None),
+        since: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=200),
+        user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
+    ) -> list[AuditEventResponse]:
+        rows = audit.list_for_user(user_id, action=action, since=since, limit=limit)
+        events: list[AuditEventResponse] = []
+        for row in rows:
+            detail = json.loads(row.detail_json) if row.detail_json else None
+            events.append(
+                AuditEventResponse(
+                    id=row.id,
+                    ts=row.ts,
+                    user_id=row.user_id,
+                    action=row.action,
+                    target=row.target,
+                    ip_truncated=truncate_ip(row.ip),
+                    user_agent=row.user_agent,
+                    result=row.result,
+                    detail=detail,
+                )
+            )
+        return events
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
@@ -263,27 +386,63 @@ def create_app(
         )
 
     @app.get("/auth/gmail/login", dependencies=[Depends(verify_tools_token)])
-    def gmail_login_endpoint(user_id: str = Depends(get_current_user_id)) -> RedirectResponse:
+    def gmail_login_endpoint(
+        request: Request,
+        user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
+    ) -> RedirectResponse:
         try:
-            return RedirectResponse(start_gmail_oauth_flow(user_id), status_code=302)
+            redirect_url = start_gmail_oauth_flow(user_id)
+            audit.log(user_id, "gmail.connect.start", request=request)
+            return RedirectResponse(redirect_url, status_code=302)
         except Exception as exc:
+            audit.log(
+                user_id,
+                "gmail.connect.failure",
+                result="error",
+                detail={"reason": str(exc)},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
 
     @app.get("/auth/gmail/callback", dependencies=[Depends(verify_tools_token)])
     def gmail_callback_endpoint(
+        request: Request,
         code: str | None = Query(default=None),
         state: str | None = Query(default=None),
         error: str | None = Query(default=None),
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> RedirectResponse:
-        _ = user_id
         if error:
+            audit.log(
+                user_id,
+                "gmail.connect.failure",
+                result="denied",
+                detail={"error": error, "state": state},
+                request=request,
+            )
             raise HTTPException(status_code=400, detail=f"Gmail OAuth denied: {error}")
         if not code:
+            audit.log(
+                user_id,
+                "gmail.connect.failure",
+                result="denied",
+                detail={"reason": "missing_code", "state": state},
+                request=request,
+            )
             raise HTTPException(status_code=400, detail="Missing Gmail OAuth authorization code.")
         try:
-            complete_gmail_oauth_flow(code=code, state=state or "")
+            connected_user_id = complete_gmail_oauth_flow(code=code, state=state or "")
+            audit.log(connected_user_id, "gmail.connect.success", request=request)
         except Exception as exc:
+            audit.log(
+                user_id,
+                "gmail.connect.failure",
+                result="error",
+                detail={"reason": str(exc), "code": code, "state": state},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
         return RedirectResponse("/", status_code=302)
 
@@ -300,9 +459,12 @@ def create_app(
 
     @app.post("/auth/gmail/logout", dependencies=[Depends(verify_tools_token)])
     def gmail_logout_endpoint(
+        request: Request,
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> dict[str, object]:
         status_payload = disconnect_gmail(user_id)
+        audit.log(user_id, "gmail.disconnect", request=request)
         return {
             "connected": status_payload.connected,
             "email": status_payload.email,
@@ -310,7 +472,11 @@ def create_app(
         }
 
     @app.post("/auth/gmail/session-token", dependencies=[Depends(verify_tools_token)])
-    def gmail_session_token_endpoint(payload: GmailSessionTokenRequest) -> dict[str, object]:
+    def gmail_session_token_endpoint(
+        payload: GmailSessionTokenRequest,
+        request: Request,
+        audit: AuditLogger = Depends(get_audit_logger),
+    ) -> dict[str, object]:
         try:
             status_payload = store_gmail_session_token(
                 GmailSessionToken(
@@ -325,7 +491,20 @@ def create_app(
                     client_secret=payload.client_secret,
                 )
             )
+            audit.log(
+                payload.user_id,
+                "gmail.connect.success",
+                detail={"email": payload.email, "scopes": status_payload.scopes or []},
+                request=request,
+            )
         except Exception as exc:
+            audit.log(
+                payload.user_id,
+                "gmail.connect.failure",
+                result="error",
+                detail={"reason": str(exc), "token": payload.access_token},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
         return {
             "connected": status_payload.connected,
@@ -339,13 +518,35 @@ def create_app(
         dependencies=[Depends(verify_tools_token)],
     )
     async def tools_inbox_endpoint(
+        request: Request,
         limit: int = 20,
         unread_only: bool = True,
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> list[EmailSummary]:
         try:
-            return await email_tools.read_inbox(user_id, limit=limit, unread_only=unread_only)
+            items = await email_tools.read_inbox(user_id, limit=limit, unread_only=unread_only)
+            await audit.log_async(
+                user_id,
+                "gmail.read_inbox",
+                target="INBOX",
+                detail={
+                    "limit": limit,
+                    "unread_only": unread_only,
+                    "count_returned": len(items),
+                },
+                request=request,
+            )
+            return items
         except Exception as exc:
+            await audit.log_async(
+                user_id,
+                "gmail.read_inbox",
+                target="INBOX",
+                result="error",
+                detail={"limit": limit, "unread_only": unread_only, "error": str(exc)},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
 
     @app.get(
@@ -354,12 +555,33 @@ def create_app(
         dependencies=[Depends(verify_tools_token)],
     )
     async def tools_email_endpoint(
+        request: Request,
         uid: str,
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> EmailMessage:
         try:
-            return await email_tools.get_email(user_id, uid)
+            message = await email_tools.get_email(user_id, uid)
+            await audit.log_async(
+                user_id,
+                "gmail.get_email",
+                target=uid,
+                detail={
+                    "subject_hash": subject_hash(message.subject),
+                    "from_domain": email_domain(message.from_),
+                },
+                request=request,
+            )
+            return message
         except Exception as exc:
+            await audit.log_async(
+                user_id,
+                "gmail.get_email",
+                target=uid,
+                result="error",
+                detail={"error": str(exc)},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
 
     @app.post(
@@ -367,10 +589,36 @@ def create_app(
         response_model=SendResult,
         dependencies=[Depends(verify_tools_token)],
     )
-    async def tools_send_endpoint(payload: SendRequest) -> SendResult:
+    async def tools_send_endpoint(
+        payload: SendRequest,
+        request: Request,
+        audit: AuditLogger = Depends(get_audit_logger),
+    ) -> SendResult:
+        target = first_recipient_domain(payload.to)
         try:
-            return await email_tools.send_request(payload)
+            result = await email_tools.send_request(payload)
+            await audit.log_async(
+                "ops",
+                "tool.send_email",
+                target=target,
+                detail={
+                    "to_count": len(payload.to),
+                    "cc_count": len(payload.cc),
+                    "bcc_count": len(payload.bcc),
+                    "status": result.status,
+                },
+                request=request,
+            )
+            return result
         except Exception as exc:
+            await audit.log_async(
+                "ops",
+                "tool.send_email",
+                target=target,
+                result="error",
+                detail={"error": str(exc), "to_count": len(payload.to)},
+                request=request,
+            )
             raise tool_http_error(exc) from exc
 
     @app.post(
@@ -379,16 +627,22 @@ def create_app(
         dependencies=[Depends(verify_tools_token)],
     )
     async def agent_run_endpoint(
+        request: Request,
         payload: AgentRunRequest,
         chat_runtime: SupportsStreamingReply = Depends(get_runtime),
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> AgentRunResult:
         try:
+            async def on_tool_call(tool_name: str, arguments: dict[str, object]) -> None:
+                await audit_agent_tool_call(audit, user_id, tool_name, arguments, request)
+
             return await AgentLoop(chat_runtime).run(
                 payload.message,
                 system_prompt=payload.system_prompt,
                 max_steps=payload.max_steps,
                 user_id=user_id,
+                on_tool_call=on_tool_call,
             )
         except Exception as exc:
             raise tool_http_error(exc) from exc
@@ -446,10 +700,14 @@ def create_app(
 
     @app.post("/conversations", response_model=ConversationSummary, dependencies=chat_dependencies)
     def create_conversation_endpoint(
+        request: Request,
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> ConversationSummary:
-        return conversation_store.create_conversation(user_id)
+        conversation = conversation_store.create_conversation(user_id)
+        audit.log(user_id, "conversation.create", target=conversation.id, request=request)
+        return conversation
 
     @app.get(
         "/conversations/{conversation_id}",
@@ -472,12 +730,22 @@ def create_app(
         dependencies=chat_dependencies,
     )
     def delete_conversation_endpoint(
+        request: Request,
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> Response:
         if not conversation_store.delete_conversation(conversation_id, user_id):
+            audit.log(
+                user_id,
+                "conversation.delete",
+                target=conversation_id,
+                result="denied",
+                request=request,
+            )
             raise HTTPException(status_code=404, detail="Conversation not found.")
+        audit.log(user_id, "conversation.delete", target=conversation_id, request=request)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/conversations/{conversation_id}/messages/stream", dependencies=chat_dependencies)
@@ -488,6 +756,7 @@ def create_app(
         conversation_store: ConversationStore = Depends(get_store),
         chat_runtime: SupportsStreamingReply = Depends(get_runtime),
         user_id: str = Depends(get_current_user_id),
+        audit: AuditLogger = Depends(get_audit_logger),
     ) -> StreamingResponse:
         if not conversation_store.conversation_exists(conversation_id, user_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -495,6 +764,13 @@ def create_app(
         user_message = conversation_store.save_user_message(conversation_id, user_id, payload.message)
         conversation = conversation_store.get_conversation(conversation_id, user_id)
         summary = conversation_store.get_conversation_summary(conversation_id, user_id)
+        await audit.log_async(
+            user_id,
+            "conversation.stream",
+            target=conversation_id,
+            detail={"mode": payload.mode, "message_chars": len(payload.message)},
+            request=request,
+        )
 
         async def agent_event_stream() -> AsyncIterator[str]:
             yield sse_event(
@@ -521,6 +797,9 @@ def create_app(
                     max_steps=payload.max_steps,
                     on_step=on_step,
                     user_id=user_id,
+                    on_tool_call=lambda tool_name, arguments: audit_agent_tool_call(
+                        audit, user_id, tool_name, arguments, request
+                    ),
                 )
             )
 

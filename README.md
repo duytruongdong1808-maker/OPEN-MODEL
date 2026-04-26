@@ -495,6 +495,8 @@ The chat API endpoints use the same bearer token as the tools API plus signed in
 
 The web chat runs the mail agent in read-only mode by default. Gmail OAuth credentials are encrypted and stored per verified web user in the application database. If a user has not connected Gmail, the mail tools can still fall back to the shared `AGENT_IMAP_*` configuration for ops/internal use; that IMAP fallback is not per-user.
 
+Security audit events are stored in the application database. NextAuth login success/failure is logged by a best-effort server-side call to `POST /audit/login` using `AGENT_OPS_TOKEN`; passwords are never sent to the audit endpoint.
+
 ### Run the frontend
 
 In a second terminal:

@@ -56,6 +56,39 @@ function resolveOpsToken(): string | null {
   return process.env.AGENT_OPS_TOKEN?.trim() || null;
 }
 
+async function auditLogin({
+  userId,
+  result,
+  provider,
+  reason,
+}: {
+  userId: string;
+  result: "success" | "denied" | "error";
+  provider: string;
+  reason?: string;
+}): Promise<void> {
+  const opsToken = resolveOpsToken();
+  if (!opsToken) return;
+
+  try {
+    await fetch(`${resolveBackendUrl()}/audit/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opsToken}`,
+      },
+      body: JSON.stringify({
+        user_id: userId || "unknown",
+        result,
+        provider,
+        reason,
+      }),
+    });
+  } catch {
+    // Login audit is best-effort; authentication must not depend on audit availability.
+  }
+}
+
 async function syncGoogleTokenToBackend({
   userId,
   email,
@@ -119,7 +152,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (account?.provider !== "google") return true;
       const googleProfile = profile as GoogleProfile | undefined;
       const userId = account.providerAccountId || googleProfile?.sub;
-      if (!userId) return false;
+      if (!userId) {
+        await auditLogin({
+          userId: "unknown",
+          result: "denied",
+          provider: "google",
+          reason: "missing_google_user_id",
+        });
+        return false;
+      }
       const synced = await syncGoogleTokenToBackend({
         userId,
         email: googleProfile?.email,
@@ -128,6 +169,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         expiresAt: account.expires_at,
         scope: account.scope,
         tokenType: account.token_type,
+      });
+      await auditLogin({
+        userId,
+        result: synced ? "success" : "error",
+        provider: "google",
+        reason: synced ? undefined : "gmail_token_sync_failed",
       });
       return synced ? true : "/login?error=GmailTokenSync";
     },
@@ -183,13 +230,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const expected = configuredCredentials();
         const username = typeof credentials?.username === "string" ? credentials.username : "";
         const password = typeof credentials?.password === "string" ? credentials.password : "";
-        if (!expected) return null;
+        if (!expected) {
+          await auditLogin({
+            userId: username || "unknown",
+            result: "error",
+            provider: "credentials",
+            reason: "credentials_not_configured",
+          });
+          return null;
+        }
         if (
           !secureCompare(username, expected.username) ||
           !secureCompare(password, expected.password)
         ) {
+          await auditLogin({
+            userId: username || "unknown",
+            result: "denied",
+            provider: "credentials",
+            reason: "invalid_credentials",
+          });
           return null;
         }
+        await auditLogin({
+          userId: "local-user",
+          result: "success",
+          provider: "credentials",
+        });
         return {
           id: "local-user",
           name: expected.username,

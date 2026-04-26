@@ -44,10 +44,11 @@ Default retention targets:
 - Chat conversations: retained until the user deletes them or asks for account deletion.
 - Gmail OAuth tokens: retained until the user disconnects Gmail, revokes access, or asks for account deletion.
 - Cached Gmail message data: retained only as part of conversation history or local operational storage; production deployments should expire cached email body content after 30 days unless a shorter period is required.
-- Audit and operational logs: retained for up to 90 days unless needed for an active security investigation.
+- Audit logs: retained for 90 days, then purged unless needed for an active security investigation. Audit entries record security metadata such as action names, timestamps, user IDs, truncated IPs in user-facing views, and redacted details; they must not contain passwords, tokens, OAuth codes, raw email bodies, snippets, or full email subjects.
+- Other operational logs: retained for up to 90 days unless needed for an active security investigation.
 - Local development artifacts under `outputs/`: not production records and must not be committed to git.
 
-Production deployments should automate deletion jobs for cached Gmail content and old operational logs before public traffic is allowed.
+Production deployments should automate deletion jobs for cached Gmail content and old operational logs before public traffic is allowed. Audit retention can be enforced with `python scripts/purge_old_audit.py --days 90`, scheduled via cron or a Kubernetes CronJob.
 
 ## User Rights and Deletion
 
