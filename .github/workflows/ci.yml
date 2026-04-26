@@ -65,13 +65,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install gitleaks
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh \
-            | sh -s -- -b "$PWD" v8.18.0
-
       - name: Secret scan
-        run: ./gitleaks detect --source . --log-opts="--all" --redact --verbose
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.18.0
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   frontend:
     runs-on: ubuntu-latest
