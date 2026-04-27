@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 import re
 from datetime import UTC, datetime
 from email import policy
@@ -14,12 +12,13 @@ from typing import Any
 
 import aioimaplib
 import bleach
+import structlog
 
 from .config import EmailSettings
 from .errors import AuthError, ToolError
 from .schemas import BODY_CHAR_CAP, SNIPPET_CHAR_CAP, AttachmentMeta, EmailMessage, EmailSummary
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 SAFE_TAGS = [
     "a",
     "b",
@@ -71,7 +70,7 @@ def _date(value: str | None) -> datetime:
             parsed = parsedate_to_datetime(value)
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except Exception:
-            logger.warning(json.dumps({"action": "parse_date", "fallback": True}))
+            logger.warning("parse_date", fallback=True)
     return datetime.now(UTC)
 
 
@@ -295,9 +294,7 @@ class IMAPReader:
                     raise AuthError("IMAP authentication failed.")
                 _ensure_ok(await self._client.select(self.settings.imap_mailbox), action="select")
                 self._capabilities = await _load_capabilities(self._client)
-                logger.info(
-                    json.dumps({"action": "imap_connect", "mailbox": self.settings.imap_mailbox})
-                )
+                logger.info("imap_connect", mailbox=self.settings.imap_mailbox)
                 return
             except AuthError:
                 raise
@@ -335,11 +332,7 @@ class IMAPReader:
             summary = _summary_from_headers(uid, parsed, flags, snippet)
             # Header-only fetches cannot authoritatively detect attachments; get_email has the full MIME tree.
             summaries.append(summary.model_copy(update={"has_attachments": False}))
-        logger.info(
-            json.dumps(
-                {"action": "list_inbox", "count": len(summaries), "unread_only": unread_only}
-            )
-        )
+        logger.info("list_inbox", count=len(summaries), unread_only=unread_only)
         return summaries
 
     async def get_email(self, uid: str) -> EmailMessage:
@@ -349,21 +342,17 @@ class IMAPReader:
         )
         message = _extract_message(str(uid), raw, set())
         logger.info(
-            json.dumps(
-                {
-                    "action": "get_email",
-                    "uid": str(uid),
-                    "subject_len": len(message.subject),
-                    "body_len": len(message.body_text),
-                }
-            )
+            "get_email",
+            uid=str(uid),
+            subject_len=len(message.subject),
+            body_len=len(message.body_text),
         )
         return message
 
     async def mark_read(self, uid: str) -> None:
         client = self._require_client()
         _ensure_ok(await client.uid("STORE", str(uid), "+FLAGS", "(\\Seen)"), action="store")
-        logger.info(json.dumps({"action": "mark_read", "uid": str(uid)}))
+        logger.info("mark_read", uid=str(uid))
 
     async def archive(self, uid: str) -> None:
         client = self._require_client()
@@ -386,7 +375,7 @@ class IMAPReader:
             return
         await self._client.logout()
         self._client = None
-        logger.info(json.dumps({"action": "imap_close"}))
+        logger.info("imap_close")
 
     def _require_client(self) -> Any:
         if self._client is None:

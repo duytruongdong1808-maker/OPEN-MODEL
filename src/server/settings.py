@@ -32,7 +32,14 @@ class OpenModelSettings(BaseSettings):
     open_model_ledger_db_path: Path = ROOT_DIR / "outputs" / "app" / "ledger.sqlite3"
     open_model_max_request_bytes: int = Field(default=256 * 1024, ge=1)
     open_model_log_level: str = "INFO"
+    open_model_log_format: Literal["json", "console"] = "console"
     open_model_skip_model_load: bool = False
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_traces_sample_rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    otel_service_name: str = "open-model-backend"
+    sentry_dsn: SecretStr | None = None
+    sentry_environment: str = "development"
+    sentry_traces_sample_rate: float = Field(default=0.1, ge=0.0, le=1.0)
 
     agent_ops_token: SecretStr | None = None
 
@@ -64,6 +71,13 @@ class OpenModelSettings(BaseSettings):
     @field_validator("open_model_ledger_database_url", mode="before")
     @classmethod
     def blank_ledger_database_url_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("otel_exporter_otlp_endpoint", mode="before")
+    @classmethod
+    def blank_otlp_endpoint_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.engine import make_url
 
 from ..utils import ROOT_DIR
+from .observability.tracing import instrument_sqlalchemy_engine
 from .settings import OpenModelSettings, get_open_model_settings
 
 metadata = MetaData()
@@ -200,6 +201,7 @@ def get_engine(database_url: str | None = None) -> AsyncEngine:
     engine = create_async_engine(url, **kwargs)
     if url.startswith("sqlite"):
         event.listen(engine.sync_engine, "connect", _enable_sqlite_foreign_keys)
+    instrument_sqlalchemy_engine(engine.sync_engine)
     _engines[url] = engine
     return engine
 

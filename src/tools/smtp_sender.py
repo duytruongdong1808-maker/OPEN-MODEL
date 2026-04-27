@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
-import logging
 from email.message import EmailMessage as MIMEEmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from typing import Any
 
 import aiosmtplib
+import structlog
 
 from .config import EmailSettings
 from .email_client import redact
@@ -14,7 +13,7 @@ from .errors import AuthError, ToolError
 from .safety import SafetyPipeline
 from .schemas import SendRequest, SendResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SMTPSender:
@@ -46,15 +45,7 @@ class SMTPSender:
 
         await self.safety.record_sent(req)
         message_id = str(message["Message-ID"])
-        logger.info(
-            json.dumps(
-                {
-                    "action": "smtp_send",
-                    "recipients": len(recipients),
-                    "subject_len": len(req.subject),
-                }
-            )
-        )
+        logger.info("smtp_send", recipients=len(recipients), subject_len=len(req.subject))
         return SendResult(status="sent", message_id=message_id)
 
     def _build_mime(self, req: SendRequest) -> MIMEEmailMessage:
@@ -98,7 +89,7 @@ class SMTPSender:
             if self._supports_auth(client):
                 await client.login(self.settings.smtp_user, secret)
             self._client = client
-            logger.info(json.dumps({"action": "smtp_connect", "host": self.settings.smtp_host}))
+            logger.info("smtp_connect", host=self.settings.smtp_host)
         except aiosmtplib.SMTPAuthenticationError as exc:
             raise AuthError(redact(f"SMTP authentication failed: {exc}", [secret])) from exc
         except Exception as exc:
@@ -111,7 +102,7 @@ class SMTPSender:
             await self._client.quit()
         finally:
             self._client = None
-            logger.info(json.dumps({"action": "smtp_close"}))
+            logger.info("smtp_close")
 
     @staticmethod
     def _supports_auth(client: Any) -> bool:

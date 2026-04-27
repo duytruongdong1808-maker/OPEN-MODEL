@@ -17,21 +17,12 @@ from .db import (
     initialize_schema,
     sqlite_url_from_path,
 )
+from .observability.metrics import AUTH_LOGIN_TOTAL, GMAIL_OAUTH_TOTAL
+from .observability.redact import SENSITIVE_KEYS, scrub
 from .storage import utcnow_iso
 
 AuditResult = Literal["success", "denied", "error"]
-SENSITIVE_DETAIL_KEYS = {
-    "password",
-    "token",
-    "secret",
-    "body_text",
-    "body_html",
-    "snippet",
-    "code",
-    "state",
-}
-SENSITIVE_DETAIL_SUBSTRINGS = {"password", "token", "secret"}
-REDACTED = "[REDACTED]"
+SENSITIVE_DETAIL_KEYS = SENSITIVE_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +123,7 @@ class AuditLogger:
                         detail_json=stored_detail,
                     )
                 )
+        _record_audit_metric(action, result)
 
     async def list_for_user_async(
         self,
@@ -184,23 +176,14 @@ def _audit_row_dict(row: Any) -> dict[str, Any]:
 
 
 def _scrub_detail(value: Any) -> Any:
-    if isinstance(value, dict):
-        scrubbed: dict[str, Any] = {}
-        for key, item in value.items():
-            key_text = str(key)
-            lowered = key_text.lower()
-            if lowered in SENSITIVE_DETAIL_KEYS or any(
-                sensitive in lowered for sensitive in SENSITIVE_DETAIL_SUBSTRINGS
-            ):
-                scrubbed[key_text] = REDACTED
-            else:
-                scrubbed[key_text] = _scrub_detail(item)
-        return scrubbed
-    if isinstance(value, list):
-        return [_scrub_detail(item) for item in value]
-    if isinstance(value, tuple):
-        return [_scrub_detail(item) for item in value]
-    return value
+    return scrub(value)
+
+
+def _record_audit_metric(action: str, result: AuditResult) -> None:
+    if action.startswith(("gmail.oauth", "gmail.connect")):
+        GMAIL_OAUTH_TOTAL.labels(action=action, result=result).inc()
+    if action.startswith("auth.login"):
+        AUTH_LOGIN_TOTAL.labels(result=result).inc()
 
 
 def _extract_ip(request: Request | None) -> str | None:
