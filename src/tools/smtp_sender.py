@@ -14,7 +14,6 @@ from .errors import AuthError, ToolError
 from .safety import SafetyPipeline
 from .schemas import SendRequest, SendResult
 
-
 logger = logging.getLogger(__name__)
 
 

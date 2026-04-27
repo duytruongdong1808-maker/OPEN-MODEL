@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import json
+import queue
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Iterator
+
+import httpx
+
+from ...tools.errors import ToolError
+from ...utils import DEFAULT_SYSTEM_PROMPT
+from . import GenerationStream
+
+
+@dataclass
+class VLLMRequestMetrics:
+    first_token_latency_ms: float | None = None
+    total_tokens: int = 0
+    request_duration_ms: float | None = None
+
+
+current_vllm_metrics: contextvars.ContextVar[VLLMRequestMetrics | None] = contextvars.ContextVar(
+    "current_vllm_metrics", default=None
+)
+
+
+_SENTINEL = object()
+
+
+class VLLMChatService:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
+        timeout: float = 120.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.timeout = timeout
+        self._limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+
+    async def check_ready(self) -> bool:
+        try:
+            async with httpx.AsyncClient(
+                limits=self._limits,
+                timeout=httpx.Timeout(self.timeout),
+            ) as client:
+                response = await client.get(f"{self.base_url}/models")
+            return response.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    def stream_reply(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        mode: str = "chat",
+    ) -> GenerationStream:
+        del mode
+        payload = self._build_payload(messages=messages, system_prompt=system_prompt)
+        output: queue.Queue[str | BaseException | object] = queue.Queue()
+        cancel_event = threading.Event()
+        response_holder: dict[str, httpx.Response] = {}
+        loop_holder: dict[str, asyncio.AbstractEventLoop] = {}
+        metrics = VLLMRequestMetrics()
+        current_vllm_metrics.set(metrics)
+
+        async def run_stream() -> None:
+            loop_holder["loop"] = asyncio.get_running_loop()
+            started_at = time.perf_counter()
+            try:
+                async with httpx.AsyncClient(
+                    limits=self._limits,
+                    timeout=httpx.Timeout(self.timeout),
+                ) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                    ) as response:
+                        response_holder["response"] = response
+                        await self._raise_for_status(response)
+                        async for text in self._iter_sse_text(
+                            response, cancel_event, started_at, metrics
+                        ):
+                            output.put(text)
+            except ValueError as exc:
+                output.put(exc)
+            except ToolError as exc:
+                output.put(exc)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                output.put(ToolError(f"vLLM inference request failed: {exc}"))
+            except Exception as exc:  # pragma: no cover - defensive guard for stream internals
+                output.put(ToolError(f"vLLM inference stream failed: {exc}"))
+            finally:
+                metrics.request_duration_ms = (time.perf_counter() - started_at) * 1000
+                output.put(_SENTINEL)
+
+        worker = threading.Thread(target=lambda: asyncio.run(run_stream()), daemon=True)
+        worker.start()
+
+        def cancel() -> None:
+            cancel_event.set()
+            response = response_holder.get("response")
+            loop = loop_holder.get("loop")
+            if response is not None and loop is not None and loop.is_running():
+                asyncio.run_coroutine_threadsafe(response.aclose(), loop)
+
+        def iter_chunks() -> Iterator[str]:
+            try:
+                while True:
+                    item = output.get()
+                    if item is _SENTINEL:
+                        break
+                    if isinstance(item, BaseException):
+                        raise item
+                    yield str(item)
+            finally:
+                if worker.is_alive():
+                    cancel()
+                    worker.join(timeout=0.5)
+
+        return GenerationStream(chunks=iter_chunks(), cancel=cancel)
+
+    def _build_payload(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        system_prompt: str,
+    ) -> dict[str, Any]:
+        chat_messages: list[dict[str, str]] = []
+        stripped_system_prompt = system_prompt.strip()
+        if stripped_system_prompt:
+            chat_messages.append({"role": "system", "content": stripped_system_prompt})
+        chat_messages.extend(
+            {"role": message["role"], "content": message["content"]} for message in messages
+        )
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": chat_messages,
+            "max_tokens": self.max_new_tokens,
+            "stream": True,
+        }
+        if self.temperature > 0:
+            payload["temperature"] = self.temperature
+            payload["top_p"] = self.top_p
+        else:
+            payload["temperature"] = 0
+        return payload
+
+    async def _raise_for_status(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        body = await response.aread()
+        detail = body.decode("utf-8", errors="replace").strip() or response.reason_phrase
+        if 400 <= response.status_code < 500:
+            raise ValueError(f"vLLM rejected the inference request: {detail}")
+        raise ToolError(f"vLLM inference service error ({response.status_code}): {detail}")
+
+    async def _iter_sse_text(
+        self,
+        response: httpx.Response,
+        cancel_event: threading.Event,
+        started_at: float,
+        metrics: VLLMRequestMetrics,
+    ) -> AsyncIterator[str]:
+        saw_usage = False
+        async for line in response.aiter_lines():
+            if cancel_event.is_set():
+                await response.aclose()
+                break
+            stripped = line.strip()
+            if not stripped or stripped.startswith(":") or not stripped.startswith("data:"):
+                continue
+            data = stripped.removeprefix("data:").strip()
+            if data == "[DONE]":
+                break
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            usage = payload.get("usage")
+            if isinstance(usage, dict) and usage.get("completion_tokens") is not None:
+                saw_usage = True
+                metrics.total_tokens = int(usage["completion_tokens"])
+            for choice in payload.get("choices") or []:
+                delta = choice.get("delta") if isinstance(choice, dict) else None
+                content = delta.get("content") if isinstance(delta, dict) else None
+                if content:
+                    if metrics.first_token_latency_ms is None:
+                        metrics.first_token_latency_ms = (time.perf_counter() - started_at) * 1000
+                    if not saw_usage:
+                        metrics.total_tokens += 1
+                    yield str(content)

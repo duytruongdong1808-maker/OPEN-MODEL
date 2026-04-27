@@ -52,7 +52,12 @@ from ..tools.gmail_auth import (
     warn_if_legacy_token_file_exists,
 )
 from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
-from .runtime import LocalModelChatService, SupportsStreamingReply
+from .runtime import (
+    LocalModelChatService,
+    SupportsStreamingReply,
+    VLLMChatService,
+    build_chat_service,
+)
 from .schemas import (
     AssistantDeltaPayload,
     ChatStreamRequest,
@@ -240,24 +245,13 @@ async def audit_agent_tool_call(
         )
 
 
-def resolve_runtime() -> LocalModelChatService:
-    settings = get_open_model_settings()
-    return LocalModelChatService(
-        base_model=settings.open_model_base_model,
-        adapter_path=settings.open_model_adapter_path,
-        model_revision=settings.open_model_model_revision,
-        load_in_4bit=settings.open_model_load_in_4bit,
-        max_new_tokens=settings.open_model_max_new_tokens,
-        temperature=settings.open_model_temperature,
-        top_p=settings.open_model_top_p,
-    )
-
-
-def runtime_ready(runtime: SupportsStreamingReply | None) -> bool:
+async def inference_ready(runtime: SupportsStreamingReply | None) -> bool:
     if runtime is None:
         return False
     if isinstance(runtime, LocalModelChatService):
         return runtime.is_loaded
+    if isinstance(runtime, VLLMChatService):
+        return await runtime.check_ready()
     return True
 
 
@@ -280,7 +274,7 @@ def create_app(
             fastapi_app.state.runtime is None
             and not fastapi_app.state.settings.open_model_skip_model_load
         ):
-            resolved_runtime = resolve_runtime()
+            resolved_runtime = build_chat_service(fastapi_app.state.settings)
             if isinstance(resolved_runtime, LocalModelChatService):
                 resolved_runtime._ensure_loaded()
             fastapi_app.state.runtime = resolved_runtime
@@ -403,7 +397,7 @@ def create_app(
                 "detail": redact_url_in_message(str(exc), request.app.state.store.database_url),
             }
 
-        model_is_ready = runtime_ready(request.app.state.runtime)
+        model_is_ready = await inference_ready(request.app.state.runtime)
         checks["model"] = {"status": "ok" if model_is_ready else "not_ready"}
         ready = ready and model_is_ready
 

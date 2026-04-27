@@ -14,7 +14,6 @@ from .email_client import _collapse_snippet, _sanitize_html
 from .gmail_auth import load_authorized_credentials
 from .schemas import BODY_CHAR_CAP, AttachmentMeta, EmailMessage, EmailSummary
 
-
 SUMMARY_HEADERS = ["From", "To", "Subject", "Date"]
 
 

@@ -6,7 +6,6 @@ from typing import Any, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model
 
-
 ToolCallable = Callable[..., Awaitable[Any]]
 
 

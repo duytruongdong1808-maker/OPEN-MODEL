@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -18,6 +18,10 @@ class OpenModelSettings(BaseSettings):
     open_model_max_new_tokens: int = Field(default=256, ge=1)
     open_model_temperature: float = Field(default=0.2, ge=0)
     open_model_top_p: float = Field(default=0.9, ge=0, le=1)
+    open_model_inference_backend: Literal["local", "vllm"] = "local"
+    open_model_vllm_url: str = "http://inference:8001/v1"
+    open_model_vllm_model: str = "adapter"
+    open_model_vllm_timeout_s: float = Field(default=120.0, gt=0)
     open_model_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
