@@ -40,6 +40,7 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 COPY requirements-backend.txt .
 RUN pip install --no-index --find-links=/wheels -r requirements-backend.txt \
+    && pip uninstall -y setuptools wheel \
     && rm -rf /wheels requirements-backend.txt
 
 COPY --chown=app:app src ./src
