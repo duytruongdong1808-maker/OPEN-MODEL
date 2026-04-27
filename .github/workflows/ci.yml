@@ -176,6 +176,8 @@ jobs:
 
       - name: Create integration environment
         run: |
+          mkdir -p secrets
+          printf '%s\n' 'ci-postgres-password' > secrets/postgres_password
           cat > .env <<'EOF'
           AGENT_OPS_TOKEN=ci-agent-ops-token
           AUTH_SECRET=ci-auth-secret-at-least-32-bytes-long
@@ -186,7 +188,7 @@ jobs:
           EOF
 
       - name: Start compose stack
-        run: docker compose up -d backend web
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d backend web
 
       - name: Wait for web
         run: |
@@ -205,7 +207,7 @@ jobs:
           until curl -fsS http://localhost:3000/api/backend/health/live; do
             if [ "$SECONDS" -ge "$deadline" ]; then
               echo "Timed out waiting for backend live endpoint through web proxy."
-              docker compose ps
+              docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
               exit 1
             fi
             sleep 3
@@ -226,7 +228,7 @@ jobs:
 
       - name: Capture compose logs on failure
         if: failure()
-        run: docker compose logs backend web > compose-logs.txt
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml logs backend web > compose-logs.txt
 
       - name: Upload compose logs on failure
         if: failure()
@@ -238,7 +240,7 @@ jobs:
 
       - name: Stop compose stack
         if: always()
-        run: docker compose down -v
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
 
       # Optional GPU smoke on a self-hosted NVIDIA runner:
       # - run: bash scripts/smoke_vllm.sh
