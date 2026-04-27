@@ -235,3 +235,8 @@ jobs:
       - name: Stop compose stack
         if: always()
         run: docker compose down -v
+
+      # Optional GPU smoke on a self-hosted NVIDIA runner:
+      # - run: bash scripts/smoke_vllm.sh
+      #   env:
+      #     OPEN_MODEL_INFERENCE_BACKEND: vllm
