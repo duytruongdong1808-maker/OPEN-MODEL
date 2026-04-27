@@ -8,3 +8,4 @@ aiosmtpd>=1.4
 pytest-asyncio>=0.23
 coverage>=7.0
 pre-commit>=4.0.0
+testcontainers-postgres>=0.0.1rc1

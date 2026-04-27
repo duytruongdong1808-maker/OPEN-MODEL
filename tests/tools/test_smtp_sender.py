@@ -292,6 +292,7 @@ async def test_context_manager_quits_smtp(monkeypatch, smtp_settings, safety):
 async def test_ledger_tables_and_indexes_exist(ledger_db: SendLedger):
     import sqlite3
 
+    await ledger_db.initialize()
     with sqlite3.connect(ledger_db.db_path) as connection:
         tables = {
             row[0]

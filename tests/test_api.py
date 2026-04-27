@@ -476,14 +476,14 @@ def test_conversations_require_bearer_token_by_default(tmp_path: Path, monkeypat
 def test_delete_conversation_requires_bearer_token_by_default(tmp_path: Path, monkeypatch) -> None:
     configure_tools_env(monkeypatch)
     store = ConversationStore(tmp_path / "chat.sqlite3")
-    conversation = store.create_conversation(DEFAULT_USER_ID)
+    conversation = asyncio.run(store.create_conversation(DEFAULT_USER_ID))
     app = create_app(store=store, runtime=FakeChatRuntime())
     client = TestClient(app)
 
     response = client.delete(f"/conversations/{conversation.id}")
 
     assert response.status_code == 401
-    assert store.conversation_exists(conversation.id, DEFAULT_USER_ID)
+    assert asyncio.run(store.conversation_exists(conversation.id, DEFAULT_USER_ID))
 
 
 def test_tools_inbox_endpoint_calls_email_tool(tmp_path: Path, monkeypatch) -> None:

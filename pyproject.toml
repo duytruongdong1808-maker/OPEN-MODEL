@@ -4,6 +4,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "integration: tests that require external services or credentials",
+    "postgres: tests that require a PostgreSQL service",
 ]
 
 [tool.ruff]

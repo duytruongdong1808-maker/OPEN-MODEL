@@ -16,8 +16,16 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from .audit import AuditLogger, AuditResult, truncate_ip
+from .db import (
+    default_database_url,
+    default_ledger_database_url,
+    dispose_engine,
+    get_session,
+    redact_url_in_message,
+)
 from ..agent import (
     READ_ONLY_EMAIL_PROTOCOL,
     AgentLoop,
@@ -265,6 +273,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
+        await fastapi_app.state.store.initialize()
+        await fastapi_app.state.audit.initialize()
+        await fastapi_app.state.ledger.initialize()
         if (
             fastapi_app.state.runtime is None
             and not fastapi_app.state.settings.open_model_skip_model_load
@@ -273,7 +284,10 @@ def create_app(
             if isinstance(resolved_runtime, LocalModelChatService):
                 resolved_runtime._ensure_loaded()
             fastapi_app.state.runtime = resolved_runtime
-        yield
+        try:
+            yield
+        finally:
+            await dispose_engine()
 
     app = FastAPI(title="Open Model Chat API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
@@ -285,10 +299,20 @@ def create_app(
     )
 
     app.state.settings = settings
-    app.state.store = store or ConversationStore(settings.open_model_db_path)
+    app.state.store = store or ConversationStore(
+        settings.open_model_db_path,
+        database_url=settings.open_model_database_url or default_database_url(settings),
+    )
     app.state.runtime = runtime
-    app.state.ledger = SendLedger(settings.open_model_ledger_db_path)
-    app.state.audit = AuditLogger(settings.open_model_db_path)
+    app.state.ledger = SendLedger(
+        settings.open_model_ledger_db_path,
+        database_url=settings.open_model_ledger_database_url
+        or default_ledger_database_url(settings),
+    )
+    app.state.audit = AuditLogger(
+        settings.open_model_db_path,
+        database_url=settings.open_model_database_url or default_database_url(settings),
+    )
 
     @app.middleware("http")
     async def reject_large_requests(request: Request, call_next):
@@ -329,14 +353,14 @@ def create_app(
         response_model=list[AuditEventResponse],
         dependencies=chat_dependencies,
     )
-    def audit_me_endpoint(
+    async def audit_me_endpoint(
         action: str | None = Query(default=None),
         since: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=200),
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> list[AuditEventResponse]:
-        rows = audit.list_for_user(user_id, action=action, since=since, limit=limit)
+        rows = await audit.list_for_user_async(user_id, action=action, since=since, limit=limit)
         events: list[AuditEventResponse] = []
         for row in rows:
             detail = json.loads(row.detail_json) if row.detail_json else None
@@ -364,16 +388,20 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/health/ready")
-    def ready_check(request: Request) -> JSONResponse:
+    async def ready_check(request: Request) -> JSONResponse:
         checks: dict[str, dict[str, object]] = {}
         ready = True
 
         try:
-            request.app.state.store.ping()
+            async with get_session(request.app.state.store.database_url) as session:
+                await session.execute(select(1))
             checks["db"] = {"status": "ok"}
         except Exception as exc:
             ready = False
-            checks["db"] = {"status": "error", "detail": str(exc)}
+            checks["db"] = {
+                "status": "error",
+                "detail": redact_url_in_message(str(exc), request.app.state.store.database_url),
+            }
 
         model_is_ready = runtime_ready(request.app.state.runtime)
         checks["model"] = {"status": "ok" if model_is_ready else "not_ready"}
@@ -390,17 +418,17 @@ def create_app(
         )
 
     @app.get("/auth/gmail/login", dependencies=[Depends(verify_tools_token)])
-    def gmail_login_endpoint(
+    async def gmail_login_endpoint(
         request: Request,
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> RedirectResponse:
         try:
             redirect_url = start_gmail_oauth_flow(user_id)
-            audit.log(user_id, "gmail.connect.start", request=request)
+            await audit.log_async(user_id, "gmail.connect.start", request=request)
             return RedirectResponse(redirect_url, status_code=302)
         except Exception as exc:
-            audit.log(
+            await audit.log_async(
                 user_id,
                 "gmail.connect.failure",
                 result="error",
@@ -410,7 +438,7 @@ def create_app(
             raise tool_http_error(exc) from exc
 
     @app.get("/auth/gmail/callback", dependencies=[Depends(verify_tools_token)])
-    def gmail_callback_endpoint(
+    async def gmail_callback_endpoint(
         request: Request,
         code: str | None = Query(default=None),
         state: str | None = Query(default=None),
@@ -419,7 +447,7 @@ def create_app(
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> RedirectResponse:
         if error:
-            audit.log(
+            await audit.log_async(
                 user_id,
                 "gmail.connect.failure",
                 result="denied",
@@ -428,7 +456,7 @@ def create_app(
             )
             raise HTTPException(status_code=400, detail=f"Gmail OAuth denied: {error}")
         if not code:
-            audit.log(
+            await audit.log_async(
                 user_id,
                 "gmail.connect.failure",
                 result="denied",
@@ -438,9 +466,9 @@ def create_app(
             raise HTTPException(status_code=400, detail="Missing Gmail OAuth authorization code.")
         try:
             connected_user_id = complete_gmail_oauth_flow(code=code, state=state or "")
-            audit.log(connected_user_id, "gmail.connect.success", request=request)
+            await audit.log_async(connected_user_id, "gmail.connect.success", request=request)
         except Exception as exc:
-            audit.log(
+            await audit.log_async(
                 user_id,
                 "gmail.connect.failure",
                 result="error",
@@ -462,13 +490,13 @@ def create_app(
         }
 
     @app.post("/auth/gmail/logout", dependencies=[Depends(verify_tools_token)])
-    def gmail_logout_endpoint(
+    async def gmail_logout_endpoint(
         request: Request,
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> dict[str, object]:
         status_payload = disconnect_gmail(user_id)
-        audit.log(user_id, "gmail.disconnect", request=request)
+        await audit.log_async(user_id, "gmail.disconnect", request=request)
         return {
             "connected": status_payload.connected,
             "email": status_payload.email,
@@ -476,7 +504,7 @@ def create_app(
         }
 
     @app.post("/auth/gmail/session-token", dependencies=[Depends(verify_tools_token)])
-    def gmail_session_token_endpoint(
+    async def gmail_session_token_endpoint(
         payload: GmailSessionTokenRequest,
         request: Request,
         audit: AuditLogger = Depends(get_audit_logger),
@@ -495,14 +523,14 @@ def create_app(
                     client_secret=payload.client_secret,
                 )
             )
-            audit.log(
+            await audit.log_async(
                 payload.user_id,
                 "gmail.connect.success",
                 detail={"email": payload.email, "scopes": status_payload.scopes or []},
                 request=request,
             )
         except Exception as exc:
-            audit.log(
+            await audit.log_async(
                 payload.user_id,
                 "gmail.connect.failure",
                 result="error",
@@ -697,21 +725,23 @@ def create_app(
     @app.get(
         "/conversations", response_model=list[ConversationSummary], dependencies=chat_dependencies
     )
-    def list_conversations_endpoint(
+    async def list_conversations_endpoint(
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
     ) -> list[ConversationSummary]:
-        return conversation_store.list_conversations(user_id)
+        return await conversation_store.list_conversations(user_id)
 
     @app.post("/conversations", response_model=ConversationSummary, dependencies=chat_dependencies)
-    def create_conversation_endpoint(
+    async def create_conversation_endpoint(
         request: Request,
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> ConversationSummary:
-        conversation = conversation_store.create_conversation(user_id)
-        audit.log(user_id, "conversation.create", target=conversation.id, request=request)
+        conversation = await conversation_store.create_conversation(user_id)
+        await audit.log_async(
+            user_id, "conversation.create", target=conversation.id, request=request
+        )
         return conversation
 
     @app.get(
@@ -719,13 +749,13 @@ def create_app(
         response_model=ConversationDetail,
         dependencies=chat_dependencies,
     )
-    def get_conversation_endpoint(
+    async def get_conversation_endpoint(
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
     ) -> ConversationDetail:
         try:
-            return conversation_store.get_conversation(conversation_id, user_id)
+            return await conversation_store.get_conversation(conversation_id, user_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Conversation not found.") from exc
 
@@ -734,15 +764,15 @@ def create_app(
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=chat_dependencies,
     )
-    def delete_conversation_endpoint(
+    async def delete_conversation_endpoint(
         request: Request,
         conversation_id: str,
         conversation_store: ConversationStore = Depends(get_store),
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> Response:
-        if not conversation_store.delete_conversation(conversation_id, user_id):
-            audit.log(
+        if not await conversation_store.delete_conversation(conversation_id, user_id):
+            await audit.log_async(
                 user_id,
                 "conversation.delete",
                 target=conversation_id,
@@ -750,7 +780,9 @@ def create_app(
                 request=request,
             )
             raise HTTPException(status_code=404, detail="Conversation not found.")
-        audit.log(user_id, "conversation.delete", target=conversation_id, request=request)
+        await audit.log_async(
+            user_id, "conversation.delete", target=conversation_id, request=request
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/conversations/{conversation_id}/messages/stream", dependencies=chat_dependencies)
@@ -763,14 +795,14 @@ def create_app(
         user_id: str = Depends(get_current_user_id),
         audit: AuditLogger = Depends(get_audit_logger),
     ) -> StreamingResponse:
-        if not conversation_store.conversation_exists(conversation_id, user_id):
+        if not await conversation_store.conversation_exists(conversation_id, user_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
-        user_message = conversation_store.save_user_message(
+        user_message = await conversation_store.save_user_message(
             conversation_id, user_id, payload.message
         )
-        conversation = conversation_store.get_conversation(conversation_id, user_id)
-        summary = conversation_store.get_conversation_summary(conversation_id, user_id)
+        conversation = await conversation_store.get_conversation(conversation_id, user_id)
+        summary = await conversation_store.get_conversation_summary(conversation_id, user_id)
         await audit.log_async(
             user_id,
             "conversation.stream",
@@ -832,13 +864,13 @@ def create_app(
                     )
                     return
 
-                assistant_message = conversation_store.save_assistant_message(
+                assistant_message = await conversation_store.save_assistant_message(
                     conversation_id,
                     user_id,
                     result.answer,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(
+                updated_summary = await conversation_store.get_conversation_summary(
                     conversation_id, user_id
                 )
                 yield sse_event(
@@ -924,13 +956,13 @@ def create_app(
                 if not assistant_text:
                     raise RuntimeError("The model returned an empty response.")
 
-                assistant_message = conversation_store.save_assistant_message(
+                assistant_message = await conversation_store.save_assistant_message(
                     conversation_id,
                     user_id,
                     assistant_text,
                     sources=[],
                 )
-                updated_summary = conversation_store.get_conversation_summary(
+                updated_summary = await conversation_store.get_conversation_summary(
                     conversation_id, user_id
                 )
 

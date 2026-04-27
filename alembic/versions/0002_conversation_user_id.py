@@ -20,20 +20,16 @@ def upgrade() -> None:
     if "user_id" not in _conversation_columns():
         op.add_column(
             "conversations",
-            sa.Column(
-                "user_id",
-                sa.Text(),
-                nullable=False,
-                server_default="legacy",
-            ),
+            sa.Column("user_id", sa.Text(), nullable=False, server_default="legacy"),
         )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversations_user_updated "
-        "ON conversations(user_id, updated_at DESC)"
+    op.create_index(
+        "idx_conversations_user_updated",
+        "conversations",
+        ["user_id", "updated_at"],
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS idx_conversations_user_updated")
+    op.drop_index("idx_conversations_user_updated", table_name="conversations")
     if "user_id" in _conversation_columns():
         op.drop_column("conversations", "user_id")

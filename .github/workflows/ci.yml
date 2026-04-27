@@ -15,6 +15,16 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 5
+        ports:
+          - "5432:5432"
     permissions:
       contents: read
       actions: write
@@ -44,6 +54,16 @@ jobs:
 
       - name: Pytest with coverage
         run: pytest -q --cov=src --cov-report=term --cov-report=xml --cov-fail-under=70
+
+      - name: Validate Postgres migrations
+        run: alembic upgrade head
+        env:
+          OPEN_MODEL_DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+
+      - name: Run Postgres tests
+        run: pytest -q -m postgres
+        env:
+          OPEN_MODEL_DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
 
       - name: Upload coverage XML
         uses: actions/upload-artifact@v4
@@ -117,6 +137,12 @@ jobs:
 
       - name: Build web image
         run: docker build -t open-model-web:ci -f web/Dockerfile ./web
+
+      - name: Verify image hardening
+        run: bash scripts/verify_images.sh
+        env:
+          BACKEND_IMAGE: open-model-backend:ci
+          WEB_IMAGE: open-model-web:ci
 
       - name: Trivy backend image scan
         uses: aquasecurity/trivy-action@master

@@ -1,21 +1,30 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import sqlite3
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .schemas import ChatMessage, ConversationDetail, ConversationSummary, SourceItem
+from sqlalchemy import delete, insert, select, update
 
+from .db import (
+    conversations,
+    default_database_url,
+    get_session,
+    initialize_schema,
+    message_sources,
+    messages,
+    sqlite_url_from_path,
+)
+from .schemas import ChatMessage, ConversationDetail, ConversationSummary, SourceItem
 
 DEFAULT_CONVERSATION_TITLE = "New chat"
 TITLE_MAX_LENGTH = 56
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def derive_conversation_title(message: str) -> str:
@@ -24,209 +33,173 @@ def derive_conversation_title(message: str) -> str:
         return DEFAULT_CONVERSATION_TITLE
     if len(normalized) <= TITLE_MAX_LENGTH:
         return normalized
-    return normalized[: TITLE_MAX_LENGTH - 1].rstrip() + "…"
+    return normalized[: TITLE_MAX_LENGTH - 1].rstrip() + "\u2026"
 
 
 @dataclass
 class ConversationStore:
-    db_path: Path
+    db_path: Path | None = None
+    database_url: str | None = None
+    _initialized: bool = field(default=False, init=False)
+    _initialize_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self) -> None:
-        self.db_path = Path(self.db_path).expanduser().resolve()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
-
-    def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL DEFAULT 'legacy',
-                    title TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS messages (
-                    id TEXT PRIMARY KEY,
-                    conversation_id TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-                    content TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS message_sources (
-                    id TEXT PRIMARY KEY,
-                    message_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    published_at TEXT,
-                    url TEXT NOT NULL,
-                    position INTEGER NOT NULL,
-                    FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS gmail_credentials (
-                    user_id TEXT PRIMARY KEY,
-                    encrypted_token BLOB NOT NULL,
-                    email TEXT,
-                    scopes TEXT,
-                    connected_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS audit_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    target TEXT,
-                    ip TEXT,
-                    user_agent TEXT,
-                    result TEXT NOT NULL CHECK(result IN ('success','denied','error')),
-                    detail_json TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_message_sources_message_id ON message_sources(message_id, position);
-                CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts ON audit_log(user_id, ts DESC);
-                CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts ON audit_log(action, ts DESC);
-                """
+        if self.database_url is None:
+            self.database_url = (
+                sqlite_url_from_path(self.db_path)
+                if self.db_path is not None
+                else default_database_url()
             )
-            conversation_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(conversations)")
-            }
-            if "user_id" not in conversation_columns:
-                connection.execute(
-                    "ALTER TABLE conversations ADD COLUMN user_id TEXT NOT NULL DEFAULT 'legacy'"
-                )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_conversations_user_updated "
-                "ON conversations(user_id, updated_at DESC)"
-            )
+        if self.db_path is not None:
+            self.db_path = Path(self.db_path).expanduser().resolve()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def create_conversation(
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if not self._initialized:
+                await initialize_schema(self.database_url)
+                self._initialized = True
+
+    async def _ensure_initialized(self) -> None:
+        await self.initialize()
+
+    async def create_conversation(
         self, user_id: str, title: str = DEFAULT_CONVERSATION_TITLE
     ) -> ConversationSummary:
+        await self._ensure_initialized()
         conversation_id = str(uuid4())
         timestamp = utcnow_iso()
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO conversations (id, user_id, title, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (conversation_id, user_id, title, timestamp, timestamp),
-            )
-        return self.get_conversation_summary(conversation_id, user_id)
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                await session.execute(
+                    insert(conversations).values(
+                        id=conversation_id,
+                        user_id=user_id,
+                        title=title,
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+        return await self.get_conversation_summary(conversation_id, user_id)
 
-    def conversation_exists(self, conversation_id: str, user_id: str) -> bool:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT 1 FROM conversations WHERE id = ? AND user_id = ?",
-                (conversation_id, user_id),
-            ).fetchone()
+    async def conversation_exists(self, conversation_id: str, user_id: str) -> bool:
+        await self._ensure_initialized()
+        async with get_session(self.database_url) as session:
+            row = (
+                await session.execute(
+                    select(conversations.c.id).where(
+                        conversations.c.id == conversation_id,
+                        conversations.c.user_id == user_id,
+                    )
+                )
+            ).first()
         return row is not None
 
-    def ping(self) -> None:
-        with self._connect() as connection:
-            connection.execute("SELECT 1").fetchone()
+    async def ping(self) -> None:
+        await self._ensure_initialized()
+        async with get_session(self.database_url) as session:
+            await session.execute(select(1))
 
-    def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM conversations WHERE id = ? AND user_id = ?",
-                (conversation_id, user_id),
+    async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
+        await self._ensure_initialized()
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                result = await session.execute(
+                    delete(conversations).where(
+                        conversations.c.id == conversation_id,
+                        conversations.c.user_id == user_id,
+                    )
+                )
+        return (result.rowcount or 0) > 0
+
+    async def list_conversations(self, user_id: str) -> list[ConversationSummary]:
+        await self._ensure_initialized()
+        last_message_preview = (
+            select(messages.c.content)
+            .where(messages.c.conversation_id == conversations.c.id)
+            .order_by(messages.c.created_at.desc(), messages.c.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                conversations.c.id,
+                conversations.c.title,
+                conversations.c.created_at,
+                conversations.c.updated_at,
+                last_message_preview.label("last_message_preview"),
             )
-        return cursor.rowcount > 0
-
-    def list_conversations(self, user_id: str) -> list[ConversationSummary]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    c.id,
-                    c.title,
-                    c.created_at,
-                    c.updated_at,
-                    (
-                        SELECT m.content
-                        FROM messages AS m
-                        WHERE m.conversation_id = c.id
-                        ORDER BY m.rowid DESC
-                        LIMIT 1
-                    ) AS last_message_preview
-                FROM conversations AS c
-                WHERE c.user_id = ?
-                ORDER BY c.updated_at DESC, c.created_at DESC
-                """,
-                (user_id,),
-            ).fetchall()
+            .where(conversations.c.user_id == user_id)
+            .order_by(conversations.c.updated_at.desc(), conversations.c.created_at.desc())
+        )
+        async with get_session(self.database_url) as session:
+            rows = (await session.execute(stmt)).mappings().all()
         return [ConversationSummary(**dict(row)) for row in rows]
 
-    def get_conversation_summary(self, conversation_id: str, user_id: str) -> ConversationSummary:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT
-                    c.id,
-                    c.title,
-                    c.created_at,
-                    c.updated_at,
-                    (
-                        SELECT m.content
-                        FROM messages AS m
-                        WHERE m.conversation_id = c.id
-                        ORDER BY m.rowid DESC
-                        LIMIT 1
-                    ) AS last_message_preview
-                FROM conversations AS c
-                WHERE c.id = ? AND c.user_id = ?
-                """,
-                (conversation_id, user_id),
-            ).fetchone()
+    async def get_conversation_summary(
+        self, conversation_id: str, user_id: str
+    ) -> ConversationSummary:
+        await self._ensure_initialized()
+        last_message_preview = (
+            select(messages.c.content)
+            .where(messages.c.conversation_id == conversations.c.id)
+            .order_by(messages.c.created_at.desc(), messages.c.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                conversations.c.id,
+                conversations.c.title,
+                conversations.c.created_at,
+                conversations.c.updated_at,
+                last_message_preview.label("last_message_preview"),
+            )
+            .where(conversations.c.id == conversation_id, conversations.c.user_id == user_id)
+            .limit(1)
+        )
+        async with get_session(self.database_url) as session:
+            row = (await session.execute(stmt)).mappings().first()
         if row is None:
             raise KeyError(conversation_id)
         return ConversationSummary(**dict(row))
 
-    def get_conversation(self, conversation_id: str, user_id: str) -> ConversationDetail:
-        summary = self.get_conversation_summary(conversation_id, user_id)
-        with self._connect() as connection:
-            message_rows = connection.execute(
-                """
-                SELECT m.id, m.role, m.content, m.created_at
-                FROM messages AS m
-                INNER JOIN conversations AS c ON c.id = m.conversation_id
-                WHERE m.conversation_id = ? AND c.user_id = ?
-                ORDER BY m.rowid ASC
-                """,
-                (conversation_id, user_id),
-            ).fetchall()
-            source_rows = connection.execute(
-                """
-                SELECT
-                    ms.message_id,
-                    ms.title,
-                    ms.source,
-                    ms.published_at,
-                    ms.url
-                FROM message_sources AS ms
-                INNER JOIN messages AS m ON m.id = ms.message_id
-                INNER JOIN conversations AS c ON c.id = m.conversation_id
-                WHERE m.conversation_id = ? AND c.user_id = ?
-                ORDER BY ms.position ASC, ms.id ASC
-                """,
-                (conversation_id, user_id),
-            ).fetchall()
+    async def get_conversation(self, conversation_id: str, user_id: str) -> ConversationDetail:
+        summary = await self.get_conversation_summary(conversation_id, user_id)
+        await self._ensure_initialized()
+        message_stmt = (
+            select(messages.c.id, messages.c.role, messages.c.content, messages.c.created_at)
+            .select_from(
+                messages.join(conversations, conversations.c.id == messages.c.conversation_id)
+            )
+            .where(
+                messages.c.conversation_id == conversation_id, conversations.c.user_id == user_id
+            )
+            .order_by(messages.c.created_at.asc(), messages.c.id.asc())
+        )
+        source_stmt = (
+            select(
+                message_sources.c.message_id,
+                message_sources.c.title,
+                message_sources.c.source,
+                message_sources.c.published_at,
+                message_sources.c.url,
+            )
+            .select_from(
+                message_sources.join(messages, messages.c.id == message_sources.c.message_id).join(
+                    conversations, conversations.c.id == messages.c.conversation_id
+                )
+            )
+            .where(
+                messages.c.conversation_id == conversation_id, conversations.c.user_id == user_id
+            )
+            .order_by(message_sources.c.position.asc(), message_sources.c.id.asc())
+        )
+        async with get_session(self.database_url) as session:
+            message_rows = (await session.execute(message_stmt)).mappings().all()
+            source_rows = (await session.execute(source_stmt)).mappings().all()
 
         sources_by_message: dict[str, list[SourceItem]] = {}
         for row in source_rows:
@@ -238,7 +211,7 @@ class ConversationStore:
             )
             sources_by_message.setdefault(row["message_id"], []).append(source)
 
-        messages = [
+        chat_messages = [
             ChatMessage(
                 id=row["id"],
                 role=row["role"],
@@ -248,25 +221,27 @@ class ConversationStore:
             )
             for row in message_rows
         ]
-        return ConversationDetail(**summary.model_dump(), messages=messages)
+        return ConversationDetail(**summary.model_dump(), messages=chat_messages)
 
-    def save_user_message(self, conversation_id: str, user_id: str, content: str) -> ChatMessage:
-        return self._save_message(
+    async def save_user_message(
+        self, conversation_id: str, user_id: str, content: str
+    ) -> ChatMessage:
+        return await self._save_message(
             conversation_id, user_id, role="user", content=content, sources=[]
         )
 
-    def save_assistant_message(
+    async def save_assistant_message(
         self,
         conversation_id: str,
         user_id: str,
         content: str,
         sources: list[SourceItem],
     ) -> ChatMessage:
-        return self._save_message(
+        return await self._save_message(
             conversation_id, user_id, role="assistant", content=content, sources=sources
         )
 
-    def _save_message(
+    async def _save_message(
         self,
         conversation_id: str,
         user_id: str,
@@ -275,61 +250,68 @@ class ConversationStore:
         content: str,
         sources: list[SourceItem],
     ) -> ChatMessage:
+        await self._ensure_initialized()
         message_id = str(uuid4())
         timestamp = utcnow_iso()
         normalized_content = content.strip()
         if not normalized_content:
             raise ValueError("Message content cannot be empty.")
 
-        with self._connect() as connection:
-            conversation = connection.execute(
-                "SELECT title FROM conversations WHERE id = ? AND user_id = ?",
-                (conversation_id, user_id),
-            ).fetchone()
-            if conversation is None:
-                raise KeyError(conversation_id)
-
-            connection.execute(
-                """
-                INSERT INTO messages (id, conversation_id, role, content, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (message_id, conversation_id, role, normalized_content, timestamp),
-            )
-            connection.execute(
-                "UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?",
-                (timestamp, conversation_id, user_id),
-            )
-            if role == "user" and conversation["title"] == DEFAULT_CONVERSATION_TITLE:
-                connection.execute(
-                    "UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
-                    (derive_conversation_title(normalized_content), conversation_id, user_id),
-                )
-
-            for index, source in enumerate(sources):
-                connection.execute(
-                    """
-                    INSERT INTO message_sources (
-                        id,
-                        message_id,
-                        title,
-                        source,
-                        published_at,
-                        url,
-                        position
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                conversation = (
                     (
-                        str(uuid4()),
-                        message_id,
-                        source.title,
-                        source.source,
-                        source.published_at,
-                        source.url,
-                        index,
-                    ),
+                        await session.execute(
+                            select(conversations.c.title).where(
+                                conversations.c.id == conversation_id,
+                                conversations.c.user_id == user_id,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
                 )
+                if conversation is None:
+                    raise KeyError(conversation_id)
+
+                await session.execute(
+                    insert(messages).values(
+                        id=message_id,
+                        conversation_id=conversation_id,
+                        role=role,
+                        content=normalized_content,
+                        created_at=timestamp,
+                    )
+                )
+                await session.execute(
+                    update(conversations)
+                    .where(
+                        conversations.c.id == conversation_id, conversations.c.user_id == user_id
+                    )
+                    .values(updated_at=timestamp)
+                )
+                if role == "user" and conversation["title"] == DEFAULT_CONVERSATION_TITLE:
+                    await session.execute(
+                        update(conversations)
+                        .where(
+                            conversations.c.id == conversation_id,
+                            conversations.c.user_id == user_id,
+                        )
+                        .values(title=derive_conversation_title(normalized_content))
+                    )
+
+                for index, source in enumerate(sources):
+                    await session.execute(
+                        insert(message_sources).values(
+                            id=str(uuid4()),
+                            message_id=message_id,
+                            title=source.title,
+                            source=source.source,
+                            published_at=source.published_at,
+                            url=source.url,
+                            position=index,
+                        )
+                    )
 
         return ChatMessage(
             id=message_id,

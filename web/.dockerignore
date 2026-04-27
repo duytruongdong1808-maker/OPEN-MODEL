@@ -1,0 +1,17 @@
+node_modules
+.next
+.codex-logs
+coverage
+.env*
+*.log
+.git
+.github
+.vscode
+.DS_Store
+*.tsbuildinfo
+tests
+__tests__
+*.test.ts
+*.test.tsx
+vitest.config.ts
+vitest.setup.ts

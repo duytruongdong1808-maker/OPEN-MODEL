@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "0004_audit_log"
 down_revision = "0003_gmail_credentials"
@@ -11,26 +12,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        """
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            action TEXT NOT NULL,
-            target TEXT,
-            ip TEXT,
-            user_agent TEXT,
-            result TEXT NOT NULL CHECK(result IN ('success','denied','error')),
-            detail_json TEXT
-        )
-        """
+    op.create_table(
+        "audit_log",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("ts", sa.Text(), nullable=False),
+        sa.Column("user_id", sa.Text(), nullable=False),
+        sa.Column("action", sa.Text(), nullable=False),
+        sa.Column("target", sa.Text()),
+        sa.Column("ip", sa.Text()),
+        sa.Column("user_agent", sa.Text()),
+        sa.Column("result", sa.Text(), nullable=False),
+        sa.Column("detail_json", sa.Text()),
+        sa.CheckConstraint("result IN ('success','denied','error')", name="ck_audit_log_result"),
     )
-    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts ON audit_log(user_id, ts DESC)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts ON audit_log(action, ts DESC)")
+    op.create_index("idx_audit_log_user_ts", "audit_log", ["user_id", "ts"])
+    op.create_index("idx_audit_log_action_ts", "audit_log", ["action", "ts"])
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS idx_audit_log_action_ts")
-    op.execute("DROP INDEX IF EXISTS idx_audit_log_user_ts")
-    op.execute("DROP TABLE IF EXISTS audit_log")
+    op.drop_index("idx_audit_log_action_ts", table_name="audit_log")
+    op.drop_index("idx_audit_log_user_ts", table_name="audit_log")
+    op.drop_table("audit_log")

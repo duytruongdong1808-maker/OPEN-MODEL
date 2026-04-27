@@ -3,15 +3,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Request
+from sqlalchemy import insert, select
 
+from .db import (
+    audit_log,
+    default_database_url,
+    get_session,
+    initialize_schema,
+    sqlite_url_from_path,
+)
 from .storage import utcnow_iso
-
 
 AuditResult = Literal["success", "denied", "error"]
 SENSITIVE_DETAIL_KEYS = {
@@ -43,60 +49,33 @@ class AuditRow:
     detail_json: str | None
 
 
+@dataclass
 class AuditLogger:
-    """Append-only audit log writer.
+    """Append-only audit log writer."""
 
-    The database does not enforce immutability, but application code must treat audit rows as
-    append-only: insert new rows, never update or delete them except via the explicit retention
-    purge script.
-    """
+    db_path: Path | None = None
+    database_url: str | None = None
+    _initialized: bool = field(default=False, init=False)
+    _initialize_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
-    def __init__(self, db_path: Path):
-        self.db_path = Path(db_path).expanduser().resolve()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
-        connection.row_factory = sqlite3.Row
-        return connection
-
-    def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS audit_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    target TEXT,
-                    ip TEXT,
-                    user_agent TEXT,
-                    result TEXT NOT NULL CHECK(result IN ('success','denied','error')),
-                    detail_json TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts
-                    ON audit_log(user_id, ts DESC);
-                CREATE INDEX IF NOT EXISTS idx_audit_log_action_ts
-                    ON audit_log(action, ts DESC);
-                """
+    def __post_init__(self) -> None:
+        if self.database_url is None:
+            self.database_url = (
+                sqlite_url_from_path(self.db_path)
+                if self.db_path is not None
+                else default_database_url()
             )
+        if self.db_path is not None:
+            self.db_path = Path(self.db_path).expanduser().resolve()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def log(
-        self,
-        user_id: str,
-        action: str,
-        target: str | None = None,
-        result: AuditResult = "success",
-        detail: dict[str, Any] | None = None,
-        request: Request | None = None,
-    ) -> None:
-        try:
-            self._log(user_id, action, target, result, detail, request)
-        except Exception as exc:
-            logger.warning("Audit logging failed for action %s: %s", action, exc)
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if not self._initialized:
+                await initialize_schema(self.database_url)
+                self._initialized = True
 
     async def log_async(
         self,
@@ -107,9 +86,23 @@ class AuditLogger:
         detail: dict[str, Any] | None = None,
         request: Request | None = None,
     ) -> None:
-        await asyncio.to_thread(self.log, user_id, action, target, result, detail, request)
+        try:
+            await self._log(user_id, action, target, result, detail, request)
+        except Exception as exc:
+            logger.warning("Audit logging failed for action %s: %s", action, exc)
 
-    def _log(
+    def log(
+        self,
+        user_id: str,
+        action: str,
+        target: str | None = None,
+        result: AuditResult = "success",
+        detail: dict[str, Any] | None = None,
+        request: Request | None = None,
+    ) -> None:
+        asyncio.run(self.log_async(user_id, action, target, result, detail, request))
+
+    async def _log(
         self,
         user_id: str,
         action: str,
@@ -118,36 +111,56 @@ class AuditLogger:
         detail: dict[str, Any] | None,
         request: Request | None,
     ) -> None:
-        detail_json = None
-        if detail is not None:
-            detail_json = json.dumps(_scrub_detail(detail), ensure_ascii=False, sort_keys=True)
-
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO audit_log (
-                    ts,
-                    user_id,
-                    action,
-                    target,
-                    ip,
-                    user_agent,
-                    result,
-                    detail_json
+        await self.initialize()
+        scrubbed_detail = _scrub_detail(detail) if detail is not None else None
+        stored_detail: Any = scrubbed_detail
+        if scrubbed_detail is not None and not str(self.database_url).startswith("postgresql"):
+            stored_detail = json.dumps(scrubbed_detail, ensure_ascii=False, sort_keys=True)
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                await session.execute(
+                    insert(audit_log).values(
+                        ts=utcnow_iso(),
+                        user_id=user_id,
+                        action=action,
+                        target=target,
+                        ip=_extract_ip(request),
+                        user_agent=(
+                            request.headers.get("user-agent") if request is not None else None
+                        ),
+                        result=result,
+                        detail_json=stored_detail,
+                    )
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    utcnow_iso(),
-                    user_id,
-                    action,
-                    target,
-                    _extract_ip(request),
-                    request.headers.get("user-agent") if request is not None else None,
-                    result,
-                    detail_json,
-                ),
-            )
+
+    async def list_for_user_async(
+        self,
+        user_id: str,
+        *,
+        action: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+    ) -> list[AuditRow]:
+        await self.initialize()
+        stmt = select(
+            audit_log.c.id,
+            audit_log.c.ts,
+            audit_log.c.user_id,
+            audit_log.c.action,
+            audit_log.c.target,
+            audit_log.c.ip,
+            audit_log.c.user_agent,
+            audit_log.c.result,
+            audit_log.c.detail_json,
+        ).where(audit_log.c.user_id == user_id)
+        if action:
+            stmt = stmt.where(audit_log.c.action == action)
+        if since:
+            stmt = stmt.where(audit_log.c.ts >= since)
+        stmt = stmt.order_by(audit_log.c.ts.desc(), audit_log.c.id.desc()).limit(limit)
+        async with get_session(self.database_url) as session:
+            rows = (await session.execute(stmt)).mappings().all()
+        return [AuditRow(**_audit_row_dict(row)) for row in rows]
 
     def list_for_user(
         self,
@@ -157,27 +170,17 @@ class AuditLogger:
         since: str | None = None,
         limit: int = 100,
     ) -> list[AuditRow]:
-        clauses = ["user_id = ?"]
-        params: list[Any] = [user_id]
-        if action:
-            clauses.append("action = ?")
-            params.append(action)
-        if since:
-            clauses.append("ts >= ?")
-            params.append(since)
-        params.append(limit)
-        with self._connect() as connection:
-            rows = connection.execute(
-                f"""
-                SELECT id, ts, user_id, action, target, ip, user_agent, result, detail_json
-                FROM audit_log
-                WHERE {" AND ".join(clauses)}
-                ORDER BY ts DESC, id DESC
-                LIMIT ?
-                """,
-                params,
-            ).fetchall()
-        return [AuditRow(**dict(row)) for row in rows]
+        return asyncio.run(
+            self.list_for_user_async(user_id, action=action, since=since, limit=limit)
+        )
+
+
+def _audit_row_dict(row: Any) -> dict[str, Any]:
+    payload = dict(row)
+    detail = payload.get("detail_json")
+    if detail is not None and not isinstance(detail, str):
+        payload["detail_json"] = json.dumps(detail, ensure_ascii=False, sort_keys=True)
+    return payload
 
 
 def _scrub_detail(value: Any) -> Any:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "0003_gmail_credentials"
 down_revision = "0002_conversation_user_id"
@@ -11,19 +12,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gmail_credentials (
-            user_id TEXT PRIMARY KEY,
-            encrypted_token BLOB NOT NULL,
-            email TEXT,
-            scopes TEXT,
-            connected_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
+    op.create_table(
+        "gmail_credentials",
+        sa.Column("user_id", sa.Text(), primary_key=True),
+        sa.Column("encrypted_token", sa.LargeBinary(), nullable=False),
+        sa.Column("email", sa.Text()),
+        sa.Column("scopes", sa.Text()),
+        sa.Column("connected_at", sa.Text(), nullable=False),
+        sa.Column("updated_at", sa.Text(), nullable=False),
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS gmail_credentials")
+    op.drop_table("gmail_credentials")
