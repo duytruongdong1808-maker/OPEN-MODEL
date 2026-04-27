@@ -1,12 +1,14 @@
 "use client";
 
 import { memo, useEffect, useMemo, useState } from "react";
+import { signOut } from "next-auth/react";
 
 import { formatConversationTime, truncatePreview } from "@/lib/format";
 import type { ConversationSummary } from "@/lib/types";
 
 import {
   IconModel,
+  IconLogOut,
   IconPlus,
   IconSearch,
   IconTrash,
@@ -122,6 +124,7 @@ function ConversationSidebarImpl({
         {/* New chat */}
         <button
           type="button"
+          data-testid="new-conversation"
           aria-label="Create new chat"
           onClick={onNewConversation}
           className="om-focus mx-3 mt-3 flex items-center gap-2.5 rounded-md border border-line-strong bg-bg-raised px-3 py-2.5 text-left text-[13px] font-medium text-text transition-colors hover:border-accent-ring hover:bg-bg-emph"
@@ -160,6 +163,9 @@ function ConversationSidebarImpl({
                     return (
                       <li key={conversation.id}>
                         <div
+                          data-testid="conversation-item"
+                          data-active={isActive ? "true" : "false"}
+                          data-conversation-id={conversation.id}
                           className={`group relative flex w-full items-stretch rounded-[9px] border transition-colors ${
                             isActive
                               ? "border-line-strong bg-bg-raised"
@@ -222,6 +228,14 @@ function ConversationSidebarImpl({
               <div className="text-[12.5px] font-medium text-text">Local workspace</div>
               <div className="font-mono text-[10px] text-text-3">on-device · 0 keys</div>
             </div>
+            <button
+              type="button"
+              aria-label="Sign out"
+              onClick={() => void signOut({ callbackUrl: "/login" })}
+              className="om-icon-btn om-focus"
+            >
+              <IconLogOut size={14} />
+            </button>
           </div>
         </div>
       </aside>

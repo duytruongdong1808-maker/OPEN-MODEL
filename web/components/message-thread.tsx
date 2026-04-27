@@ -140,7 +140,7 @@ function PromptStarters({ onPick }: { onPick: (prompt: string) => void }) {
 
 function UserMessage({ message }: { message: UiMessage }) {
   return (
-    <div className="flex flex-row-reverse gap-3.5">
+    <div data-testid="message" data-role="user" className="flex flex-row-reverse gap-3.5">
       <div className="flex max-w-[85%] flex-col items-end">
         <div className="mb-1.5 text-[12px] font-semibold text-text-2">You</div>
         <div className="inline-block max-w-full rounded-[14px_14px_4px_14px] border border-line-strong bg-bg-raised px-3.5 py-2.5 text-left text-[14.5px] leading-relaxed">
@@ -174,7 +174,7 @@ function AssistantMessage({
   };
 
   return (
-    <div className="group flex gap-3.5">
+    <div data-testid="message" data-role="assistant" className="group flex gap-3.5">
       <div className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-accent-ring bg-accent-soft text-accent-fg">
         <IconModel size={14} />
       </div>
@@ -292,7 +292,13 @@ function MessageThreadImpl({
   }
 
   return (
-    <div className="flex flex-1 flex-col" role="log" aria-label="Conversation messages" aria-live="polite">
+    <div
+      data-testid="chat-thread"
+      className="flex flex-1 flex-col"
+      role="log"
+      aria-label="Conversation messages"
+      aria-live="polite"
+    >
       <header className="flex items-center justify-between gap-3 border-b border-line px-6 py-3.5">
         <div>
           <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-4">

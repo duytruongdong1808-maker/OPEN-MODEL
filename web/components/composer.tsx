@@ -46,6 +46,7 @@ function ComposerImpl({
       <div className="mx-auto max-w-[760px] rounded-xl border border-line-strong bg-bg-input p-3.5 pb-2.5 shadow-soft transition-all focus-within:border-accent-ring focus-within:[box-shadow:0_0_0_3px_var(--accent-soft),var(--shadow-soft)]">
         <textarea
           ref={textareaRef}
+          data-testid="composer-input"
           id="message-composer"
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
@@ -86,6 +87,7 @@ function ComposerImpl({
             ) : (
               <button
                 type="button"
+                data-testid="composer-submit"
                 onClick={onSend}
                 disabled={!canSend}
                 className="om-btn om-btn-send disabled:opacity-40"

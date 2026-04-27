@@ -1,0 +1,2 @@
+// TODO(P3): replace with multi-tenant auth coverage when auth is no longer single-user.
+test.skip("multi-user isolation - blocked on P3 multi-tenant auth");

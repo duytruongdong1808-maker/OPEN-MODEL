@@ -25,9 +25,14 @@ outputs/app/gmail_oauth_state.json
 outputs/app/gmail_tokens/
 outputs/app/*.sqlite3
 outputs/app/*.sqlite3-*
+outputs/app/*.log
 web/.next/
 web/node_modules/
 web/coverage/
+web/.auth/
+web/playwright-report/
+web/test-results/
+web/playwright/.cache/
 web/*.tsbuildinfo
 web/*.log
 web/.sentryclirc

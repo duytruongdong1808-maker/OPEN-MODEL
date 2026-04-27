@@ -86,6 +86,7 @@ function LoginFormContent({ googleConfigured }: LoginFormProps) {
           <label className="flex flex-col gap-1.5">
             <span className="text-[12px] font-medium text-text-2">Username</span>
             <input
+              name="username"
               autoComplete="username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -95,6 +96,7 @@ function LoginFormContent({ googleConfigured }: LoginFormProps) {
           <label className="flex flex-col gap-1.5">
             <span className="text-[12px] font-medium text-text-2">Password</span>
             <input
+              name="password"
               autoComplete="current-password"
               type="password"
               value={password}

@@ -65,6 +65,7 @@ function AgentStatusPanelImpl({
       />
       <aside
         id="runtime-panel"
+        data-testid="agent-status"
         aria-label="Runtime panel"
         className="om-scroll fixed inset-y-0 right-0 z-30 flex w-[min(380px,92vw)] flex-col overflow-y-auto border-l border-line bg-bg-rail shadow-pop xl:sticky xl:top-0 xl:h-screen xl:w-full xl:shadow-none"
       >
