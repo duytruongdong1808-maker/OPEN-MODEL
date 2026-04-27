@@ -73,9 +73,11 @@ services:
       --max-lora-rank 16
       --max-model-len 2048
       --gpu-memory-utilization 0.85
+      --chat-template /chat_templates/qwen_chat_template.jinja
       --port 8001
     volumes:
       - ./outputs/qwen2.5_1.5b_lora/final_adapter:/adapters/final_adapter:ro
+      - ./configs/qwen_chat_template.jinja:/chat_templates/qwen_chat_template.jinja:ro
       - hf-cache:/root/.cache/huggingface
     read_only: false
     tmpfs:
