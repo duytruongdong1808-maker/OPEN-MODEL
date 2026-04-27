@@ -5,7 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-
 BODY_CHAR_CAP = 256 * 1024
 SNIPPET_CHAR_CAP = 200
 

@@ -19,7 +19,6 @@ from .config import EmailSettings
 from .errors import AuthError, ToolError
 from .schemas import BODY_CHAR_CAP, SNIPPET_CHAR_CAP, AttachmentMeta, EmailMessage, EmailSummary
 
-
 logger = logging.getLogger(__name__)
 SAFE_TAGS = [
     "a",

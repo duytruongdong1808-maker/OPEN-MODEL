@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-
 CANONICAL_PRIORITIES = ("high", "medium", "low")
 MAIL_DOMAINS = ("ops", "support", "billing", "product")
 BAD_MAIL_OUTPUT_PATTERNS = (

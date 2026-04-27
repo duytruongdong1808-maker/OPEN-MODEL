@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,11 @@ from typing import Any
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from src.server.db import (
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from src.server.db import (  # noqa: E402
     audit_log,
     conversations,
     gmail_credentials,

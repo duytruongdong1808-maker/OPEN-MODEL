@@ -6,9 +6,6 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Callable, Iterator, Protocol
 
-from transformers import TextIteratorStreamer
-from transformers.generation.stopping_criteria import StoppingCriteria, StoppingCriteriaList
-
 from ..utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_MAX_NEW_TOKENS,
@@ -18,7 +15,6 @@ from ..utils import (
     get_model_input_device,
     load_model_and_tokenizer,
 )
-
 
 LOGGER = logging.getLogger("open_model.server")
 
@@ -39,7 +35,7 @@ class GenerationStream:
     cancel: Callable[[], None]
 
 
-class StopOnCancel(StoppingCriteria):
+class StopOnCancel:
     def __init__(self, cancel_event: Event) -> None:
         self.cancel_event = cancel_event
 
@@ -108,6 +104,9 @@ class LocalModelChatService:
     ) -> GenerationStream:
         del mode
         model, tokenizer = self._ensure_loaded()
+        from transformers import TextIteratorStreamer
+        from transformers.generation.stopping_criteria import StoppingCriteriaList
+
         prompt_messages = [{"role": "system", "content": system_prompt.strip()}]
         for message in messages:
             if message["role"] == "user":

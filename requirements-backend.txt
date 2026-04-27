@@ -1,0 +1,15 @@
+fastapi>=0.115.0
+uvicorn>=0.30.0
+aioimaplib>=1.0.1
+aiosmtplib>=3.0
+alembic>=1.13
+pydantic-settings>=2.0
+sqlalchemy[asyncio]>=2.0.30
+aiosqlite>=0.20
+psycopg[binary]>=3.2
+email-validator>=2.0
+bleach>=6.0
+cryptography>=42
+google-api-python-client>=2.120.0
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0

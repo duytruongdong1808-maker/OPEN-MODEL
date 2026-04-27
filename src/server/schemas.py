@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 StepStatus = Literal["pending", "active", "complete", "error"]
 MessageRole = Literal["user", "assistant"]
 

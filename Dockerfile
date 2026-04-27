@@ -15,8 +15,8 @@ RUN apt-get update \
 
 RUN pip install --upgrade pip "setuptools>=78" "wheel>=0.46.2"
 
-COPY requirements.txt .
-RUN pip wheel --wheel-dir=/wheels -r requirements.txt
+COPY requirements-backend.txt .
+RUN pip wheel --wheel-dir=/wheels -r requirements-backend.txt
 
 FROM python:3.11-slim-bookworm@sha256:ee710afcfb733f4a750d9be683cf054b5cd247b6c5f5237a6849ea568b90ab15 AS runner
 
@@ -38,9 +38,9 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /wheels /wheels
-COPY requirements.txt .
-RUN pip install --no-index --find-links=/wheels -r requirements.txt \
-    && rm -rf /wheels requirements.txt
+COPY requirements-backend.txt .
+RUN pip install --no-index --find-links=/wheels -r requirements-backend.txt \
+    && rm -rf /wheels requirements-backend.txt
 
 COPY --chown=app:app src ./src
 COPY --chown=app:app alembic ./alembic
