@@ -422,16 +422,37 @@ For a private model repo:
 python scripts/hf_upload_adapter.py your-hf-username/open-model-qwen25-lora --private
 ```
 
+If you prefer to publish the merged full model instead of the lightweight LoRA
+adapter, upload the merged folder to a separate model repo:
+
+```bash
+python scripts/hf_upload_adapter.py your-hf-username/open-model-qwen25-merged --artifact merged
+```
+
+The project artifacts published from this repo are:
+
+```text
+HackerBu/mail-agent
+HackerBu/mail-agent-merged
+```
+
 On another machine, clone or pull this GitHub repo, install dependencies, then download the adapter:
 
 ```bash
 python scripts/hf_download_adapter.py your-hf-username/open-model-qwen25-lora
 ```
 
+To download the merged full model instead:
+
+```bash
+python scripts/hf_download_adapter.py your-hf-username/open-model-qwen25-merged --artifact merged
+```
+
 The downloader writes files to:
 
 ```text
 outputs/qwen2.5_1.5b_lora/final_adapter
+outputs/qwen2.5_1.5b_lora/merged
 ```
 
 After that, the Docker Compose stack can use the adapter without rerunning training:
