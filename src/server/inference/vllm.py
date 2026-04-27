@@ -13,6 +13,11 @@ import httpx
 
 from ...tools.errors import ToolError
 from ...utils import DEFAULT_SYSTEM_PROMPT
+from ..observability.metrics import (
+    INFERENCE_FIRST_TOKEN_SECONDS,
+    INFERENCE_REQUEST_DURATION_SECONDS,
+    INFERENCE_TOKENS_TOTAL,
+)
 from . import GenerationStream
 
 
@@ -115,6 +120,17 @@ class VLLMChatService:
                 output.put(ToolError(f"vLLM inference stream failed: {exc}"))
             finally:
                 metrics.request_duration_ms = (time.perf_counter() - started_at) * 1000
+                if metrics.first_token_latency_ms is not None:
+                    INFERENCE_FIRST_TOKEN_SECONDS.labels(backend="vllm", model=self.model).observe(
+                        metrics.first_token_latency_ms / 1000
+                    )
+                if metrics.total_tokens:
+                    INFERENCE_TOKENS_TOTAL.labels(backend="vllm", model=self.model).inc(
+                        metrics.total_tokens
+                    )
+                INFERENCE_REQUEST_DURATION_SECONDS.labels(backend="vllm", model=self.model).observe(
+                    metrics.request_duration_ms / 1000
+                )
                 output.put(_SENTINEL)
 
         worker = threading.Thread(target=lambda: asyncio.run(run_stream()), daemon=True)

@@ -43,16 +43,19 @@ def format_missing_dependency_error(exc: ModuleNotFoundError) -> str:
     return f"Missing dependency: {dependency_name}. {install_hint}"
 
 
-def configure_logging(log_level: str = DEFAULT_LOG_LEVEL) -> logging.Logger:
+def configure_logging(
+    log_level: str = DEFAULT_LOG_LEVEL, log_format: str = "console"
+) -> logging.Logger:
     normalized_level = log_level.upper()
     if normalized_level not in LOG_LEVEL_NAMES:
         raise ValueError(f"Unsupported log level: {log_level}")
 
-    logging.basicConfig(
-        level=getattr(logging, normalized_level),
-        format="%(levelname)s | %(message)s",
-        force=True,
-    )
+    try:
+        from .server.observability.logging import configure_structlog
+    except ImportError:
+        from server.observability.logging import configure_structlog
+
+    configure_structlog(normalized_level, json_output=log_format == "json")
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(getattr(logging, normalized_level))
     return logger

@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import json
 import logging
+import time
 import unicodedata
 from collections.abc import Awaitable, Callable
 from collections.abc import Mapping
@@ -12,7 +13,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
+from opentelemetry import trace
 
+from ..server.observability.metrics import (
+    AGENT_PARSE_RETRY_TOTAL,
+    AGENT_RUN_DURATION_SECONDS,
+    AGENT_TOOL_CALL_TOTAL,
+    backend_label,
+)
 from ..server.runtime import SupportsStreamingReply
 from ..tools import TOOL_REGISTRY, ToolSpec
 from .schemas import AgentRunResult, AgentStep, build_agent_command_schema
@@ -115,6 +123,21 @@ class AgentLoop:
         )
         metrics = AgentRunMetrics()
         current_agent_metrics.set(metrics)
+        started_at = time.perf_counter()
+        backend = backend_label(self.runtime)
+        span = trace.get_tracer("open_model.agent").start_span("AgentLoop.run")
+        span.set_attribute("max_steps", max_steps)
+        span.set_attribute("registry_size", len(self.registry))
+
+        def finish(answer: str, stopped_reason: str) -> AgentRunResult:
+            span.set_attribute("stopped_reason", stopped_reason)
+            span.end()
+            AGENT_RUN_DURATION_SECONDS.labels(
+                stopped_reason=stopped_reason,
+                backend=backend,
+            ).observe(time.perf_counter() - started_at)
+            current_agent_metrics.set(None)
+            return AgentRunResult(answer=answer, steps=steps, stopped_reason=stopped_reason)
 
         for index in range(max_steps):
             model_text = self._generate(messages, prompt)
@@ -128,12 +151,9 @@ class AgentLoop:
             except ValueError as exc:
                 if self._should_use_schema():
                     LOGGER.warning("agent.parse_unexpected_failure", exc_info=True)
-                    return AgentRunResult(
-                        answer=f"Agent output parse error: {exc}",
-                        steps=steps,
-                        stopped_reason="error",
-                    )
+                    return finish(f"Agent output parse error: {exc}", "error")
                 metrics.parse_retry_count += 1
+                AGENT_PARSE_RETRY_TOTAL.labels(backend=backend, reason="invalid_json").inc()
                 messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
                     {
@@ -151,24 +171,14 @@ class AgentLoop:
                 try:
                     command = parse_model_command(model_text)
                 except ValueError as retry_exc:
-                    return AgentRunResult(
-                        answer=f"Agent output parse error: {retry_exc}",
-                        steps=steps,
-                        stopped_reason="error",
-                    )
+                    return finish(f"Agent output parse error: {retry_exc}", "error")
 
             if "final" in command:
-                return AgentRunResult(
-                    answer=str(command["final"]), steps=steps, stopped_reason="final"
-                )
+                return finish(str(command["final"]), "final")
 
             tool_call = command.get("tool_call")
             if not isinstance(tool_call, dict):
-                return AgentRunResult(
-                    answer="Agent did not return a final answer or tool call.",
-                    steps=steps,
-                    stopped_reason="error",
-                )
+                return finish("Agent did not return a final answer or tool call.", "error")
 
             tool_name = str(tool_call.get("name", ""))
             arguments = tool_call.get("arguments") or {}
@@ -179,17 +189,14 @@ class AgentLoop:
             if repeated_result is not None:
                 fallback_answer = build_email_fallback_answer(message, steps)
                 if fallback_answer is not None:
-                    return AgentRunResult(
-                        answer=fallback_answer,
-                        steps=steps,
-                        stopped_reason="final",
-                    )
+                    return finish(fallback_answer, "final")
             step = AgentStep(
                 index=index, kind="tool", status="ok", tool_name=tool_name, arguments=arguments
             )
             try:
                 await self._notify_tool_call(on_tool_call, tool_name, arguments)
                 result = await self._execute_tool(tool_name, arguments, user_id=user_id)
+                AGENT_TOOL_CALL_TOTAL.labels(tool_name=tool_name, status="success").inc()
                 step.result = to_jsonable(result)
                 messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
                 messages.append(
@@ -203,6 +210,8 @@ class AgentLoop:
                     }
                 )
             except Exception as exc:
+                metric_tool_name = tool_name if tool_name in self.registry else "unknown"
+                AGENT_TOOL_CALL_TOTAL.labels(tool_name=metric_tool_name, status="error").inc()
                 step.status = "error"
                 step.error = str(exc)
                 messages.append({"role": "assistant", "content": safe_tool_payload(model_text)})
@@ -220,16 +229,8 @@ class AgentLoop:
 
         fallback_answer = build_email_fallback_answer(message, steps)
         if fallback_answer is not None:
-            return AgentRunResult(
-                answer=fallback_answer,
-                steps=steps,
-                stopped_reason="final",
-            )
-        return AgentRunResult(
-            answer="Agent stopped after reaching the maximum tool-call steps.",
-            steps=steps,
-            stopped_reason="max_steps",
-        )
+            return finish(fallback_answer, "final")
+        return finish("Agent stopped after reaching the maximum tool-call steps.", "max_steps")
 
     def _generate(self, messages: list[dict[str, str]], system_prompt: str) -> str:
         schema = (

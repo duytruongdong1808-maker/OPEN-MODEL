@@ -140,6 +140,17 @@ CLI scripts accept `--log_level DEBUG|INFO|WARNING|ERROR|CRITICAL`. The default 
 
 For local automation, this repo also includes optional [pre-commit](https://pre-commit.com/) hooks for `ruff` and `black`.
 
+### Observability stack
+
+For local Prometheus, Grafana, and Tempo:
+
+```bash
+cp secrets/grafana_password.example secrets/grafana_password
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+Grafana runs on `http://localhost:3001`, Prometheus on `http://localhost:9090`, and backend metrics are available at `/metrics`. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for production wiring, Sentry DSN guidance, dashboard import details, and alert rules.
+
 ### 3. Windows PowerShell note
 
 On Windows, the most reliable way to run the training and inference scripts is to call the repo virtualenv interpreter directly:

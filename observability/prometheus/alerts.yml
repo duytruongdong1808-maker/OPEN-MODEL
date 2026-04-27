@@ -1,0 +1,42 @@
+groups:
+  - name: open-model
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Open Model 5xx error rate is above 1%"
+
+      - alert: SlowFirstToken
+        expr: histogram_quantile(0.95, sum(rate(inference_first_token_seconds_bucket[10m])) by (le)) > 5
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Open Model p95 first-token latency is above 5 seconds"
+
+      - alert: GmailAuthFailures
+        expr: sum(rate(gmail_oauth_total{result!="success"}[10m])) * 600 > 10
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Gmail OAuth failures exceeded 10 in 10 minutes"
+
+      - alert: RateLimitStorm
+        expr: sum(rate(http_requests_total{status="429"}[1m])) * 60 > 100
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Backend observed more than 100 blocked requests per minute"
+
+      - alert: AgentParseFailureSpike
+        expr: sum(rate(agent_parse_retry_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Agent parse retries are spiking"

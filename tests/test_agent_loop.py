@@ -198,7 +198,7 @@ async def test_agent_loop_returns_parse_error() -> None:
 
 async def test_tool_result_braces_are_passed_unescaped() -> None:
     async def get_email(uid: str) -> dict[str, str]:
-        return {"uid": uid, "body_text": "Raw JSON-like text: {\"a\": 1}"}
+        return {"uid": uid, "body_text": 'Raw JSON-like text: {"a": 1}'}
 
     registry = {
         "get_email": ToolSpec(

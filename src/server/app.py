@@ -53,11 +53,16 @@ from ..tools.gmail_auth import (
 )
 from ..tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResult
 from .runtime import (
-    LocalModelChatService,
     SupportsStreamingReply,
-    VLLMChatService,
     build_chat_service,
 )
+from .observability import (
+    RequestContextMiddleware,
+    bind_user_context,
+    configure_tracing,
+    instrument_fastapi,
+)
+from .observability.sentry import init_sentry
 from .schemas import (
     AssistantDeltaPayload,
     ChatStreamRequest,
@@ -70,6 +75,8 @@ from .schemas import (
 )
 from .settings import OpenModelSettings, get_open_model_settings
 from .storage import ConversationStore
+
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 class GmailSessionTokenRequest(BaseModel):
@@ -153,6 +160,7 @@ def verify_tools_token(authorization: str | None = Header(default=None)) -> None
 
 
 def get_current_user_id(
+    request: Request,
     settings: OpenModelSettings = Depends(get_app_settings),
     x_user_id: str | None = Header(default=None),
     x_user_id_sig: str | None = Header(default=None),
@@ -173,6 +181,8 @@ def get_current_user_id(
     ).hexdigest()
     if not secrets.compare_digest(signature, expected):
         raise HTTPException(status_code=401, detail="Invalid user identity signature.")
+    request.state.user_id = user_id
+    bind_user_context(user_id)
     return user_id
 
 
@@ -248,9 +258,9 @@ async def audit_agent_tool_call(
 async def inference_ready(runtime: SupportsStreamingReply | None) -> bool:
     if runtime is None:
         return False
-    if isinstance(runtime, LocalModelChatService):
+    if hasattr(runtime, "is_loaded"):
         return runtime.is_loaded
-    if isinstance(runtime, VLLMChatService):
+    if hasattr(runtime, "check_ready"):
         return await runtime.check_ready()
     return True
 
@@ -262,7 +272,13 @@ def create_app(
     protect_chat_routes: bool = True,
 ) -> FastAPI:
     settings = get_open_model_settings()
-    configure_logging(settings.open_model_log_level)
+    configure_logging(settings.open_model_log_level, settings.open_model_log_format)
+    init_sentry(settings)
+    tracing_is_enabled = configure_tracing(
+        settings.otel_service_name,
+        settings.otel_exporter_otlp_endpoint,
+        settings.otel_traces_sample_rate,
+    )
     warn_if_legacy_token_file_exists()
 
     @asynccontextmanager
@@ -275,7 +291,7 @@ def create_app(
             and not fastapi_app.state.settings.open_model_skip_model_load
         ):
             resolved_runtime = build_chat_service(fastapi_app.state.settings)
-            if isinstance(resolved_runtime, LocalModelChatService):
+            if hasattr(resolved_runtime, "_ensure_loaded"):
                 resolved_runtime._ensure_loaded()
             fastapi_app.state.runtime = resolved_runtime
         try:
@@ -291,21 +307,29 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestContextMiddleware)
+    Instrumentator(
+        excluded_handlers=["/metrics", "/health.*"],
+        should_group_status_codes=True,
+    ).instrument(app).expose(app, "/metrics", include_in_schema=False)
+    if tracing_is_enabled:
+        instrument_fastapi(app)
 
     app.state.settings = settings
+    database_url = default_database_url(settings)
+    ledger_database_url = default_ledger_database_url(settings)
     app.state.store = store or ConversationStore(
         settings.open_model_db_path,
-        database_url=settings.open_model_database_url or default_database_url(settings),
+        database_url=database_url,
     )
     app.state.runtime = runtime
     app.state.ledger = SendLedger(
         settings.open_model_ledger_db_path,
-        database_url=settings.open_model_ledger_database_url
-        or default_ledger_database_url(settings),
+        database_url=ledger_database_url,
     )
     app.state.audit = AuditLogger(
         settings.open_model_db_path,
-        database_url=settings.open_model_database_url or default_database_url(settings),
+        database_url=database_url,
     )
 
     @app.middleware("http")

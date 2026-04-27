@@ -107,7 +107,7 @@ async function getPathParts(context: RouteContext): Promise<string[]> {
 }
 
 function isPublicBackendPath(pathParts: string[]): boolean {
-  return pathParts.join("/") === "health/live";
+  return ["health/live", "metrics"].includes(pathParts.join("/"));
 }
 
 async function forwardRequest(
@@ -143,8 +143,10 @@ async function forwardRequest(
   const responseHeaders = new Headers();
   const contentType = response.headers.get("content-type");
   const location = response.headers.get("location");
+  const requestId = response.headers.get("x-request-id");
   if (contentType) responseHeaders.set("content-type", contentType);
   if (location) responseHeaders.set("location", location);
+  if (requestId) responseHeaders.set("x-request-id", requestId);
   responseHeaders.set("cache-control", "no-cache");
 
   return new Response(response.body, {
