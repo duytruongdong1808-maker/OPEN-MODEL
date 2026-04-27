@@ -37,6 +37,7 @@ RUN groupadd --system --gid 10001 web \
 # so dev tools (vite, vitest, esbuild, picomatch, ...) are not baked into the image.
 COPY --from=builder --chown=web:web /app/.next/standalone ./
 COPY --from=builder --chown=web:web /app/.next/static ./.next/static
+RUN rm -rf /app/node_modules/@esbuild /app/node_modules/esbuild
 
 USER web
 
