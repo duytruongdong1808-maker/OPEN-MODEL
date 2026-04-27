@@ -61,6 +61,46 @@ services:
         limits:
           memory: 1g
 
+  # GPU passthrough requires nvidia-container-toolkit on the host. For CPU-only
+  # development, use: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+  inference:
+    image: vllm/vllm-openai:v0.6.3
+    command: >
+      --model Qwen/Qwen2.5-1.5B-Instruct
+      --enable-lora
+      --lora-modules adapter=/adapters/final_adapter
+      --max-loras 1
+      --max-lora-rank 16
+      --max-model-len 2048
+      --gpu-memory-utilization 0.85
+      --port 8001
+    volumes:
+      - ./outputs/qwen2.5_1.5b_lora/final_adapter:/adapters/final_adapter:ro
+      - hf-cache:/root/.cache/huggingface
+    read_only: false
+    tmpfs:
+      - /tmp:rw,size=512m
+    security_opt:
+      - "no-new-privileges:true"
+    userns_mode: "private"
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 8g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
   backend:
     build:
       context: .
@@ -83,6 +123,9 @@ services:
       GOOGLE_OAUTH_TOKEN_PATH: /app/outputs/app/gmail_token.json
       GOOGLE_OAUTH_STATE_PATH: /app/outputs/app/gmail_oauth_state.json
       OPEN_MODEL_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      OPEN_MODEL_INFERENCE_BACKEND: vllm
+      OPEN_MODEL_VLLM_URL: http://inference:8001/v1
+      OPEN_MODEL_VLLM_MODEL: adapter
     volumes:
       - open-model-outputs:/app/outputs
     secrets:
@@ -90,6 +133,8 @@ services:
     expose:
       - "8000"
     depends_on:
+      inference:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
@@ -135,6 +180,7 @@ services:
           memory: 512m
 
 volumes:
+  hf-cache:
   open-model-outputs:
   postgres-data:
   redis-data:

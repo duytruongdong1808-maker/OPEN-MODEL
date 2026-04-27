@@ -33,3 +33,34 @@ class ApprovalDecisionResult(BaseModel):
     status: Literal["approved", "rejected", "expired", "pending"]
     decided_at: str | None = None
     decided_by: str | None = None
+
+
+def build_agent_command_schema(tool_names: list[str]) -> dict[str, Any]:
+    """JSON schema enforcing either {tool_call:{name,arguments}} or {final:str}."""
+    return {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["tool_call"],
+                "additionalProperties": False,
+                "properties": {
+                    "tool_call": {
+                        "type": "object",
+                        "required": ["name", "arguments"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "name": {"type": "string", "enum": tool_names},
+                            "arguments": {"type": "object"},
+                        },
+                    }
+                },
+            },
+            {
+                "type": "object",
+                "required": ["final"],
+                "additionalProperties": False,
+                "properties": {"final": {"type": "string"}},
+            },
+        ],
+    }

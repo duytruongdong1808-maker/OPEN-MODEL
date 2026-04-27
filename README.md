@@ -467,6 +467,46 @@ This repo now includes a ChatGPT-style internal MVP with:
 - streaming assistant replies over `SSE`
 - a read-only mail agent that can inspect inbox summaries and full emails, then produce prioritized briefs with action items
 
+### Inference backend
+
+The FastAPI backend supports two inference backends:
+
+- `local` keeps the original `transformers` + `TextIteratorStreamer` flow in the API process. Use this for CPU-only development, quick debugging, and environments without vLLM.
+- `vllm` sends OpenAI-compatible chat-completion requests to the separate `inference` container. Use this for GPU serving and concurrent web users.
+
+Switch with:
+
+```bash
+OPEN_MODEL_INFERENCE_BACKEND=local
+OPEN_MODEL_INFERENCE_BACKEND=vllm
+OPEN_MODEL_AGENT_CONSTRAINED_DECODING=true
+OPEN_MODEL_VLLM_URL=http://inference:8001/v1
+OPEN_MODEL_VLLM_MODEL=adapter
+OPEN_MODEL_VLLM_TIMEOUT_S=120
+```
+
+The vLLM compose service runs `Qwen/Qwen2.5-1.5B-Instruct` with the LoRA adapter from `outputs/qwen2.5_1.5b_lora/final_adapter`. GPU hosts need CUDA 12+, `nvidia-container-toolkit`, and at least 6 GB VRAM for the 1.5B model plus LoRA adapter. If vLLM runs out of memory, lower `--max-model-len` or `--gpu-memory-utilization` in `docker-compose.yml`.
+
+#### Agent constrained decoding
+
+When the agent runs on the `vllm` backend, the backend sends a compact JSON Schema through vLLM `guided_json` so the model can only emit either a single `tool_call` object or a `final` answer. This grammar-enforced path requires vLLM 0.6+ structured output support and keeps the schema out of the system prompt.
+
+Disable the constraint for debugging with:
+
+```bash
+OPEN_MODEL_AGENT_CONSTRAINED_DECODING=false
+```
+
+Measure parse reliability with `python scripts/eval_agent_parse.py --backend vllm --n 100`. Expected failure rate is below 1% on vLLM with constrained decoding, compared with roughly 15-30% for local or unconstrained runs.
+
+For CPU-only compose development, use the override file. It replaces the GPU inference container with a tiny healthcheck stub and makes the backend use `LocalModelChatService`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+See [Inference Architecture](docs/inference-architecture.md) for the service layout and readiness behavior.
+
 ### Run the backend
 
 From the repo root:
@@ -491,6 +531,11 @@ Optional environment variables:
 - `OPEN_MODEL_MAX_NEW_TOKENS`
 - `OPEN_MODEL_TEMPERATURE`
 - `OPEN_MODEL_TOP_P`
+- `OPEN_MODEL_INFERENCE_BACKEND`
+- `OPEN_MODEL_AGENT_CONSTRAINED_DECODING`
+- `OPEN_MODEL_VLLM_URL`
+- `OPEN_MODEL_VLLM_MODEL`
+- `OPEN_MODEL_VLLM_TIMEOUT_S`
 - `INTERNAL_HMAC_SECRET`
 
 If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lora/final_adapter` first and falls back to the base model if no adapter is present.
@@ -579,7 +624,7 @@ chmod 600 secrets/postgres_password
 docker compose up --build
 ```
 
-The compose stack starts Postgres first, waits for it to become healthy, and then starts the backend with `OPEN_MODEL_DATABASE_URL=postgresql+psycopg://openmodel@postgres:5432/openmodel`. The password is read from the Docker secret mount, not baked into the image or `.env`.
+The compose stack starts Postgres and the vLLM `inference` service first, waits for them to become healthy, and then starts the backend with `OPEN_MODEL_DATABASE_URL=postgresql+psycopg://openmodel@postgres:5432/openmodel` and `OPEN_MODEL_INFERENCE_BACKEND=vllm`. The database password is read from the Docker secret mount, not baked into the image or `.env`.
 
 The compose stack only publishes the web app on `http://localhost:3000`. The FastAPI backend is exposed on the internal Docker network as `http://backend:8000` so browser traffic must pass through the authenticated Next.js proxy.
 
