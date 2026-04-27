@@ -43,3 +43,4 @@ services:
   backend:
     environment:
       OPEN_MODEL_INFERENCE_BACKEND: local
+      OPEN_MODEL_SKIP_MODEL_LOAD: "true"
