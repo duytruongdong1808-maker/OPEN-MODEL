@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ...services.audit_service import AuditLogger, AuditResult, truncate_ip
 from ..deps import get_audit_logger, get_current_user_id, verify_tools_token
+
 login_router = APIRouter()
 me_router = APIRouter()
 

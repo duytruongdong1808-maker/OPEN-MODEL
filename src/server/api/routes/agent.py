@@ -15,6 +15,7 @@ from ..deps import (
     tool_http_error,
     verify_tools_token,
 )
+
 router = APIRouter(dependencies=[Depends(verify_tools_token)])
 
 

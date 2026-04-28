@@ -7,6 +7,7 @@ from ....tools.schemas import EmailMessage, EmailSummary, SendRequest, SendResul
 from ...services.audit_service import AuditLogger
 from ...services.email_audit_service import email_domain, first_recipient_domain, subject_hash
 from ..deps import get_audit_logger, get_current_user_id, tool_http_error, verify_tools_token
+
 router = APIRouter(dependencies=[Depends(verify_tools_token)])
 
 

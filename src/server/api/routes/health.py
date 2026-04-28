@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from ...db import get_session, redact_url_in_message
 from ...services.chat_stream_service import inference_ready
+
 router = APIRouter()
 
 

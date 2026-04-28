@@ -29,6 +29,7 @@ from ...services.chat_stream_service import (
     sse_event,
 )
 from ..deps import get_audit_logger, get_current_user_id, get_runtime, get_store
+
 router = APIRouter()
 
 
@@ -164,7 +165,9 @@ async def stream_conversation_message(
 
             result = await run_task
             if result.stopped_reason == "error":
-                yield sse_event("error", ErrorPayload(message=result.answer).model_dump(mode="json"))
+                yield sse_event(
+                    "error", ErrorPayload(message=result.answer).model_dump(mode="json")
+                )
                 return
 
             assistant_message = await conversation_store.save_assistant_message(
