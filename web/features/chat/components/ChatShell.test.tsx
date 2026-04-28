@@ -9,7 +9,6 @@ vi.mock("next-auth/react", () => ({
   signIn: signInMock,
 }));
 
-import { ChatShell } from "@/components/chat-shell";
 import type { ApiClient, StreamHandlers } from "@/lib/api";
 import type {
   ChatStreamRequest,
@@ -18,6 +17,8 @@ import type {
   GmailStatus,
   StreamEvent,
 } from "@/lib/types";
+
+import { ChatShell } from "./ChatShell";
 
 afterEach(() => {
   vi.restoreAllMocks();

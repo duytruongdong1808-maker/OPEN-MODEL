@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
-import { ChatPageClient } from "@/components/chat-page-client";
+import { ChatPageClient } from "@/features/chat/ChatPageClient";
 
 function googleSignInConfigured(): boolean {
   return Boolean(

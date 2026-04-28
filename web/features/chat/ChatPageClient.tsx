@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { ChatShell } from "@/components/chat-shell";
+import { ChatShell } from "@/features/chat/components/ChatShell";
 import { createBrowserApiClient } from "@/lib/api";
 
 export function ChatPageClient({

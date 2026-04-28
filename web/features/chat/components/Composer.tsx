@@ -7,7 +7,7 @@ import {
   IconRetry,
   IconSend,
   IconStop,
-} from "./icons";
+} from "@/components/ui/icons";
 
 interface ComposerProps {
   draft: string;

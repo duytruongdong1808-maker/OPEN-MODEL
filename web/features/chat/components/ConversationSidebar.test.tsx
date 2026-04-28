@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ConversationSidebar } from "@/components/conversation-sidebar";
 import type { ConversationSummary } from "@/lib/types";
+
+import { ConversationSidebar } from "./ConversationSidebar";
 
 const conversations: ConversationSummary[] = [
   {

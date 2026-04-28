@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { IconModel } from "@/components/icons";
+import { IconModel } from "@/components/ui/icons";
 import { createBrowserApiClient, formatApiError } from "@/lib/api";
 import type { ApiClient } from "@/lib/api";
 

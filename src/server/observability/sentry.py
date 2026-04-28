@@ -5,7 +5,7 @@ from typing import Any
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-from ..settings import OpenModelSettings
+from ..core.config import OpenModelSettings
 from .redact import REDACTED, is_sensitive_key, scrub
 
 

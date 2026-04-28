@@ -26,9 +26,9 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.engine import make_url
 
-from ..utils import ROOT_DIR
-from .observability.tracing import instrument_sqlalchemy_engine
-from .settings import OpenModelSettings, get_open_model_settings
+from ...utils import ROOT_DIR
+from ..core.config import OpenModelSettings, get_open_model_settings
+from ..observability.tracing import instrument_sqlalchemy_engine
 
 metadata = MetaData()
 

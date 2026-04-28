@@ -5,7 +5,14 @@ import { memo, useEffect, useState } from "react";
 import { formatPublishedAt } from "@/lib/format";
 import type { AgentStep, GmailStatus, SourceItem, StepUpdate } from "@/lib/types";
 
-import { IconChevron, IconCpu, IconLogOut, IconMail, IconLink, IconSliders } from "./icons";
+import {
+  IconChevron,
+  IconCpu,
+  IconLink,
+  IconLogOut,
+  IconMail,
+  IconSliders,
+} from "@/components/ui/icons";
 
 interface AgentStatusPanelProps {
   steps: StepUpdate[];

@@ -7,14 +7,14 @@ import { formatConversationTime, truncatePreview } from "@/lib/format";
 import type { ConversationSummary } from "@/lib/types";
 
 import {
-  IconModel,
   IconLogOut,
+  IconModel,
   IconPlus,
   IconSearch,
   IconTrash,
   IconUser,
   IconX,
-} from "./icons";
+} from "@/components/ui/icons";
 
 interface ConversationSidebarProps {
   conversations: ConversationSummary[];

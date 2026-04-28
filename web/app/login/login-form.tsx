@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 
-import { IconModel } from "@/components/icons";
+import { IconModel } from "@/components/ui/icons";
 
 type LoginFormProps = {
   googleConfigured: boolean;

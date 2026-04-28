@@ -3,11 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 
-import { AgentStatusPanel } from "@/components/agent-status-panel";
-import { Composer } from "@/components/composer";
-import { ConversationSidebar } from "@/components/conversation-sidebar";
-import { IconAlert, IconMenu, IconModel, IconPanel } from "@/components/icons";
-import { MessageThread } from "@/components/message-thread";
+import { IconAlert, IconMenu, IconModel, IconPanel } from "@/components/ui/icons";
 import type { ApiClient } from "@/lib/api";
 import type {
   ConversationSummary,
@@ -19,6 +15,11 @@ import type {
   StepUpdate,
   UiMessage,
 } from "@/lib/types";
+
+import { AgentStatusPanel } from "./AgentStatusPanel";
+import { Composer } from "./Composer";
+import { ConversationSidebar } from "./ConversationSidebar";
+import { MessageThread } from "./MessageThread";
 
 const DEFAULT_CONVERSATION_TITLE = "New chat";
 

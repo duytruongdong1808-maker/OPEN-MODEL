@@ -12,7 +12,7 @@ import {
   IconModel,
   IconRetry,
   IconSpark,
-} from "./icons";
+} from "@/components/ui/icons";
 
 interface MessageThreadProps {
   title: string;
