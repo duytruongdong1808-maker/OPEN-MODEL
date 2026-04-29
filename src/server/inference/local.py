@@ -14,9 +14,11 @@ from ...utils import (
     DEFAULT_SYSTEM_PROMPT,
     ROOT_DIR,
     format_user_message,
+    get_default_adapter_path,
     get_model_input_device,
     load_model_and_tokenizer,
 )
+from ..core.sampling import SamplingOverrides, resolve_sampling
 from . import GenerationStream
 
 LOGGER = logging.getLogger("open_model.server")
@@ -46,6 +48,7 @@ class LocalModelChatService:
         max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
         temperature: float = 0.2,
         top_p: float = 0.9,
+        repetition_penalty: float = 1.05,
     ) -> None:
         self.base_model = base_model
         self.adapter_path = self._resolve_adapter_path(adapter_path)
@@ -54,15 +57,24 @@ class LocalModelChatService:
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
         self._model = None
         self._tokenizer = None
         self._load_lock = Lock()
 
     def _resolve_adapter_path(self, adapter_path: str | Path | None) -> str | None:
         if adapter_path is None:
-            default_adapter = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
+            default_adapter = get_default_adapter_path(self.base_model)
+            legacy_adapter = ROOT_DIR / "outputs" / "qwen2.5_1.5b_lora" / "final_adapter"
             if default_adapter.exists():
                 return str(default_adapter)
+            if "1.5B" in self.base_model and legacy_adapter.exists():
+                LOGGER.warning(
+                    "Default adapter not found; falling back to legacy 1.5B adapter at %s. "
+                    "Set OPEN_MODEL_ADAPTER_PATH to choose an adapter explicitly.",
+                    legacy_adapter,
+                )
+                return str(legacy_adapter)
             LOGGER.warning("Adapter path not found; the API will fall back to the base model only.")
             return None
         return str(Path(adapter_path).expanduser().resolve())
@@ -91,6 +103,7 @@ class LocalModelChatService:
         messages: list[dict[str, str]],
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         mode: str = "chat",
+        sampling_overrides: SamplingOverrides | None = None,
         response_format: dict[str, Any] | None = None,
         guided_json: dict[str, Any] | None = None,
     ) -> GenerationStream:
@@ -100,7 +113,6 @@ class LocalModelChatService:
         compatibility only. It cannot enforce JSON schema during generation, so agent
         mode relies on the concise prompt constraint and parse fallback.
         """
-        del mode
         if response_format is not None or guided_json is not None:
             global _LOCAL_JSON_CONSTRAINT_WARNING_EMITTED
             if not _LOCAL_JSON_CONSTRAINT_WARNING_EMITTED:
@@ -108,6 +120,14 @@ class LocalModelChatService:
                     "Local backend cannot enforce JSON schema; relying on prompt-only constraint"
                 )
                 _LOCAL_JSON_CONSTRAINT_WARNING_EMITTED = True
+        sampling = resolve_sampling(
+            mode=mode,
+            fallback_max_new_tokens=self.max_new_tokens,
+            fallback_temperature=self.temperature,
+            fallback_top_p=self.top_p,
+            fallback_repetition_penalty=self.repetition_penalty,
+            sampling_overrides=sampling_overrides,
+        )
         model, tokenizer = self._ensure_loaded()
         prompt_messages = [{"role": "system", "content": system_prompt.strip()}]
         for message in messages:
@@ -134,7 +154,7 @@ class LocalModelChatService:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )
-        do_sample = self.temperature > 0
+        do_sample = (sampling.temperature or 0) > 0
 
         def run_generation() -> None:
             import torch
@@ -142,15 +162,16 @@ class LocalModelChatService:
             generate_kwargs = {
                 **inputs,
                 "streamer": streamer,
-                "max_new_tokens": self.max_new_tokens,
+                "max_new_tokens": sampling.max_new_tokens,
                 "do_sample": do_sample,
                 "pad_token_id": tokenizer.pad_token_id,
                 "eos_token_id": tokenizer.eos_token_id,
+                "repetition_penalty": sampling.repetition_penalty,
                 "stopping_criteria": StoppingCriteriaList([StopOnCancel(cancel_event)]),
             }
             if do_sample:
-                generate_kwargs["temperature"] = self.temperature
-                generate_kwargs["top_p"] = self.top_p
+                generate_kwargs["temperature"] = sampling.temperature
+                generate_kwargs["top_p"] = sampling.top_p
 
             try:
                 with torch.inference_mode():

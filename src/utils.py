@@ -21,11 +21,24 @@ DEFAULT_CURATION_REPORT_PATH = CURATED_DATA_DIR / "curation_report.json"
 DEFAULT_CURATED_SEED_PATH = CURATED_DATA_DIR / "chat_vi_en_seed_curated.jsonl"
 DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH = CURATED_DATA_DIR / "mail_triage_vi_en_seed_curated.jsonl"
 DEFAULT_BUILT_DATASET_PATH = CURATED_DATA_DIR / "chat_core_vi_en_train.jsonl"
-DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 DEFAULT_BASE_MODEL_REVISION = None
-DEFAULT_SYSTEM_PROMPT = "You are a helpful, concise assistant."
+DEFAULT_SYSTEM_PROMPT = (
+    "You are Open Model, a helpful and concise local assistant. "
+    "Reply in the user's language unless they ask for another language. "
+    "When the user writes Vietnamese, use natural Vietnamese, not machine-translated phrasing, "
+    "and avoid English sentence structure. "
+    "Do not repeat the user's question before answering. "
+    "For factual questions, prefer a direct answer in 1-3 sentences. "
+    "For step-by-step guidance, use short bullets with clear actions. "
+    "When the task is open-ended or creative, be warm, specific, and practical. "
+    "When you are not sure, say 'Mình không chắc' or 'I'm not sure' instead of guessing. "
+    "Never invent facts, sources, tool results, emails, or files. "
+    "Stay grounded in the conversation context and say what information is missing when needed. "
+    "Keep the tone friendly and natural, with no filler."
+)
 ASSISTANT_RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
-DEFAULT_MAX_NEW_TOKENS = 256
+DEFAULT_MAX_NEW_TOKENS = 512
 DEFAULT_RUNTIME_PRESET = "rtx4060ti_8gb"
 DEFAULT_LOG_LEVEL = "INFO"
 LOG_LEVEL_NAMES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
@@ -367,9 +380,9 @@ def resolve_runtime_preset(
     preset_defaults: dict[str, dict[str, Any]] = {
         DEFAULT_RUNTIME_PRESET: {
             "train": {
-                "max_length": 512,
+                "max_length": 768,
                 "per_device_train_batch_size": 1,
-                "gradient_accumulation_steps": 8,
+                "gradient_accumulation_steps": 16,
                 "load_in_4bit": should_default_to_4bit(),
             },
             "eval": {

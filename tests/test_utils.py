@@ -73,9 +73,9 @@ def test_resolve_runtime_preset_merges_with_fallback_defaults() -> None:
 
     resolved = resolve_runtime_preset(DEFAULT_RUNTIME_PRESET, "train", fallback)
 
-    assert resolved["max_length"] == 512
+    assert resolved["max_length"] == 768
     assert resolved["per_device_train_batch_size"] == 1
-    assert resolved["gradient_accumulation_steps"] == 8
+    assert resolved["gradient_accumulation_steps"] == 16
     assert resolved["custom_value"] == "kept"
 
 

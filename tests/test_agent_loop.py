@@ -24,6 +24,7 @@ class ScriptedRuntime:
         messages,
         system_prompt: str,
         mode: str = "chat",
+        sampling_overrides=None,
         response_format: dict | None = None,
         guided_json: dict | None = None,
     ) -> GenerationStream:
@@ -32,6 +33,7 @@ class ScriptedRuntime:
                 "messages": messages,
                 "system_prompt": system_prompt,
                 "mode": mode,
+                "sampling_overrides": sampling_overrides,
                 "response_format": response_format,
                 "guided_json": guided_json,
             }
@@ -91,6 +93,26 @@ async def read_inbox_tool(
     return messages[:limit]
 
 
+async def get_email_tool(user_id: str, uid: str) -> dict[str, object]:
+    assert user_id == "user-a"
+    bodies = {
+        "102": "This is the newest message in INBOX. Please review the launch plan and send comments by 3 PM today.",
+        "101": "Please review the launch checklist today and send comments by 3 PM.",
+    }
+    return {
+        "uid": uid,
+        "from": "new@example.com" if uid == "102" else "alice@example.com",
+        "to": ["reader@example.com"],
+        "subject": "Newest inbox message" if uid == "102" else "Launch checklist",
+        "date": "2026-04-19T11:00:00Z" if uid == "102" else "2026-04-18T11:00:00Z",
+        "snippet": bodies[uid],
+        "unread": uid == "101",
+        "has_attachments": False,
+        "body_text": bodies[uid],
+        "attachments": [],
+    }
+
+
 def read_only_email_registry() -> dict[str, ToolSpec]:
     return {
         "read_inbox": ToolSpec(
@@ -101,6 +123,18 @@ def read_only_email_registry() -> dict[str, ToolSpec]:
             handler=read_inbox_tool,
         )
     }
+
+
+def read_only_email_with_full_registry() -> dict[str, ToolSpec]:
+    registry = read_only_email_registry()
+    registry["get_email"] = ToolSpec(
+        name="get_email",
+        description="Read a full email by UID.",
+        params_schema={"type": "object", "properties": {"uid": {"type": "string"}}},
+        returns_schema={"type": "object"},
+        handler=get_email_tool,
+    )
+    return registry
 
 
 def test_build_tools_prompt_includes_registered_tool() -> None:
@@ -142,7 +176,7 @@ async def test_agent_loop_executes_tool_then_final() -> None:
     assert result.answer == "I echoed hello."
     assert result.steps[1].kind == "tool"
     assert result.steps[1].result == {"echo": "hello"}
-    assert runtime.calls[0]["mode"] == "agent"
+    assert runtime.calls[0]["mode"] == "agent_json"
     assert "Tool result for echo" in runtime.calls[1]["messages"][-1]["content"]
 
 
@@ -243,11 +277,39 @@ async def test_agent_loop_falls_back_when_mail_agent_repeats_same_inbox_tool() -
     assert result.stopped_reason == "final"
     assert "Newest inbox message" in result.answer
     assert "new@example.com" in result.answer
-    assert "Mailbox: Inbox (INBOX)" in result.answer
-    assert "Query: any status" in result.answer
+    assert "I checked only Inbox (INBOX)" in result.answer
+    assert "**Summary**" in result.answer
+    assert "**Priority**" in result.answer
+    assert "**Action items**" in result.answer
+    assert "**Deadlines**" in result.answer
+    assert "**Source**: configured inbox UID 102" in result.answer
     assert "Launch checklist" not in result.answer
     assert result.steps[1].arguments == {"limit": 1, "unread_only": False}
     assert [step.kind for step in result.steps] == ["model", "tool", "model"]
+
+
+async def test_read_only_mail_agent_auto_fetches_full_email_for_summary() -> None:
+    runtime = ScriptedRuntime(
+        [
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":1,"unread_only":false}}}',
+            '{"final":"I read the email and prepared the triage."}',
+        ]
+    )
+    loop = AgentLoop(
+        runtime,
+        registry=read_only_email_with_full_registry(),
+        system_protocol=READ_ONLY_EMAIL_PROTOCOL,
+    )
+
+    result = await loop.run("summarize my latest email", max_steps=5, user_id="user-a")
+
+    assert result.stopped_reason == "final"
+    assert [step.tool_name for step in result.steps if step.kind == "tool"] == [
+        "read_inbox",
+        "get_email",
+    ]
+    assert result.steps[2].arguments == {"uid": "102"}
+    assert "Tool result for get_email" in runtime.calls[1]["messages"][-1]["content"]
 
 
 async def test_read_only_mail_agent_normalizes_unread_prompt_to_latest_unread() -> None:
@@ -268,4 +330,6 @@ async def test_read_only_mail_agent_normalizes_unread_prompt_to_latest_unread() 
     assert "Newest inbox message" not in result.answer
     assert "Hộp thư đến (INBOX)" in result.answer
     assert "chưa đọc" in result.answer
+    assert "Mình" in result.answer
+    assert "MÃ¬nh" not in result.answer
     assert result.steps[1].arguments == {"limit": 1, "unread_only": True}

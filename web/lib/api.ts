@@ -16,6 +16,10 @@ export interface ApiClient {
   listConversations(): Promise<ConversationSummary[]>;
   createConversation(): Promise<ConversationSummary>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
+  updateConversationSystemPrompt(
+    conversationId: string,
+    systemPromptOverride: string | null,
+  ): Promise<ConversationSummary>;
   deleteConversation(conversationId: string): Promise<void>;
   getGmailStatus(): Promise<GmailStatus>;
   disconnectGmail(): Promise<GmailStatus>;
@@ -122,6 +126,16 @@ export class HttpApiClient implements ApiClient {
 
   async getConversation(conversationId: string): Promise<ConversationDetail> {
     return requestJson<ConversationDetail>(`/conversations/${conversationId}`);
+  }
+
+  async updateConversationSystemPrompt(
+    conversationId: string,
+    systemPromptOverride: string | null,
+  ): Promise<ConversationSummary> {
+    return requestJson<ConversationSummary>(`/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ system_prompt_override: systemPromptOverride }),
+    });
   }
 
   async deleteConversation(conversationId: string): Promise<void> {

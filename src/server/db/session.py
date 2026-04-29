@@ -40,6 +40,7 @@ conversations = Table(
     Column("id", Text, primary_key=True),
     Column("user_id", Text, nullable=False, server_default="legacy"),
     Column("title", Text, nullable=False),
+    Column("system_prompt_override", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Index("idx_conversations_updated_at", "updated_at"),

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Protocol
 
+from ..core.sampling import SamplingOverrides
+
 
 class SupportsStreamingReply(Protocol):
     supports_constrained_decoding: bool
@@ -13,6 +15,7 @@ class SupportsStreamingReply(Protocol):
         messages: list[dict[str, str]],
         system_prompt: str,
         mode: str = "chat",
+        sampling_overrides: SamplingOverrides | None = None,
         response_format: dict[str, Any] | None = None,
         guided_json: dict[str, Any] | None = None,
     ) -> "GenerationStream": ...

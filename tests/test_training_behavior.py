@@ -63,3 +63,21 @@ def test_train_script_supports_val_dataset_path_and_step_eval() -> None:
     assert "--val_dataset_path" in source
     assert 'eval_strategy="steps" if eval_enabled else "no"' in source
     assert "eval_steps=args.save_steps if eval_enabled else None" in source
+
+
+def test_train_script_supports_3b_qlora_smoke_controls() -> None:
+    source = (ROOT_DIR / "src/train_lora.py").read_text(encoding="utf-8")
+
+    assert "--max_steps" in source
+    assert "--gradient_checkpointing" in source
+    assert "should_force_gradient_checkpointing" in source
+    assert '"3b", "7b"' in source
+
+
+def test_rtx4060ti_config_targets_qwen_3b_qlora() -> None:
+    source = (ROOT_DIR / "configs" / "rtx4060ti_8gb.yaml").read_text(encoding="utf-8")
+
+    assert "base_model: Qwen/Qwen2.5-3B-Instruct" in source
+    assert "output_dir: outputs/qwen2.5_3b_lora_v1" in source
+    assert "load_in_4bit: true" in source
+    assert "gradient_accumulation_steps: 16" in source

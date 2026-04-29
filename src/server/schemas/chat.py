@@ -28,6 +28,7 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: str
     updated_at: str
+    system_prompt_override: str | None = None
     last_message_preview: str | None = None
 
 
@@ -40,6 +41,10 @@ class ChatStreamRequest(BaseModel):
     system_prompt: str | None = None
     mode: str = Field(default="chat")
     max_steps: int = Field(default=5, ge=1, le=10)
+
+
+class ConversationUpdateRequest(BaseModel):
+    system_prompt_override: str | None = Field(default=None, max_length=8000)
 
 
 class StepUpdatePayload(BaseModel):

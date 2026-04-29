@@ -132,6 +132,7 @@ export function ChatShell({
   const [liveSources, setLiveSources] = useState<SourceItem[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
+  const [systemPromptOverride, setSystemPromptOverride] = useState("");
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
   const [gmailActionPending, setGmailActionPending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -142,6 +143,7 @@ export function ChatShell({
   const isStreamingRef = useRef(isStreaming);
   const isCreatingConversationRef = useRef(false);
   const lastCreatedBlankConversationRef = useRef<ConversationSummary | null>(null);
+  const lastSavedSystemPromptRef = useRef<string | null>(null);
   const deletingConversationIdsRef = useRef<Set<string>>(new Set());
   const [deletingConversationIds, setDeletingConversationIds] = useState<string[]>([]);
 
@@ -184,6 +186,8 @@ export function ChatShell({
         setConversations(sortConversationList(conversationList));
         setConversationTitle(conversation.title);
         setMessages(conversation.messages);
+        setSystemPromptOverride(conversation.system_prompt_override ?? "");
+        lastSavedSystemPromptRef.current = conversation.system_prompt_override ?? null;
         setMessageModes({});
       } catch (cause) {
         if (!cancelled) {
@@ -203,6 +207,26 @@ export function ChatShell({
       abortControllerRef.current = null;
     };
   }, [apiClient, conversationId, refreshGmailStatus]);
+
+  useEffect(() => {
+    if (isLoading) return undefined;
+    const normalized = systemPromptOverride.trim() || null;
+    if (normalized === lastSavedSystemPromptRef.current) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      apiClient
+        .updateConversationSystemPrompt(conversationId, normalized)
+        .then((conversation) => {
+          lastSavedSystemPromptRef.current = conversation.system_prompt_override ?? null;
+          setConversations((current) => upsertConversation(current, conversation));
+        })
+        .catch((cause) => {
+          setBanner(cause instanceof Error ? cause.message : "Unable to save custom instructions.");
+        });
+    }, 500);
+
+    return () => window.clearTimeout(timeout);
+  }, [apiClient, conversationId, isLoading, systemPromptOverride]);
 
   useEffect(() => {
     threadAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -416,10 +440,16 @@ export function ChatShell({
       };
 
       try {
+        const customInstructions = systemPromptOverride.trim();
         const streamPayload =
           mode === "agent"
-            ? { message: prompt, mode, max_steps: 5 }
-            : { message: prompt, mode };
+            ? {
+                message: prompt,
+                mode,
+                max_steps: 5,
+                system_prompt: customInstructions,
+              }
+            : { message: prompt, mode, system_prompt: customInstructions };
         await apiClient.streamConversationMessage(
           conversationId,
           streamPayload,
@@ -452,7 +482,7 @@ export function ChatShell({
         }
       }
     },
-    [apiClient, conversationId],
+    [apiClient, conversationId, systemPromptOverride],
   );
 
   const stopStreaming = useCallback(() => {
@@ -607,7 +637,9 @@ export function ChatShell({
         isStreaming={isStreaming}
         gmailStatus={gmailStatus}
         gmailActionPending={gmailActionPending}
+        systemPromptOverride={systemPromptOverride}
         open={panelOpen}
+        onSystemPromptOverrideChange={setSystemPromptOverride}
         onGmailLogin={handleGmailLogin}
         onGmailLogout={handleGmailLogout}
         onToggle={togglePanel}

@@ -17,6 +17,7 @@ from ...schemas import (
     ChatStreamRequest,
     ConversationDetail,
     ConversationSummary,
+    ConversationUpdateRequest,
     ErrorPayload,
     MessageCompletePayload,
     MessageStartPayload,
@@ -69,6 +70,38 @@ async def get_conversation_endpoint(
         raise HTTPException(status_code=404, detail="Conversation not found.") from exc
 
 
+@router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
+async def update_conversation_endpoint(
+    request: Request,
+    conversation_id: str,
+    payload: ConversationUpdateRequest,
+    conversation_store: ConversationStore = Depends(get_store),
+    user_id: str = Depends(get_current_user_id),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> ConversationSummary:
+    try:
+        conversation = await conversation_store.update_system_prompt_override(
+            conversation_id, user_id, payload.system_prompt_override
+        )
+    except KeyError as exc:
+        await audit.log_async(
+            user_id,
+            "conversation.update",
+            target=conversation_id,
+            result="denied",
+            request=request,
+        )
+        raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+    await audit.log_async(
+        user_id,
+        "conversation.update",
+        target=conversation_id,
+        detail={"system_prompt_override": bool(payload.system_prompt_override)},
+        request=request,
+    )
+    return conversation
+
+
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation_endpoint(
     request: Request,
@@ -107,7 +140,18 @@ async def stream_conversation_message(
         conversation_id, user_id, payload.message
     )
     conversation = await conversation_store.get_conversation(conversation_id, user_id)
-    summary = await conversation_store.get_conversation_summary(conversation_id, user_id)
+    if payload.system_prompt is not None:
+        summary = await conversation_store.update_system_prompt_override(
+            conversation_id, user_id, payload.system_prompt
+        )
+        conversation.system_prompt_override = summary.system_prompt_override
+    else:
+        summary = await conversation_store.get_conversation_summary(conversation_id, user_id)
+    effective_system_prompt = (
+        payload.system_prompt
+        if payload.system_prompt is not None
+        else conversation.system_prompt_override
+    )
     await audit.log_async(
         user_id,
         "conversation.stream",
@@ -138,7 +182,7 @@ async def stream_conversation_message(
         run_task = asyncio.create_task(
             agent.run(
                 payload.message,
-                system_prompt=payload.system_prompt,
+                system_prompt=effective_system_prompt,
                 max_steps=payload.max_steps,
                 on_step=on_step,
                 user_id=user_id,
@@ -238,7 +282,7 @@ async def stream_conversation_message(
 
             generation = chat_runtime.stream_reply(
                 messages=[message.model_dump() for message in conversation.messages],
-                system_prompt=(payload.system_prompt or DEFAULT_SYSTEM_PROMPT).strip(),
+                system_prompt=(effective_system_prompt or DEFAULT_SYSTEM_PROMPT).strip(),
                 mode=payload.mode,
             )
 

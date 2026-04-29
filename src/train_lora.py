@@ -107,6 +107,7 @@ TRAIN_CONFIG_FIELDS = {
     "learning_rate",
     "warmup_ratio",
     "logging_steps",
+    "max_steps",
     "save_steps",
     "save_total_limit",
     "seed",
@@ -115,6 +116,7 @@ TRAIN_CONFIG_FIELDS = {
     "lora_dropout",
     "model_revision",
     "load_in_4bit",
+    "gradient_checkpointing",
     "resume_from_checkpoint",
     "report_to",
     "log_level",
@@ -151,7 +153,7 @@ def load_training_config(config_path: Path | None) -> dict[str, object]:
             and value is not None
         ):
             normalized_config[normalized_key] = Path(value)
-        elif key == "load_in_4bit" and value is not None:
+        elif key in {"load_in_4bit", "gradient_checkpointing"} and value is not None:
             normalized_config[normalized_key] = str_to_bool(value)
         elif key == "log_level" and value is not None:
             normalized_config[normalized_key] = str(value).upper()
@@ -222,6 +224,7 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
     parser.add_argument(
         "--logging_steps", type=int, default=config_defaults.get("logging_steps", 10)
     )
+    parser.add_argument("--max_steps", type=int, default=config_defaults.get("max_steps", -1))
     parser.add_argument("--save_steps", type=int, default=config_defaults.get("save_steps", 50))
     parser.add_argument(
         "--save_total_limit", type=int, default=config_defaults.get("save_total_limit", 2)
@@ -243,6 +246,12 @@ def build_parser(config_defaults: dict[str, object]) -> argparse.ArgumentParser:
         type=str_to_bool,
         default=config_defaults.get("load_in_4bit"),
         help="Use 4-bit QLoRA when the local environment supports it.",
+    )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        type=str_to_bool,
+        default=config_defaults.get("gradient_checkpointing"),
+        help="Reduce activation memory during training. Auto-enabled for 3B/7B 4-bit runs.",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -294,7 +303,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             setattr(args, field_name, field_value)
     if args.output_dir is None:
         args.output_dir = get_default_lora_output_dir(args.base_model)
+    args.gradient_checkpointing = resolve_gradient_checkpointing(args)
     return args
+
+
+def should_force_gradient_checkpointing(base_model: str, load_in_4bit: bool) -> bool:
+    normalized_model = base_model.lower()
+    return load_in_4bit and any(size in normalized_model for size in ("3b", "7b"))
+
+
+def resolve_gradient_checkpointing(args: argparse.Namespace) -> bool:
+    if should_force_gradient_checkpointing(args.base_model, args.load_in_4bit):
+        return True
+    if args.gradient_checkpointing is None:
+        return True
+    return bool(args.gradient_checkpointing)
 
 
 def jsonl_has_rows(path: Path) -> bool:
@@ -530,6 +553,7 @@ def main() -> int:
             lr_scheduler_type="cosine",
             seed=args.seed,
             data_seed=args.seed,
+            max_steps=args.max_steps,
             logging_steps=args.logging_steps,
             eval_strategy="steps" if eval_enabled else "no",
             eval_steps=args.save_steps if eval_enabled else None,
@@ -538,8 +562,10 @@ def main() -> int:
             save_total_limit=args.save_total_limit,
             load_best_model_at_end=eval_enabled,
             metric_for_best_model="eval_loss" if eval_enabled else None,
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            gradient_checkpointing=args.gradient_checkpointing,
+            gradient_checkpointing_kwargs=(
+                {"use_reentrant": False} if args.gradient_checkpointing else None
+            ),
             bf16=bf16_enabled,
             fp16=fp16_enabled,
             per_device_eval_batch_size=args.per_device_train_batch_size,

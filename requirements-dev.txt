@@ -11,3 +11,5 @@ coverage>=7.0
 pre-commit>=4.0.0
 testcontainers-postgres>=0.0.1rc1
 jsonschema>=4.23
+langdetect>=1.0.9
+sentence-transformers>=3.0

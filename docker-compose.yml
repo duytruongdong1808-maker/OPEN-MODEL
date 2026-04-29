@@ -66,17 +66,18 @@ services:
   inference:
     image: vllm/vllm-openai:v0.6.3
     command: >
-      --model Qwen/Qwen2.5-1.5B-Instruct
+      --model Qwen/Qwen2.5-3B-Instruct-AWQ
+      --quantization awq
       --enable-lora
       --lora-modules adapter=/adapters/final_adapter
       --max-loras 1
       --max-lora-rank 16
-      --max-model-len 2048
+      --max-model-len 1536
       --gpu-memory-utilization 0.85
       --chat-template /chat_templates/qwen_chat_template.jinja
       --port 8001
     volumes:
-      - ./outputs/qwen2.5_1.5b_lora/final_adapter:/adapters/final_adapter:ro
+      - ./outputs/qwen2.5_3b_lora_v1/final_adapter:/adapters/final_adapter:ro
       - ./configs/qwen_chat_template.jinja:/chat_templates/qwen_chat_template.jinja:ro
       - hf-cache:/root/.cache/huggingface
     read_only: false
@@ -95,7 +96,7 @@ services:
               count: 1
               capabilities: [gpu]
         limits:
-          memory: 8g
+          memory: 10g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
       interval: 30s

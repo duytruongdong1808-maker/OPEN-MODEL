@@ -1,25 +1,37 @@
 {
-  "total_rows": 1000,
+  "total_rows": 3000,
   "action_counts": {
-    "keep": 1000
+    "keep": 2695,
+    "drop": 289,
+    "review": 16
   },
   "mojibake_rows": 0,
   "task_type_distribution": {
-    "summarize": 250,
-    "classification": 250,
-    "list_extraction": 250,
-    "generation": 250
+    "summarize": 683,
+    "classification": 314,
+    "list_extraction": 1084,
+    "generation": 614
   },
   "language_distribution": {
-    "en": 680,
-    "vi": 320
+    "en": 1800,
+    "vi": 895
   },
   "domain_distribution": {
-    "ops": 460,
-    "support": 320,
-    "billing": 140,
-    "product": 80
+    "ops": 1123,
+    "support": 824,
+    "billing": 463,
+    "product": 285
   },
-  "top_review_reasons": [],
-  "top_drop_reasons": []
+  "top_review_reasons": [
+    [
+      "task_ratio_downsampled",
+      16
+    ]
+  ],
+  "top_drop_reasons": [
+    [
+      "near_duplicate",
+      289
+    ]
+  ]
 }

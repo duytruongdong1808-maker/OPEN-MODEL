@@ -18,7 +18,7 @@ This v1 project is meant to be easy to read and easy to extend. It focuses on a 
 ## What This Repo Does
 
 - Uses Python and Hugging Face tooling.
-- Defaults to `Qwen/Qwen2.5-1.5B-Instruct` as the base model.
+- Defaults to `Qwen/Qwen2.5-3B-Instruct` as the base model.
 - Supports raw training examples in this format:
 
 ```json
@@ -161,6 +161,25 @@ On Windows, the most reliable way to run the training and inference scripts is t
 
 The `-u` flag keeps logs unbuffered so startup and progress messages appear immediately. The training script also re-execs itself in UTF-8 mode on Windows when needed, but using `-X utf8` explicitly keeps the terminal behavior predictable.
 
+### Training Qwen2.5-3B on RTX 4060 Ti via WSL2
+
+Native Windows is fine for app development, but the committed 3B QLoRA training path is intended for WSL2/Linux because `bitsandbytes` CUDA support is Linux-first. For the RTX 4060 Ti 8 GB path, use WSL2 with NVIDIA GPU passthrough, install the CUDA PyTorch build, then install this repo's requirements:
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+python -c "import bitsandbytes; print(bitsandbytes.__version__)"
+```
+
+Use the committed 8 GB config for smoke tests and full runs:
+
+```bash
+python src/train_lora.py --config configs/rtx4060ti_8gb.yaml --max_steps 50
+python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
+```
+
+If the 3B run still hits CUDA OOM, lower `max_length` from `768` to `512` in `configs/rtx4060ti_8gb.yaml` and keep `per_device_train_batch_size=1`.
+
 ## Data Preparation
 
 For a meaningful first fine-tune, download a small public instruction sample into `data/raw/train.jsonl`:
@@ -175,7 +194,7 @@ On Windows PowerShell, the equivalent is:
 .\.venv\Scripts\python.exe -X utf8 src\download_sample_data.py
 ```
 
-By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains curated bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` now contains 1,000 clean email-triage seed samples generated from gold triage records. The mail seed is English-first, weighted toward ops and support scenarios, and standardizes priority values to `high|medium|low`.
+By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains 250 bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` contains 3,000 clean email-triage seed samples generated from gold triage records. The mail seed is English-first, covers ops/support/billing/product scenarios, and standardizes priority values to `high|medium|low`.
 
 Put your raw source data in `data/raw/train.jsonl`. The new default workflow does not train from raw directly.
 
@@ -202,10 +221,10 @@ data/curated/curation_report.json
 To regenerate the committed email-triage raw seed:
 
 ```bash
-python src/generate_mail_triage_seed.py --total_rows 1000
+python src/generate_mail_triage_seed.py --total_rows 3000
 ```
 
-`--total_rows` must be a positive multiple of `4`, because each gold record expands into summary, priority, action-extraction, and full-triage tasks.
+`--total_rows` must be a positive multiple of `8`, because each gold record expands into summary, classify-only, action extraction, action-only, deadline-only, draft-reply, thread-summary, and full-triage tasks.
 
 Then curate it:
 
@@ -230,7 +249,7 @@ This writes:
 data/curated/chat_core_vi_en_train.jsonl
 ```
 
-By default the builder now mixes the general curated train set, the bilingual chat seed, and the email-triage seed with the `mail_triage_en_ops_support` profile. That profile uses exclusive buckets and biases sampling toward English ops/support triage while keeping a smaller share of Vietnamese mail, other mail domains, concise general QA/rewrite rows, and mixed utility tasks.
+By default the builder now mixes the general curated train set, the bilingual chat seed, and the email-triage seed with the `chat_balanced_with_mail` profile. That profile targets 30% Vietnamese general chat, 25% English general chat, 25% English mail, 10% Vietnamese mail, and 10% mixed utility rows.
 
 Then prepare the SFT dataset:
 
@@ -256,7 +275,7 @@ python src/prepare_data.py --input_path data/raw/sample.jsonl --val_ratio 0
 If you want to prepare data for a different base model:
 
 ```bash
-python src/prepare_data.py --base_model Qwen/Qwen2.5-0.5B-Instruct
+python src/prepare_data.py --base_model Qwen/Qwen2.5-1.5B-Instruct
 ```
 
 If you change the base model, rerun data preparation before training. If you change the curated inputs, rerun both `curate_data.py` and `build_dataset.py` before `prepare_data.py`. Pass `--model_revision` if you want to lock the tokenizer to a specific Hugging Face revision for reproducibility.
@@ -302,16 +321,16 @@ This will:
 
 - load the processed train and validation datasets
 - load the base model
-- use `Qwen/Qwen2.5-1.5B-Instruct`
-- default to `max_length=512`, which is a safer starting point for 8 GB GPUs
-- enable 4-bit QLoRA by default only on supported non-Windows CUDA setups
+- use `Qwen/Qwen2.5-3B-Instruct`
+- default to `max_length=768` for the 8 GB preset
+- use 4-bit QLoRA in the committed RTX 4060 Ti config
 - train LoRA adapters
 - evaluate on `data/processed/val_sft.jsonl` every `save_steps`
 - save checkpoints under `outputs/`
 - save the final adapter to:
 
 ```text
-outputs/qwen2.5_1.5b_lora/final_adapter
+outputs/qwen2.5_3b_lora_v1/final_adapter
 ```
 
 Preset for your current GPU target:
@@ -320,22 +339,23 @@ Preset for your current GPU target:
 python src/train_lora.py --preset rtx4060ti_8gb
 ```
 
-This preset is tuned for compact instruct models like `Qwen/Qwen2.5-1.5B-Instruct` on GPUs like the RTX 4060 Ti 8 GB and currently applies:
+This preset is tuned for `Qwen/Qwen2.5-3B-Instruct` QLoRA on GPUs like the RTX 4060 Ti 8 GB and currently applies:
 
-- `max_length=512`
+- `max_length=768`
 - `per_device_train_batch_size=1`
-- `gradient_accumulation_steps=8`
-- environment-aware `load_in_4bit`
+- `gradient_accumulation_steps=16`
+- `load_in_4bit=true` when using `configs/rtx4060ti_8gb.yaml`
+- `gradient_checkpointing=true`
 
 Example with a few explicit overrides:
 
 ```bash
 python src/train_lora.py ^
   --num_train_epochs 1 ^
-  --max_length 512 ^
+  --max_length 768 ^
   --per_device_train_batch_size 1 ^
-  --gradient_accumulation_steps 8 ^
-  --learning_rate 1e-4
+  --gradient_accumulation_steps 16 ^
+  --learning_rate 5e-5
 ```
 
 On macOS or Linux shells:
@@ -343,10 +363,10 @@ On macOS or Linux shells:
 ```bash
 python src/train_lora.py \
   --num_train_epochs 1 \
-  --max_length 512 \
+  --max_length 768 \
   --per_device_train_batch_size 1 \
-  --gradient_accumulation_steps 8 \
-  --learning_rate 1e-4
+  --gradient_accumulation_steps 16 \
+  --learning_rate 5e-5
 ```
 
 If you want to disable 4-bit loading:
@@ -393,9 +413,9 @@ python src/merge_adapter.py
 
 This step is optional. `chat.py` and `eval.py` can load the base model plus the LoRA adapter directly without merging first.
 
-By default this reads `outputs/qwen2.5_1.5b_lora/final_adapter` and writes `outputs/qwen2.5_1.5b_lora/merged`.
+By default this reads `outputs/qwen2.5_3b_lora_v1/final_adapter` when you pass that adapter path and writes the merged model beside the adapter output. The legacy 1.5B adapter path remains usable if you explicitly set the old base model and adapter path.
 
-The `outputs/qwen2.5_1.5b_lora/README.md` file you may see after training is the model card autogenerated by Hugging Face tooling for the adapter/checkpoint artifact.
+The `outputs/qwen2.5_3b_lora_v1/README.md` file you may see after training is the model card autogenerated by Hugging Face tooling for the adapter/checkpoint artifact.
 
 ## Publish the Adapter to Hugging Face
 
@@ -451,8 +471,8 @@ python scripts/hf_download_adapter.py your-hf-username/open-model-qwen25-merged 
 The downloader writes files to:
 
 ```text
-outputs/qwen2.5_1.5b_lora/final_adapter
-outputs/qwen2.5_1.5b_lora/merged
+outputs/qwen2.5_3b_lora_v1/final_adapter
+outputs/qwen2.5_3b_lora_v1/merged
 ```
 
 After that, the Docker Compose stack can use the adapter without rerunning training:
@@ -496,7 +516,7 @@ python src/eval.py --preset rtx4060ti_8gb
 If your adapter is saved somewhere else:
 
 ```bash
-python src/eval.py --adapter_path outputs/qwen2.5_1.5b_lora/final_adapter
+python src/eval.py --adapter_path outputs/qwen2.5_3b_lora_v1/final_adapter
 ```
 
 ## Local Chat
@@ -560,7 +580,7 @@ OPEN_MODEL_VLLM_MODEL=adapter
 OPEN_MODEL_VLLM_TIMEOUT_S=120
 ```
 
-The vLLM compose service runs `Qwen/Qwen2.5-1.5B-Instruct` with the LoRA adapter from `outputs/qwen2.5_1.5b_lora/final_adapter`. GPU hosts need CUDA 12+, `nvidia-container-toolkit`, and at least 6 GB VRAM for the 1.5B model plus LoRA adapter. If vLLM runs out of memory, lower `--max-model-len` or `--gpu-memory-utilization` in `docker-compose.yml`.
+The vLLM compose service runs `Qwen/Qwen2.5-3B-Instruct-AWQ` with the LoRA adapter from `outputs/qwen2.5_3b_lora_v1/final_adapter`. GPU hosts need CUDA 12+, `nvidia-container-toolkit`, and an 8 GB card is the intended target with `--max-model-len 1536` and `--gpu-memory-utilization 0.85`. If vLLM runs out of memory, lower `--max-model-len` or temporarily roll back to the 1.5B base and adapter through environment variables.
 
 #### Agent constrained decoding
 
@@ -613,7 +633,7 @@ Optional environment variables:
 - `OPEN_MODEL_VLLM_TIMEOUT_S`
 - `INTERNAL_HMAC_SECRET`
 
-If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries `outputs/qwen2.5_1.5b_lora/final_adapter` first and falls back to the base model if no adapter is present.
+If `OPEN_MODEL_ADAPTER_PATH` is not set, the API tries the default adapter path for `OPEN_MODEL_BASE_MODEL` first and falls back to the base model if no adapter is present.
 
 The chat API endpoints use the same bearer token as the tools API plus signed internal user headers. Set `AGENT_OPS_TOKEN` and `INTERNAL_HMAC_SECRET` on both the backend and the Next.js server. The Next.js app below sends the bearer token and HMAC-signed user identity server-side through its API proxy, so the browser bundle never receives either secret.
 

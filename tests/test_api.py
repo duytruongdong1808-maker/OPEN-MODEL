@@ -30,8 +30,12 @@ class FakeChatRuntime:
         self.error = error
         self.calls: list[dict[str, object]] = []
 
-    def stream_reply(self, *, messages, system_prompt: str, mode: str = "chat") -> GenerationStream:
-        self.calls.append({"messages": messages, "system_prompt": system_prompt, "mode": mode})
+    def stream_reply(
+        self, *, messages, system_prompt: str, mode: str = "chat", **kwargs
+    ) -> GenerationStream:
+        self.calls.append(
+            {"messages": messages, "system_prompt": system_prompt, "mode": mode, **kwargs}
+        )
 
         def iterator():
             if self.error is not None:
@@ -47,8 +51,12 @@ class ScriptedAgentRuntime:
         self.outputs = outputs
         self.calls: list[dict[str, object]] = []
 
-    def stream_reply(self, *, messages, system_prompt: str, mode: str = "chat") -> GenerationStream:
-        self.calls.append({"messages": messages, "system_prompt": system_prompt, "mode": mode})
+    def stream_reply(
+        self, *, messages, system_prompt: str, mode: str = "chat", **kwargs
+    ) -> GenerationStream:
+        self.calls.append(
+            {"messages": messages, "system_prompt": system_prompt, "mode": mode, **kwargs}
+        )
         output = self.outputs.pop(0)
 
         def iterator():
@@ -133,6 +141,26 @@ def test_delete_missing_conversation_returns_not_found(tmp_path: Path) -> None:
     response = client.delete("/conversations/missing")
 
     assert response.status_code == 404
+
+
+def test_update_conversation_system_prompt_persists_and_stream_uses_it(tmp_path: Path) -> None:
+    runtime = FakeChatRuntime()
+    client = create_test_client(tmp_path, runtime)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    update_response = client.patch(
+        f"/conversations/{conversation_id}",
+        json={"system_prompt_override": "Use natural Vietnamese."},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["system_prompt_override"] == "Use natural Vietnamese."
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "Xin chao", "mode": "chat"},
+    )
+    assert response.status_code == 200
+    assert runtime.calls[0]["system_prompt"] == "Use natural Vietnamese."
 
 
 def test_user_a_cannot_list_user_b_conversations(tmp_path: Path) -> None:
@@ -322,8 +350,7 @@ def test_agent_mode_streams_read_only_steps_and_persists_summary(
     runtime = ScriptedAgentRuntime(
         [
             '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":true}}}',
-            '{"tool_call":{"name":"get_email","arguments":{"uid":"101"}}}',
-            '{"final":"Priorities: Launch checklist. Action items: review by 3 PM."}',
+            '{"final":"Triage:\\n- Summary: Launch checklist needs review today.\\n- Priority: high\\n- Action items: review and send comments by 3 PM\\n- Deadlines: by 3 PM"}',
         ]
     )
     monkeypatch.setattr("src.server.app.get_web_agent_registry", fake_read_only_registry)
@@ -344,18 +371,19 @@ def test_agent_mode_streams_read_only_steps_and_persists_summary(
         "agent_step",
         "agent_step",
         "agent_step",
-        "agent_step",
         "message_complete",
     ]
     assert events[1][1]["kind"] == "model"
     assert events[2][1]["kind"] == "tool"
     assert events[2][1]["tool_name"] == "read_inbox"
-    assert events[4][1]["tool_name"] == "get_email"
+    assert events[3][1]["tool_name"] == "get_email"
     assert "read-only email summarization agent" in runtime.calls[0]["system_prompt"]
+    assert "Tool result for get_email" in runtime.calls[1]["messages"][-1]["content"]
 
     conversation = client.get(f"/conversations/{conversation_id}").json()
     assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
-    assert "Launch checklist" in conversation["messages"][1]["content"]
+    assert "Summary: Launch checklist" in conversation["messages"][1]["content"]
+    assert "Action items:" in conversation["messages"][1]["content"]
 
 
 def test_agent_mode_fallback_reports_latest_inbox_message_clearly(
@@ -380,9 +408,14 @@ def test_agent_mode_fallback_reports_latest_inbox_message_clearly(
     conversation = client.get(f"/conversations/{conversation_id}").json()
     answer = conversation["messages"][1]["content"]
     assert "Hộp thư đến (INBOX)" in answer
-    assert "UID: 101" in answer
+    assert "**Source**: configured inbox UID 101" in answer
     assert "Launch checklist" in answer
     assert "Mình đã đọc inbox" not in answer
+    assert "**Summary**" in answer
+    assert "**Priority**" in answer
+    assert "**Action items**" in answer
+    assert "**Deadlines**" in answer
+    assert "MÃ¬nh" not in answer
 
 
 def test_agent_mode_rejects_unavailable_write_tool(tmp_path: Path, monkeypatch) -> None:
@@ -586,7 +619,7 @@ def test_agent_run_endpoint_returns_final_answer(tmp_path: Path, monkeypatch) ->
     payload = response.json()
     assert payload["answer"] == "Inbox checked."
     assert payload["stopped_reason"] == "final"
-    assert runtime.calls[0]["mode"] == "agent"
+    assert runtime.calls[0]["mode"] == "agent_json"
     assert "Available tools" in runtime.calls[0]["system_prompt"]
 
 

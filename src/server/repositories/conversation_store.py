@@ -36,6 +36,13 @@ def derive_conversation_title(message: str) -> str:
     return normalized[: TITLE_MAX_LENGTH - 1].rstrip() + "\u2026"
 
 
+def _normalize_system_prompt(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 @dataclass
 class ConversationStore:
     db_path: Path | None = None
@@ -66,7 +73,10 @@ class ConversationStore:
         await self.initialize()
 
     async def create_conversation(
-        self, user_id: str, title: str = DEFAULT_CONVERSATION_TITLE
+        self,
+        user_id: str,
+        title: str = DEFAULT_CONVERSATION_TITLE,
+        system_prompt_override: str | None = None,
     ) -> ConversationSummary:
         await self._ensure_initialized()
         conversation_id = str(uuid4())
@@ -78,6 +88,7 @@ class ConversationStore:
                         id=conversation_id,
                         user_id=user_id,
                         title=title,
+                        system_prompt_override=_normalize_system_prompt(system_prompt_override),
                         created_at=timestamp,
                         updated_at=timestamp,
                     )
@@ -129,6 +140,7 @@ class ConversationStore:
                 conversations.c.title,
                 conversations.c.created_at,
                 conversations.c.updated_at,
+                conversations.c.system_prompt_override,
                 last_message_preview.label("last_message_preview"),
             )
             .where(conversations.c.user_id == user_id)
@@ -155,6 +167,7 @@ class ConversationStore:
                 conversations.c.title,
                 conversations.c.created_at,
                 conversations.c.updated_at,
+                conversations.c.system_prompt_override,
                 last_message_preview.label("last_message_preview"),
             )
             .where(conversations.c.id == conversation_id, conversations.c.user_id == user_id)
@@ -222,6 +235,26 @@ class ConversationStore:
             for row in message_rows
         ]
         return ConversationDetail(**summary.model_dump(), messages=chat_messages)
+
+    async def update_system_prompt_override(
+        self, conversation_id: str, user_id: str, system_prompt_override: str | None
+    ) -> ConversationSummary:
+        await self._ensure_initialized()
+        timestamp = utcnow_iso()
+        normalized = _normalize_system_prompt(system_prompt_override)
+        async with get_session(self.database_url) as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(conversations)
+                    .where(
+                        conversations.c.id == conversation_id,
+                        conversations.c.user_id == user_id,
+                    )
+                    .values(system_prompt_override=normalized, updated_at=timestamp)
+                )
+        if (result.rowcount or 0) <= 0:
+            raise KeyError(conversation_id)
+        return await self.get_conversation_summary(conversation_id, user_id)
 
     async def save_user_message(
         self, conversation_id: str, user_id: str, content: str

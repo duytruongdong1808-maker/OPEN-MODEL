@@ -18,6 +18,7 @@ class OpenModelSettings(BaseSettings):
     open_model_max_new_tokens: int = Field(default=256, ge=1)
     open_model_temperature: float = Field(default=0.2, ge=0)
     open_model_top_p: float = Field(default=0.9, ge=0, le=1)
+    open_model_repetition_penalty: float = Field(default=1.05, gt=0)
     open_model_inference_backend: Literal["local", "vllm"] = "local"
     open_model_agent_constrained_decoding: bool = True
     open_model_vllm_url: str = "http://inference:8001/v1"

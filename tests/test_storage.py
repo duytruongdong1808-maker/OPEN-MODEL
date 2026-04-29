@@ -40,3 +40,19 @@ async def test_store_blocks_cross_user_message_writes(tmp_path: Path) -> None:
         await store.save_user_message(conversation.id, "user-a", "Nope.")
 
     assert (await store.get_conversation(conversation.id, "user-b")).messages == []
+
+
+async def test_store_persists_system_prompt_override(tmp_path: Path) -> None:
+    store = ConversationStore(tmp_path / "chat.sqlite3")
+    conversation = await store.create_conversation("user-a")
+
+    summary = await store.update_system_prompt_override(
+        conversation.id, "user-a", "Use natural Vietnamese."
+    )
+    detail = await store.get_conversation(conversation.id, "user-a")
+
+    assert summary.system_prompt_override == "Use natural Vietnamese."
+    assert detail.system_prompt_override == "Use natural Vietnamese."
+
+    cleared = await store.update_system_prompt_override(conversation.id, "user-a", "   ")
+    assert cleared.system_prompt_override is None

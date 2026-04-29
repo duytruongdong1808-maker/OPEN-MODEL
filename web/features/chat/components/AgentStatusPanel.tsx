@@ -21,7 +21,9 @@ interface AgentStatusPanelProps {
   isStreaming: boolean;
   gmailStatus: GmailStatus | null;
   gmailActionPending: boolean;
+  systemPromptOverride: string;
   open: boolean;
+  onSystemPromptOverrideChange: (value: string) => void;
   onGmailLogin: () => void;
   onGmailLogout: () => void;
   onToggle: () => void;
@@ -42,7 +44,9 @@ function AgentStatusPanelImpl({
   isStreaming,
   gmailStatus,
   gmailActionPending,
+  systemPromptOverride,
   open,
+  onSystemPromptOverrideChange,
   onGmailLogin,
   onGmailLogout,
   onToggle,
@@ -142,6 +146,18 @@ function AgentStatusPanelImpl({
           <button type="button" className="om-btn om-btn-ghost mt-3 w-full justify-center">
             <IconSliders size={13} /> Inference settings
           </button>
+          <label className="mt-3 block">
+            <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-text-3">
+              <IconSliders size={12} /> Custom instructions
+            </span>
+            <textarea
+              value={systemPromptOverride}
+              onChange={(event) => onSystemPromptOverrideChange(event.target.value)}
+              rows={5}
+              placeholder="Tone, constraints, or role for this conversation"
+              className="om-scroll min-h-[104px] w-full resize-y rounded-md border border-line bg-bg-input px-2.5 py-2 text-[12.5px] leading-relaxed text-text outline-none transition focus:border-accent-ring"
+            />
+          </label>
         </div>
       </aside>
     </>

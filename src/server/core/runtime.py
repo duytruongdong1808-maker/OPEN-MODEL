@@ -15,6 +15,7 @@ def build_chat_service(settings: OpenModelSettings) -> SupportsStreamingReply:
             max_new_tokens=settings.open_model_max_new_tokens,
             temperature=settings.open_model_temperature,
             top_p=settings.open_model_top_p,
+            repetition_penalty=settings.open_model_repetition_penalty,
             timeout=settings.open_model_vllm_timeout_s,
         )
     from ..inference.local import LocalModelChatService
@@ -27,4 +28,5 @@ def build_chat_service(settings: OpenModelSettings) -> SupportsStreamingReply:
         max_new_tokens=settings.open_model_max_new_tokens,
         temperature=settings.open_model_temperature,
         top_p=settings.open_model_top_p,
+        repetition_penalty=settings.open_model_repetition_penalty,
     )

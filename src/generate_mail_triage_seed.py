@@ -12,8 +12,8 @@ except ImportError:
     from utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 
 
-ROWS_PER_RECORD = 4
-DEFAULT_TOTAL_ROWS = 1000
+ROWS_PER_RECORD = 8
+DEFAULT_TOTAL_ROWS = 3000
 DEFAULT_RECORD_COUNT = DEFAULT_TOTAL_ROWS // ROWS_PER_RECORD
 MAIL_DOMAINS = ("ops", "support", "billing", "product")
 
@@ -28,6 +28,22 @@ PRIORITY_INSTRUCTIONS = {
 ACTION_INSTRUCTIONS = {
     "en": "Extract the action items and deadlines from this email as a short bullet list.",
     "vi": "Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn.",
+}
+EXTRACT_ONLY_INSTRUCTIONS = {
+    "en": "Extract only the action items from this email.",
+    "vi": "Chỉ trích xuất các việc cần làm từ email này.",
+}
+DEADLINE_INSTRUCTIONS = {
+    "en": "Find only the deadlines mentioned in this email.",
+    "vi": "Chỉ tìm các hạn chót được nhắc đến trong email này.",
+}
+DRAFT_REPLY_INSTRUCTIONS = {
+    "en": "Draft a concise reply to this email.",
+    "vi": "Soạn một phản hồi ngắn gọn cho email này.",
+}
+THREAD_SUMMARY_INSTRUCTIONS = {
+    "en": "Summarize this email thread in one concise sentence.",
+    "vi": "Tóm tắt chuỗi email này trong một câu ngắn gọn.",
 }
 TRIAGE_INSTRUCTIONS = {
     "en": "Read this email and return a triage block with Summary, Priority, Action items, and Deadlines.",
@@ -398,7 +414,7 @@ def parse_args() -> argparse.Namespace:
         "--total_rows",
         type=int,
         default=DEFAULT_TOTAL_ROWS,
-        help="Total number of rows to generate. Must be a positive multiple of 4.",
+        help=f"Total number of rows to generate. Must be a positive multiple of {ROWS_PER_RECORD}.",
     )
     return parser.parse_args()
 
@@ -423,6 +439,61 @@ def extract_deadline_phrase(text: str) -> str:
         if marker in text:
             return marker.strip() + " " + text.split(marker, 1)[1].strip()
     return text.strip()
+
+
+def format_reply(record: GoldTriageRecord) -> str:
+    if record.language == "en":
+        action_line = (
+            "I will follow up on the listed action items."
+            if record.action_items == ["None"]
+            else f"I will handle: {'; '.join(record.action_items)}."
+        )
+        deadline_line = (
+            "I do not see a hard deadline."
+            if record.deadlines == ["None"]
+            else f"I will track the deadline: {'; '.join(record.deadlines)}."
+        )
+        return (
+            "Hi,\n\n"
+            f"Thanks for the note. {action_line} {deadline_line}\n\n"
+            "Best,"
+        )
+
+    action_line = (
+        "Mình sẽ theo dõi các việc cần làm."
+        if record.action_items == ["None"]
+        else f"Mình sẽ xử lý: {'; '.join(record.action_items)}."
+    )
+    deadline_line = (
+        "Mình chưa thấy hạn chót cứng."
+        if record.deadlines == ["None"]
+        else f"Mình sẽ lưu ý hạn chót: {'; '.join(record.deadlines)}."
+    )
+    return (
+        "Chào bạn,\n\n"
+        f"Cảm ơn bạn đã gửi thông tin. {action_line} {deadline_line}\n\n"
+        "Thân,"
+    )
+
+
+def format_thread_input(record: GoldTriageRecord) -> str:
+    if record.language == "en":
+        follow_up = (
+            "Reply from recipient:\n"
+            f"Thanks, I captured the priority as {record.priority} and will keep the action list visible."
+        )
+    else:
+        follow_up = (
+            "Phản hồi từ người nhận:\n"
+            f"Cảm ơn, mình đã ghi nhận mức ưu tiên là {record.priority} và sẽ theo dõi các việc cần làm."
+        )
+    return f"{record.email}\n\n---\n{follow_up}"
+
+
+def format_thread_summary(record: GoldTriageRecord) -> str:
+    if record.language == "en":
+        return f"The thread confirms that {record.summary[0].lower() + record.summary[1:]}"
+    return f"Chuỗi email xác nhận rằng {record.summary[0].lower() + record.summary[1:]}"
 
 
 def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
@@ -864,7 +935,7 @@ def build_record_catalog() -> list[GoldTriageRecord]:
     records.extend(
         build_domain_records(
             "en",
-            80,
+            100,
             [
                 build_ops_release_record,
                 build_ops_schedule_record,
@@ -876,7 +947,7 @@ def build_record_catalog() -> list[GoldTriageRecord]:
     records.extend(
         build_domain_records(
             "en",
-            60,
+            80,
             [
                 build_support_incident_record,
                 build_support_followup_record,
@@ -887,7 +958,7 @@ def build_record_catalog() -> list[GoldTriageRecord]:
     records.extend(
         build_domain_records(
             "vi",
-            35,
+            55,
             [
                 build_ops_release_record,
                 build_ops_schedule_record,
@@ -899,7 +970,7 @@ def build_record_catalog() -> list[GoldTriageRecord]:
     records.extend(
         build_domain_records(
             "vi",
-            20,
+            40,
             [
                 build_support_incident_record,
                 build_support_followup_record,
@@ -907,29 +978,33 @@ def build_record_catalog() -> list[GoldTriageRecord]:
             ],
         )
     )
-    records.extend(build_domain_records("en", 20, [build_billing_record]))
-    records.extend(build_domain_records("en", 10, [build_product_record]))
-    records.extend(build_domain_records("vi", 15, [build_billing_record]))
-    records.extend(build_domain_records("vi", 10, [build_product_record]))
+    records.extend(build_domain_records("en", 35, [build_billing_record]))
+    records.extend(build_domain_records("en", 25, [build_product_record]))
+    records.extend(build_domain_records("vi", 25, [build_billing_record]))
+    records.extend(build_domain_records("vi", 15, [build_product_record]))
     return records
 
 
 def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
     language = record.language
+    base_metadata = {
+        "domain": record.domain,
+        "language": record.language,
+    }
     return [
         {
             "instruction": SUMMARY_INSTRUCTIONS[language],
             "input": record.email,
             "output": record.summary,
-            "domain": record.domain,
-            "language": record.language,
+            "task_variant": "summarize_email",
+            **base_metadata,
         },
         {
             "instruction": PRIORITY_INSTRUCTIONS[language],
             "input": record.email,
             "output": record.priority,
-            "domain": record.domain,
-            "language": record.language,
+            "task_variant": "classify_only",
+            **base_metadata,
         },
         {
             "instruction": ACTION_INSTRUCTIONS[language],
@@ -939,8 +1014,44 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
                 record.deadlines,
                 language=language,
             ),
-            "domain": record.domain,
-            "language": record.language,
+            "task_variant": "extract_actions_and_deadlines",
+            **base_metadata,
+        },
+        {
+            "instruction": EXTRACT_ONLY_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": format_action_extraction(
+                record.action_items,
+                ["None"],
+                language=language,
+            ),
+            "task_variant": "extract_only",
+            **base_metadata,
+        },
+        {
+            "instruction": DEADLINE_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": format_action_extraction(
+                record.action_items if record.deadlines != ["None"] else ["None"],
+                record.deadlines,
+                language=language,
+            ),
+            "task_variant": "find_deadline",
+            **base_metadata,
+        },
+        {
+            "instruction": DRAFT_REPLY_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": format_reply(record),
+            "task_variant": "draft_reply",
+            **base_metadata,
+        },
+        {
+            "instruction": THREAD_SUMMARY_INSTRUCTIONS[language],
+            "input": format_thread_input(record),
+            "output": format_thread_summary(record),
+            "task_variant": "summarize_thread",
+            **base_metadata,
         },
         {
             "instruction": TRIAGE_INSTRUCTIONS[language],
@@ -952,15 +1063,15 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
                 record.deadlines,
                 language=language,
             ),
-            "domain": record.domain,
-            "language": record.language,
+            "task_variant": "full_triage",
+            **base_metadata,
         },
     ]
 
 
 def build_rows(total_rows: int = DEFAULT_TOTAL_ROWS) -> list[dict[str, str]]:
     if total_rows <= 0 or total_rows % ROWS_PER_RECORD != 0:
-        raise ValueError("total_rows must be a positive multiple of 4.")
+        raise ValueError(f"total_rows must be a positive multiple of {ROWS_PER_RECORD}.")
 
     records = build_record_catalog()
     max_rows = len(records) * ROWS_PER_RECORD

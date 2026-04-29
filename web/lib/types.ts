@@ -28,6 +28,7 @@ export interface ConversationSummary {
   title: string;
   created_at: string;
   updated_at: string;
+  system_prompt_override?: string | null;
   last_message_preview: string | null;
 }
 

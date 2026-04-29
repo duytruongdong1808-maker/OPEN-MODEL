@@ -13,6 +13,7 @@ import httpx
 
 from ...tools.errors import ToolError
 from ...utils import DEFAULT_SYSTEM_PROMPT
+from ..core.sampling import SamplingOverrides, resolve_sampling
 from ..observability.metrics import (
     INFERENCE_FIRST_TOKEN_SECONDS,
     INFERENCE_REQUEST_DURATION_SECONDS,
@@ -26,6 +27,7 @@ class VLLMRequestMetrics:
     first_token_latency_ms: float | None = None
     total_tokens: int = 0
     request_duration_ms: float | None = None
+    sampling_profile: str = "chat"
 
 
 current_vllm_metrics: contextvars.ContextVar[VLLMRequestMetrics | None] = contextvars.ContextVar(
@@ -47,6 +49,7 @@ class VLLMChatService:
         max_new_tokens: int,
         temperature: float,
         top_p: float,
+        repetition_penalty: float = 1.05,
         timeout: float = 120.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -54,6 +57,7 @@ class VLLMChatService:
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
         self.timeout = timeout
         self._limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
 
@@ -74,13 +78,15 @@ class VLLMChatService:
         messages: list[dict[str, str]],
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         mode: str = "chat",
+        sampling_overrides: SamplingOverrides | None = None,
         response_format: dict[str, Any] | None = None,
         guided_json: dict[str, Any] | None = None,
     ) -> GenerationStream:
-        del mode
         payload = self._build_payload(
             messages=messages,
             system_prompt=system_prompt,
+            mode=mode,
+            sampling_overrides=sampling_overrides,
             response_format=response_format,
             guided_json=guided_json,
         )
@@ -89,6 +95,8 @@ class VLLMChatService:
         response_holder: dict[str, httpx.Response] = {}
         loop_holder: dict[str, asyncio.AbstractEventLoop] = {}
         metrics = VLLMRequestMetrics()
+        metrics.sampling_profile = str(payload.get("sampling_profile") or mode)
+        payload.pop("sampling_profile", None)
         current_vllm_metrics.set(metrics)
 
         async def run_stream() -> None:
@@ -164,9 +172,19 @@ class VLLMChatService:
         *,
         messages: list[dict[str, str]],
         system_prompt: str,
+        mode: str = "chat",
+        sampling_overrides: SamplingOverrides | None = None,
         response_format: dict[str, Any] | None = None,
         guided_json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        sampling = resolve_sampling(
+            mode=mode,
+            fallback_max_new_tokens=self.max_new_tokens,
+            fallback_temperature=self.temperature,
+            fallback_top_p=self.top_p,
+            fallback_repetition_penalty=self.repetition_penalty,
+            sampling_overrides=sampling_overrides,
+        )
         chat_messages: list[dict[str, str]] = []
         stripped_system_prompt = system_prompt.strip()
         if stripped_system_prompt:
@@ -177,12 +195,14 @@ class VLLMChatService:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": chat_messages,
-            "max_tokens": self.max_new_tokens,
+            "max_tokens": sampling.max_new_tokens,
+            "repetition_penalty": sampling.repetition_penalty,
+            "sampling_profile": sampling.profile,
             "stream": True,
         }
-        if self.temperature > 0:
-            payload["temperature"] = self.temperature
-            payload["top_p"] = self.top_p
+        if (sampling.temperature or 0) > 0:
+            payload["temperature"] = sampling.temperature
+            payload["top_p"] = sampling.top_p
         else:
             payload["temperature"] = 0
         if guided_json is not None:

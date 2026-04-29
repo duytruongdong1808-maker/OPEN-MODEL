@@ -40,6 +40,7 @@ class FakeApiClient implements ApiClient {
       title: "New chat",
       created_at: "2026-04-18T11:20:00Z",
       updated_at: "2026-04-18T11:20:00Z",
+      system_prompt_override: null,
       last_message_preview: null,
     },
     private readonly createDelayMs = 0,
@@ -61,6 +62,24 @@ class FakeApiClient implements ApiClient {
 
   async getConversation(_conversationId: string): Promise<ConversationDetail> {
     return this.conversation;
+  }
+
+  async updateConversationSystemPrompt(
+    conversationId: string,
+    systemPromptOverride: string | null,
+  ): Promise<ConversationSummary> {
+    const updated: ConversationSummary = {
+      id: this.conversation.id,
+      title: this.conversation.title,
+      created_at: this.conversation.created_at,
+      updated_at: this.conversation.updated_at,
+      last_message_preview: this.conversation.last_message_preview,
+      system_prompt_override: systemPromptOverride,
+    };
+    this.conversations = this.conversations.map((item) =>
+      item.id === conversationId ? { ...item, system_prompt_override: systemPromptOverride } : item,
+    );
+    return updated;
   }
 
   async deleteConversation(conversationId: string): Promise<void> {
@@ -99,6 +118,7 @@ const baseConversation: ConversationDetail = {
   title: "Daily workspace",
   created_at: "2026-04-18T11:00:00Z",
   updated_at: "2026-04-18T11:00:00Z",
+  system_prompt_override: null,
   last_message_preview: null,
   messages: [],
 };

@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from langdetect import LangDetectException, detect_langs
+except ImportError:  # pragma: no cover - optional dev dependency
+    LangDetectException = Exception
+    detect_langs = None
+
+try:
     from .email_triage import (
         MAIL_DOMAINS,
         ParsedTriage,
@@ -78,6 +84,10 @@ CORE_CHAT_TASK_TYPES = {
     TASK_TYPE_GENERATION,
     TASK_TYPE_LIST_EXTRACTION,
 }
+MIN_OUTPUT_CHARS = 10
+MAX_OUTPUT_CHARS = 2000
+NEAR_DUPLICATE_JACCARD_THRESHOLD = 0.90
+MAX_TASK_TYPE_SHARE = 0.40
 MOJIBAKE_MARKERS = ("â€™", "â€˜", "â€œ", "â€", "â€“", "â€”", "Â", "Ã", "Ù", "Ø", "Ë", "áº")
 MOJIBAKE_REPLACEMENTS = {
     "â€™": "'",
@@ -211,6 +221,11 @@ EMAIL_ACTION_MARKERS = (
     "việc cần làm",
     "hạn chót",
     "hạn cuối",
+)
+EMAIL_DEADLINE_ONLY_MARKERS = (
+    "find only the deadlines",
+    "only the deadlines",
+    "chỉ tìm các hạn chót",
 )
 
 
@@ -360,6 +375,25 @@ def contains_mojibake(text: str) -> bool:
     return any(marker in text for marker in MOJIBAKE_MARKERS)
 
 
+def detect_language_with_langdetect(text: str) -> str | None:
+    if detect_langs is None or len(text.split()) < 4:
+        return None
+    try:
+        candidates = detect_langs(text[:2000])
+    except LangDetectException:
+        return None
+    if not candidates:
+        return None
+    top = candidates[0]
+    if top.prob < 0.75:
+        return None
+    if top.lang == "vi":
+        return "vi"
+    if top.lang == "en":
+        return "en"
+    return None
+
+
 def detect_language(*parts: str) -> str:
     combined = " ".join(part for part in parts if part).strip().lower()
     if not combined:
@@ -378,6 +412,9 @@ def detect_language(*parts: str) -> str:
         return "vi"
     if has_en:
         return "en"
+    langdetect_guess = detect_language_with_langdetect(combined)
+    if langdetect_guess is not None:
+        return langdetect_guess
     if re.search(r"[A-Za-z]", combined):
         return "en"
     return "unknown"
@@ -493,6 +530,14 @@ def score_row_quality(
         score -= 50
         drop_flags.append("weak_output_phrase")
 
+    if output_length < MIN_OUTPUT_CHARS and task_type != TASK_TYPE_CLASSIFICATION:
+        score -= 50
+        drop_flags.append("short_output")
+
+    if output_length > MAX_OUTPUT_CHARS:
+        score -= 60
+        drop_flags.append("oversized_output")
+
     if (
         task_type in {TASK_TYPE_REWRITE, TASK_TYPE_SUMMARIZE, TASK_TYPE_GENERATION}
         and output_word_count < 5
@@ -594,6 +639,7 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
 
     task_type = classify_task_type(instruction, input_text, output)
     language = language_override or detect_language(instruction, input_text, output)
+    detected_language = detect_language(instruction, input_text, output)
     quality_score, review_flags, drop_flags = score_row_quality(
         instruction=instruction,
         input_text=input_text,
@@ -601,6 +647,12 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         task_type=task_type,
         unresolved_mojibake=unresolved_mojibake,
     )
+    if (
+        language_override in {"vi", "en"}
+        and detected_language not in {language_override, "mixed", "unknown"}
+    ):
+        quality_score = max(0, quality_score - 60)
+        drop_flags.append("language_mismatch")
     flags.extend(review_flags)
     flags.extend(drop_flags)
 
@@ -633,6 +685,78 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
     if domain_override:
         curated_row["domain"] = domain_override
     return curated_row
+
+
+def _token_ngrams(text: str, n: int = 5) -> set[tuple[str, ...]]:
+    tokens = re.findall(r"[a-zA-ZÀ-ỹ0-9]+", text.lower())
+    if len(tokens) < n:
+        return {tuple(tokens)} if tokens else set()
+    return {tuple(tokens[index : index + n]) for index in range(len(tokens) - n + 1)}
+
+
+def _jaccard(left: set[tuple[str, ...]], right: set[tuple[str, ...]]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def mark_near_duplicates(
+    curated_rows: list[dict[str, Any]],
+    *,
+    threshold: float = NEAR_DUPLICATE_JACCARD_THRESHOLD,
+) -> list[dict[str, Any]]:
+    seen_by_bucket: dict[tuple[str, str], list[set[tuple[str, ...]]]] = {}
+    updated_rows: list[dict[str, Any]] = []
+    for row in curated_rows:
+        updated = dict(row)
+        flags = list(updated.get("flags", []))
+        if updated.get("action") == "keep":
+            combined = " ".join(
+                str(updated.get(field, "")) for field in ("instruction", "input", "output")
+            )
+            if len(combined.split()) < 40:
+                updated_rows.append(updated)
+                continue
+            ngrams = _token_ngrams(combined)
+            bucket = (str(updated.get("task_type", "")), str(updated.get("language", "")))
+            seen_ngrams = seen_by_bucket.setdefault(bucket, [])
+            if any(_jaccard(ngrams, previous) > threshold for previous in seen_ngrams):
+                flags.append("near_duplicate")
+                updated["action"] = "drop"
+                updated["quality_score"] = min(int(updated.get("quality_score", 0)), 40)
+            else:
+                seen_ngrams.append(ngrams)
+        updated["flags"] = sorted(set(flags))
+        updated_rows.append(updated)
+    return updated_rows
+
+
+def enforce_task_type_ratio(
+    curated_rows: list[dict[str, Any]],
+    *,
+    max_share: float = MAX_TASK_TYPE_SHARE,
+) -> list[dict[str, Any]]:
+    keep_indexes = [index for index, row in enumerate(curated_rows) if row["action"] == "keep"]
+    if not keep_indexes:
+        return curated_rows
+
+    max_count = max(1, int(len(keep_indexes) * max_share))
+    task_to_indexes: dict[str, list[int]] = {}
+    for index in keep_indexes:
+        task_to_indexes.setdefault(str(curated_rows[index]["task_type"]), []).append(index)
+
+    updated_rows = [dict(row) for row in curated_rows]
+    for indexes in task_to_indexes.values():
+        if len(indexes) <= max_count:
+            continue
+        for index in indexes[max_count:]:
+            updated = dict(updated_rows[index])
+            flags = list(updated.get("flags", []))
+            flags.append("task_ratio_downsampled")
+            updated["flags"] = sorted(set(flags))
+            updated["action"] = "review"
+            updated_rows[index] = updated
+    return updated_rows
 
 
 def build_report(curated_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -684,6 +808,8 @@ def main() -> int:
         source = args.source or args.input_path.stem
         raw_rows = read_jsonl(args.input_path)
         curated_rows = [curate_row(row, source=source) for row in raw_rows]
+        curated_rows = mark_near_duplicates(curated_rows)
+        curated_rows = enforce_task_type_ratio(curated_rows)
         kept_rows = [row for row in curated_rows if row["action"] == "keep"]
         review_rows = [row for row in curated_rows if row["action"] == "review"]
         report = build_report(curated_rows)

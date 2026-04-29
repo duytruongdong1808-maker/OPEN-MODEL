@@ -54,6 +54,13 @@ TARGET_PROFILES = {
         "general_concise": 0.10,
         "mixed_utility": 0.10,
     },
+    "chat_balanced_with_mail": {
+        "chat_vi_general": 0.30,
+        "chat_en_general": 0.25,
+        "mail_en_all_domains": 0.25,
+        "mail_vi": 0.10,
+        "mixed_utility": 0.10,
+    },
 }
 MIXED_UTILITY_TASK_TYPES = {"summarize", "classification", "list_extraction", "generation"}
 EMAIL_TRIAGE_SOURCE = "seed_mail_triage_vi_en"
@@ -86,7 +93,7 @@ def parse_args() -> argparse.Namespace:
         "--target_profile",
         type=str,
         choices=sorted(TARGET_PROFILES),
-        default="mail_triage_en_ops_support",
+        default="chat_balanced_with_mail",
         help="Sampling profile to use when balancing the dataset.",
     )
     parser.add_argument(
@@ -151,6 +158,26 @@ def is_mixed_utility(row: dict[str, Any]) -> bool:
 
 def is_email_triage(row: dict[str, Any]) -> bool:
     return row.get("source") == EMAIL_TRIAGE_SOURCE
+
+
+def is_chat_vi_general(row: dict[str, Any]) -> bool:
+    return not is_email_triage(row) and row.get("language") == "vi" and row.get(
+        "task_type"
+    ) in CORE_CHAT_TASK_TYPES
+
+
+def is_chat_en_general(row: dict[str, Any]) -> bool:
+    return not is_email_triage(row) and row.get("language") == "en" and row.get(
+        "task_type"
+    ) in CORE_CHAT_TASK_TYPES
+
+
+def is_mail_en_all_domains(row: dict[str, Any]) -> bool:
+    return is_email_triage(row) and row.get("language") == "en"
+
+
+def is_mail_vi(row: dict[str, Any]) -> bool:
+    return is_email_triage(row) and row.get("language") == "vi"
 
 
 def is_general_concise(row: dict[str, Any]) -> bool:
@@ -239,6 +266,22 @@ def build_profile_buckets(
             ("mail_vi_ops_support", is_mail_vi_ops_support),
             ("mail_other", is_mail_other),
             ("general_concise", is_general_concise),
+            ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
+        ]
+        buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
+        for row in keep_rows:
+            for bucket_name, predicate in ordered_buckets:
+                if predicate(row):
+                    buckets[bucket_name].append(row)
+                    break
+        return buckets
+
+    if target_profile == "chat_balanced_with_mail":
+        ordered_buckets = [
+            ("chat_vi_general", is_chat_vi_general),
+            ("chat_en_general", is_chat_en_general),
+            ("mail_en_all_domains", is_mail_en_all_domains),
+            ("mail_vi", is_mail_vi),
             ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
         ]
         buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
