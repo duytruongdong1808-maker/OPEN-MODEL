@@ -7,6 +7,13 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from .cache_env import configure_repo_cache_env
+except ImportError:
+    from cache_env import configure_repo_cache_env
+
+configure_repo_cache_env()
+
 # Emit an immediate startup banner before importing heavier ML packages so
 # Windows users can see the process has actually started.
 if __name__ == "__main__" and os.environ.get("OPEN_MODEL_STARTUP_BANNER") != "1":
@@ -30,12 +37,12 @@ if (
         {**os.environ, "PYTHONUTF8": "1"},
     )
 
-import torch
-from datasets import load_dataset
-from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, set_seed
+import torch  # noqa: E402
+from datasets import load_dataset  # noqa: E402
+from peft import LoraConfig, prepare_model_for_kbit_training  # noqa: E402
+from transformers import AutoModelForCausalLM, set_seed  # noqa: E402
 
-from trl import SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 try:
     from .utils import (

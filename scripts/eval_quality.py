@@ -13,6 +13,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from src.cache_env import configure_repo_cache_env  # noqa: E402
+
+configure_repo_cache_env(ROOT_DIR)
+
 from src.email_triage import score_triage_output  # noqa: E402
 from src.eval import parse_expected_triage  # noqa: E402
 from src.utils import (  # noqa: E402
@@ -78,7 +82,9 @@ VI_MARKERS = {
     "va",
     "và",
 }
-VI_DIACRITIC_RE = re.compile(r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]", re.I)
+VI_DIACRITIC_RE = re.compile(
+    r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]", re.I
+)
 
 
 def normalize_text(value: str) -> str:
@@ -108,7 +114,9 @@ def parse_chat_case(row: dict[str, Any], *, index: int, path: Path) -> ChatEvalC
     for value in expected_keywords:
         if isinstance(value, str) and value.strip():
             continue
-        if isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value):
+        if isinstance(value, list) and all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
             continue
         raise ValueError(f"Chat eval row {index} in {path} has invalid expected_keywords.")
     if not isinstance(must_not_contain, list) or not all(
@@ -137,7 +145,10 @@ def parse_chat_case(row: dict[str, Any], *, index: int, path: Path) -> ChatEvalC
 
 
 def load_chat_eval(path: Path) -> list[ChatEvalCase]:
-    return [parse_chat_case(row, index=index, path=path) for index, row in enumerate(read_jsonl(path), 1)]
+    return [
+        parse_chat_case(row, index=index, path=path)
+        for index, row in enumerate(read_jsonl(path), 1)
+    ]
 
 
 def load_mail_eval(path: Path) -> list[dict[str, Any]]:
@@ -228,7 +239,13 @@ def summarize_case_results(results: list[CaseResult]) -> dict[str, Any]:
 
 def summarize_mail_results(results: list[CaseResult]) -> dict[str, Any]:
     total = len(results)
-    fields = ["parse_success", "summary_match", "priority_match", "action_items_match", "deadlines_match"]
+    fields = [
+        "parse_success",
+        "summary_match",
+        "priority_match",
+        "action_items_match",
+        "deadlines_match",
+    ]
     aggregate = {"total": total}
     for field in fields:
         count = sum(1 for result in results if result.metrics.get(field) is True)
@@ -273,7 +290,9 @@ def run_mail_eval(cases: list[dict[str, Any]], infer) -> list[CaseResult]:
 
 def write_report(report: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     markdown_path = output_path.with_suffix(".md")
     markdown_path.write_text(render_markdown_summary(report), encoding="utf-8")
 
@@ -375,7 +394,9 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "eval_set": args.eval_set,
         "base_model": args.base_model,
-        "adapter_path": None if args.no_adapter or args.adapter_path is None else str(args.adapter_path),
+        "adapter_path": None
+        if args.no_adapter or args.adapter_path is None
+        else str(args.adapter_path),
         "case_counts": {
             "chat": len(chat_cases),
             "mail": len(mail_cases),

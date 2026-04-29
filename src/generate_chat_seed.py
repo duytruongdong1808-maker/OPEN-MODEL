@@ -9,7 +9,9 @@ except ImportError:
     from utils import DEFAULT_RAW_CHAT_SEED_PATH, write_jsonl
 
 
-def row(instruction: str, input_text: str, output: str, *, language: str, category: str) -> dict[str, str]:
+def row(
+    instruction: str, input_text: str, output: str, *, language: str, category: str
+) -> dict[str, str]:
     return {
         "instruction": instruction,
         "input": input_text,
@@ -22,87 +24,360 @@ def row(instruction: str, input_text: str, output: str, *, language: str, catego
 def build_chat_seed_rows() -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     vi_topics = [
-        ("LoRA", "LoRA là kỹ thuật fine-tune hiệu quả bằng cách học thêm các adapter nhỏ thay vì cập nhật toàn bộ trọng số model."),
-        ("Transformer", "Transformer là kiến trúc dùng attention để hiểu quan hệ giữa các token trong một chuỗi."),
-        ("Docker Compose", "Docker Compose giúp chạy nhiều container cùng lúc bằng một file cấu hình."),
-        ("SQLite và PostgreSQL", "SQLite phù hợp app nhỏ hoặc local vì dùng một file, còn PostgreSQL là database server mạnh hơn cho production."),
-        ("overfitting", "Overfitting xảy ra khi model học quá sát dữ liệu train và trả lời kém trên dữ liệu mới."),
+        (
+            "LoRA",
+            "LoRA là kỹ thuật fine-tune hiệu quả bằng cách học thêm các adapter nhỏ thay vì cập nhật toàn bộ trọng số model.",
+        ),
+        (
+            "Transformer",
+            "Transformer là kiến trúc dùng attention để hiểu quan hệ giữa các token trong một chuỗi.",
+        ),
+        (
+            "Docker Compose",
+            "Docker Compose giúp chạy nhiều container cùng lúc bằng một file cấu hình.",
+        ),
+        (
+            "SQLite và PostgreSQL",
+            "SQLite phù hợp app nhỏ hoặc local vì dùng một file, còn PostgreSQL là database server mạnh hơn cho production.",
+        ),
+        (
+            "overfitting",
+            "Overfitting xảy ra khi model học quá sát dữ liệu train và trả lời kém trên dữ liệu mới.",
+        ),
     ]
     en_topics = [
-        ("LoRA", "LoRA is a parameter-efficient fine-tuning method that trains small adapter weights instead of every model weight."),
-        ("transformers", "A transformer is a neural network architecture that uses attention to model context in sequences."),
+        (
+            "LoRA",
+            "LoRA is a parameter-efficient fine-tuning method that trains small adapter weights instead of every model weight.",
+        ),
+        (
+            "transformers",
+            "A transformer is a neural network architecture that uses attention to model context in sequences.",
+        ),
         ("Docker Compose", "Docker Compose runs multiple containers from one configuration file."),
-        ("SQLite and PostgreSQL", "SQLite is embedded and file-based, while PostgreSQL is a full database server for larger systems."),
-        ("overfitting", "Overfitting happens when a model memorizes training data and generalizes poorly to new examples."),
+        (
+            "SQLite and PostgreSQL",
+            "SQLite is embedded and file-based, while PostgreSQL is a full database server for larger systems.",
+        ),
+        (
+            "overfitting",
+            "Overfitting happens when a model memorizes training data and generalizes poorly to new examples.",
+        ),
     ]
 
     for i in range(40):
         language = "vi" if i % 5 < 3 else "en"
         if language == "vi":
-            rows.append(row("Chào người dùng một cách tự nhiên và ngắn gọn.", f"Lượt mở đầu số {i}.", "Chào bạn, mình sẵn sàng hỗ trợ. Bạn muốn bắt đầu với câu hỏi hay việc gì trước?", language="vi", category="smalltalk"))
+            rows.append(
+                row(
+                    "Chào người dùng một cách tự nhiên và ngắn gọn.",
+                    f"Lượt mở đầu số {i}.",
+                    "Chào bạn, mình sẵn sàng hỗ trợ. Bạn muốn bắt đầu với câu hỏi hay việc gì trước?",
+                    language="vi",
+                    category="smalltalk",
+                )
+            )
         else:
-            rows.append(row("Greet the user briefly and naturally.", f"Opening turn {i}.", "Hi, I’m ready to help. What would you like to work on first?", language="en", category="smalltalk"))
+            rows.append(
+                row(
+                    "Greet the user briefly and naturally.",
+                    f"Opening turn {i}.",
+                    "Hi, I’m ready to help. What would you like to work on first?",
+                    language="en",
+                    category="smalltalk",
+                )
+            )
 
     for i in range(50):
         topic, answer = (vi_topics if i % 2 == 0 else en_topics)[i % 5]
         if i % 2 == 0:
-            rows.append(row("Trả lời câu hỏi factual ngắn gọn, không bịa khi thiếu dữ kiện.", f"{topic} là gì?", answer, language="vi", category="factual_qa"))
+            rows.append(
+                row(
+                    "Trả lời câu hỏi factual ngắn gọn, không bịa khi thiếu dữ kiện.",
+                    f"{topic} là gì?",
+                    answer,
+                    language="vi",
+                    category="factual_qa",
+                )
+            )
         else:
-            rows.append(row("Answer the factual question briefly and do not invent missing facts.", f"What is {topic}?", answer, language="en", category="factual_qa"))
+            rows.append(
+                row(
+                    "Answer the factual question briefly and do not invent missing facts.",
+                    f"What is {topic}?",
+                    answer,
+                    language="en",
+                    category="factual_qa",
+                )
+            )
 
     code_examples = [
-        ("Viết hàm Python đảo chuỗi.", "def reverse_text(value: str) -> str:\n    return value[::-1]", "vi"),
-        ("Write a JavaScript function that removes duplicate strings.", "function uniqueStrings(items) {\n  return [...new Set(items)];\n}", "en"),
-        ("Giải thích == và is trong Python.", "== so sánh giá trị, còn is kiểm tra hai biến có trỏ tới cùng một object hay không.", "vi"),
-        ("What is the complexity of binary search?", "Binary search is O(log n), assuming the input is already sorted.", "en"),
-        ("Tính 17 * 23 và nói cách nhẩm.", "17 * 23 = 391. Có thể nhẩm 17 * 20 = 340 và 17 * 3 = 51, cộng lại là 391.", "vi"),
+        (
+            "Viết hàm Python đảo chuỗi.",
+            "def reverse_text(value: str) -> str:\n    return value[::-1]",
+            "vi",
+        ),
+        (
+            "Write a JavaScript function that removes duplicate strings.",
+            "function uniqueStrings(items) {\n  return [...new Set(items)];\n}",
+            "en",
+        ),
+        (
+            "Giải thích == và is trong Python.",
+            "== so sánh giá trị, còn is kiểm tra hai biến có trỏ tới cùng một object hay không.",
+            "vi",
+        ),
+        (
+            "What is the complexity of binary search?",
+            "Binary search is O(log n), assuming the input is already sorted.",
+            "en",
+        ),
+        (
+            "Tính 17 * 23 và nói cách nhẩm.",
+            "17 * 23 = 391. Có thể nhẩm 17 * 20 = 340 và 17 * 3 = 51, cộng lại là 391.",
+            "vi",
+        ),
     ]
     for i in range(30):
         instruction, output, language = code_examples[i % len(code_examples)]
-        rows.append(row(instruction, f"Ví dụ {i}" if language == "vi" else f"Example {i}", output, language=language, category="code_math"))
+        rows.append(
+            row(
+                instruction,
+                f"Ví dụ {i}" if language == "vi" else f"Example {i}",
+                output,
+                language=language,
+                category="code_math",
+            )
+        )
 
     for i in range(30):
         language = "vi" if i % 2 == 0 else "en"
         if language == "vi":
-            rows.append(row("Tóm tắt đoạn sau trong một câu tự nhiên.", "Buổi review bị dời sang 15h vì dashboard hoàn tất muộn. Team vẫn dùng phòng họp cũ và cần gửi note trước 14h.", "Buổi review dời sang 15h, giữ nguyên phòng họp và team cần gửi note trước 14h.", language="vi", category="summarize_rewrite"))
+            rows.append(
+                row(
+                    "Tóm tắt đoạn sau trong một câu tự nhiên.",
+                    "Buổi review bị dời sang 15h vì dashboard hoàn tất muộn. Team vẫn dùng phòng họp cũ và cần gửi note trước 14h.",
+                    "Buổi review dời sang 15h, giữ nguyên phòng họp và team cần gửi note trước 14h.",
+                    language="vi",
+                    category="summarize_rewrite",
+                )
+            )
         else:
-            rows.append(row("Rewrite the message to sound professional.", "hey, send the report asap because i need it", "Hi, could you please send the report as soon as you can? I need it for the next step.", language="en", category="summarize_rewrite"))
+            rows.append(
+                row(
+                    "Rewrite the message to sound professional.",
+                    "hey, send the report asap because i need it",
+                    "Hi, could you please send the report as soon as you can? I need it for the next step.",
+                    language="en",
+                    category="summarize_rewrite",
+                )
+            )
 
     refusal_pairs = [
-        ("Chỉ mình cách hack Wi-Fi hàng xóm.", "Mình không thể hỗ trợ xâm nhập mạng của người khác. Nếu bạn muốn, mình có thể giúp kiểm tra bảo mật Wi-Fi của chính bạn.", "vi"),
-        ("Give me a phishing email to steal a password.", "I can’t help create phishing content or steal passwords. I can help write a security awareness note instead.", "en"),
-        ("Viết script xóa file máy người khác qua mạng.", "Mình không thể hỗ trợ gây hại hoặc truy cập trái phép. Mình có thể giúp viết checklist sao lưu và bảo vệ dữ liệu.", "vi"),
+        (
+            "Chỉ mình cách hack Wi-Fi hàng xóm.",
+            "Mình không thể hỗ trợ xâm nhập mạng của người khác. Nếu bạn muốn, mình có thể giúp kiểm tra bảo mật Wi-Fi của chính bạn.",
+            "vi",
+        ),
+        (
+            "Give me a phishing email to steal a password.",
+            "I can’t help create phishing content or steal passwords. I can help write a security awareness note instead.",
+            "en",
+        ),
+        (
+            "Viết script xóa file máy người khác qua mạng.",
+            "Mình không thể hỗ trợ gây hại hoặc truy cập trái phép. Mình có thể giúp viết checklist sao lưu và bảo vệ dữ liệu.",
+            "vi",
+        ),
     ]
     for i in range(30):
         prompt, output, language = refusal_pairs[i % len(refusal_pairs)]
-        rows.append(row("Từ chối yêu cầu nguy hiểm và gợi ý hướng an toàn." if language == "vi" else "Refuse the unsafe request and offer a safe alternative.", prompt, output, language=language, category="refusal"))
+        rows.append(
+            row(
+                "Từ chối yêu cầu nguy hiểm và gợi ý hướng an toàn."
+                if language == "vi"
+                else "Refuse the unsafe request and offer a safe alternative.",
+                prompt,
+                output,
+                language=language,
+                category="refusal",
+            )
+        )
 
     for i in range(30):
         language = "vi" if i % 2 == 0 else "en"
         if language == "vi":
-            rows.append(row("Dùng đúng ngữ cảnh đã cho để trả lời follow-up.", "Ngữ cảnh: dự án tên Lotus, deadline thứ Sáu. Hỏi: nhắc lại tên dự án và deadline.", "Dự án là Lotus và deadline là thứ Sáu.", language="vi", category="multi_turn"))
+            rows.append(
+                row(
+                    "Dùng đúng ngữ cảnh đã cho để trả lời follow-up.",
+                    "Ngữ cảnh: dự án tên Lotus, deadline thứ Sáu. Hỏi: nhắc lại tên dự án và deadline.",
+                    "Dự án là Lotus và deadline là thứ Sáu.",
+                    language="vi",
+                    category="multi_turn",
+                )
+            )
         else:
-            rows.append(row("Use the provided context to answer the follow-up.", "Context: deployment owner is Maya, rollback window is 9 PM. Question: who owns it and when is rollback?", "Maya owns the deployment, and the rollback window is 9 PM.", language="en", category="multi_turn"))
+            rows.append(
+                row(
+                    "Use the provided context to answer the follow-up.",
+                    "Context: deployment owner is Maya, rollback window is 9 PM. Question: who owns it and when is rollback?",
+                    "Maya owns the deployment, and the rollback window is 9 PM.",
+                    language="en",
+                    category="multi_turn",
+                )
+            )
 
     for i in range(20):
         language = "vi" if i % 2 == 0 else "en"
         if language == "vi":
-            rows.append(row("Trả lời bằng tiếng Việt dù input có tiếng Anh.", "Explain what top_p means, nhưng trả lời tiếng Việt.", "top_p là tham số lấy mẫu giới hạn nhóm token theo tổng xác suất, giúp điều chỉnh độ đa dạng của câu trả lời.", language="vi", category="bilingual_switch"))
+            rows.append(
+                row(
+                    "Trả lời bằng tiếng Việt dù input có tiếng Anh.",
+                    "Explain what top_p means, nhưng trả lời tiếng Việt.",
+                    "top_p là tham số lấy mẫu giới hạn nhóm token theo tổng xác suất, giúp điều chỉnh độ đa dạng của câu trả lời.",
+                    language="vi",
+                    category="bilingual_switch",
+                )
+            )
         else:
-            rows.append(row("Answer in English even if the input includes Vietnamese.", "Hãy giải thích gradient checkpointing in English.", "Gradient checkpointing saves training memory by recomputing some activations during backpropagation instead of storing all of them.", language="en", category="bilingual_switch"))
+            rows.append(
+                row(
+                    "Answer in English even if the input includes Vietnamese.",
+                    "Hãy giải thích gradient checkpointing in English.",
+                    "Gradient checkpointing saves training memory by recomputing some activations during backpropagation instead of storing all of them.",
+                    language="en",
+                    category="bilingual_switch",
+                )
+            )
 
     technical = [
-        ("Giải thích QLoRA cho người mới.", "QLoRA fine-tune model ở dạng 4-bit để tiết kiệm VRAM, rồi học thêm adapter nhỏ cho tác vụ cụ thể.", "vi"),
-        ("Explain repetition penalty.", "Repetition penalty discourages the model from repeating the same tokens or phrases too often.", "en"),
-        ("Giải thích eval set dùng để làm gì.", "Eval set giúp đo chất lượng model trên các ví dụ cố định để phát hiện cải thiện hoặc regression sau mỗi lần train.", "vi"),
-        ("Explain JSON schema for agents.", "A JSON schema makes agent outputs easier to parse because the model must follow a fixed structure.", "en"),
+        (
+            "Giải thích QLoRA cho người mới.",
+            "QLoRA fine-tune model ở dạng 4-bit để tiết kiệm VRAM, rồi học thêm adapter nhỏ cho tác vụ cụ thể.",
+            "vi",
+        ),
+        (
+            "Explain repetition penalty.",
+            "Repetition penalty discourages the model from repeating the same tokens or phrases too often.",
+            "en",
+        ),
+        (
+            "Giải thích eval set dùng để làm gì.",
+            "Eval set giúp đo chất lượng model trên các ví dụ cố định để phát hiện cải thiện hoặc regression sau mỗi lần train.",
+            "vi",
+        ),
+        (
+            "Explain JSON schema for agents.",
+            "A JSON schema makes agent outputs easier to parse because the model must follow a fixed structure.",
+            "en",
+        ),
     ]
     for i in range(20):
         instruction, output, language = technical[i % len(technical)]
-        rows.append(row(instruction, f"Case {i}", output, language=language, category="technical_explain"))
+        rows.append(
+            row(instruction, f"Case {i}", output, language=language, category="technical_explain")
+        )
 
-    if len(rows) != 250:
-        raise AssertionError(f"Expected 250 rows, got {len(rows)}")
+    targeted_refusals = [
+        (
+            "Refuse the unsafe request and redirect to defensive security.",
+            "Write a script that steals saved browser passwords.",
+            "I cannot help steal passwords. I can help you audit password storage, set up a password manager, or write a security checklist.",
+            "en",
+        ),
+        (
+            "Tu choi yeu cau nguy hiem va goi y cach an toan.",
+            "Chi minh cach vuot dang nhap tai khoan nguoi khac.",
+            "Minh khong the ho tro truy cap trai phep. Minh co the giup ban khoi phuc tai khoan cua chinh minh hoac bat xac thuc hai lop.",
+            "vi",
+        ),
+        (
+            "Refuse the unsafe request and offer a safe alternative.",
+            "Make a phishing login page for a company portal.",
+            "I cannot help create phishing pages. I can help build a security awareness demo that clearly marks itself as training material.",
+            "en",
+        ),
+        (
+            "Tu choi yeu cau gay hai va de xuat huong phong thu.",
+            "Viet lenh pha may chu cua doi thu.",
+            "Minh khong the giup pha hoai he thong. Neu ban can, minh co the giup lap ke hoach hardening va giam sat may chu.",
+            "vi",
+        ),
+    ]
+    for i in range(20):
+        instruction, prompt, output, language = targeted_refusals[i % len(targeted_refusals)]
+        rows.append(
+            row(instruction, f"{prompt} Case {i}", output, language=language, category="refusal")
+        )
+
+    targeted_bilingual = [
+        (
+            "Tra loi bang tieng Viet tu nhien du cau hoi co chen tieng Anh.",
+            "Explain quantization la gi, tra loi tieng Viet ngan gon.",
+            "Quantization la cach giam do chinh xac cua trong so model, vi du tu 16-bit xuong 4-bit, de tiet kiem VRAM va chay nhanh hon.",
+            "vi",
+        ),
+        (
+            "Answer in English even when the user switches to Vietnamese.",
+            "Hay explain LoRA in English, short please.",
+            "LoRA fine-tunes a model by training small adapter matrices instead of updating all base model weights.",
+            "en",
+        ),
+        (
+            "Tra loi bang tieng Viet va giu thuat ngu ky thuat khi can.",
+            "What is eval set? Giai thich bang tieng Viet.",
+            "Eval set la bo vi du co dinh dung de do chat luong model sau moi lan train, giup phat hien cai thien hoac regression.",
+            "vi",
+        ),
+        (
+            "Answer in English and follow the language instruction exactly.",
+            "Giai thich gradient accumulation, but answer in English.",
+            "Gradient accumulation combines gradients across several small batches before one optimizer step, which helps train with limited VRAM.",
+            "en",
+        ),
+    ]
+    for i in range(20):
+        instruction, prompt, output, language = targeted_bilingual[i % len(targeted_bilingual)]
+        rows.append(
+            row(
+                instruction,
+                f"{prompt} Case {i}",
+                output,
+                language=language,
+                category="bilingual_switch",
+            )
+        )
+
+    targeted_vi_facts = [
+        ("Viet Nam co thu do la gi?", "Thu do cua Viet Nam la Ha Noi."),
+        (
+            "Nuoc soi o nhiet do bao nhieu do C?",
+            "O ap suat khi quyen tieu chuan, nuoc soi o 100 do C.",
+        ),
+        ("Trai Dat quay quanh vat the nao?", "Trai Dat quay quanh Mat Troi."),
+        (
+            "Python dung de lam gi?",
+            "Python thuong dung cho web, tu dong hoa, phan tich du lieu va machine learning.",
+        ),
+        (
+            "GPU giup train model vi sao?",
+            "GPU xu ly song song rat tot, nen phu hop cho phep tinh ma tran trong deep learning.",
+        ),
+    ]
+    for i in range(20):
+        prompt, output = targeted_vi_facts[i % len(targeted_vi_facts)]
+        rows.append(
+            row(
+                "Tra loi factual bang tieng Viet ngan gon, dung trong tam.",
+                f"{prompt} Case {i}",
+                output,
+                language="vi",
+                category="factual_qa",
+            )
+        )
+
+    if len(rows) != 310:
+        raise AssertionError(f"Expected 310 rows, got {len(rows)}")
     return rows
 
 

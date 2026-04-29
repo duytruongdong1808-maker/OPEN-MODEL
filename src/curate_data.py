@@ -188,6 +188,13 @@ EMAIL_TRIAGE_GENERATION_MARKERS = (
     "triage the email",
     "triage this message",
     "triage the message",
+    "return only these exact labels",
+    "return only this exact schema",
+    "exact triage block schema",
+    "triage block schema",
+    "trả về đúng schema",
+    "trả về đúng các nhãn",
+    "trả về triage email đúng schema",
     "read this email and return a triage block",
     "read the email and return a triage block",
     "đọc email sau và trả về bản triage",
@@ -647,10 +654,11 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         task_type=task_type,
         unresolved_mojibake=unresolved_mojibake,
     )
-    if (
-        language_override in {"vi", "en"}
-        and detected_language not in {language_override, "mixed", "unknown"}
-    ):
+    if language_override in {"vi", "en"} and detected_language not in {
+        language_override,
+        "mixed",
+        "unknown",
+    }:
         quality_score = max(0, quality_score - 60)
         drop_flags.append("language_mismatch")
     flags.extend(review_flags)

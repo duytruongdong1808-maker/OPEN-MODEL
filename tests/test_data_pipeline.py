@@ -368,40 +368,48 @@ def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
     )
 
     assert Counter(row["task_variant"] for row in rows) == {
-        "summarize_email": 375,
-        "classify_only": 375,
-        "extract_actions_and_deadlines": 375,
-        "extract_only": 375,
-        "find_deadline": 375,
-        "draft_reply": 375,
-        "summarize_thread": 375,
-        "full_triage": 375,
+        "summarize_email": 450,
+        "classify_only": 450,
+        "extract_actions_and_deadlines": 450,
+        "extract_only": 450,
+        "find_deadline": 450,
+        "draft_reply": 450,
+        "summarize_thread": 450,
+        "full_triage": 450,
+        "full_triage_strict_schema": 450,
+        "json_to_full_triage_schema": 450,
     }
 
     domain_counts = Counter(row["domain"] for row in rows)
-    assert domain_counts["ops"] == 1240
-    assert domain_counts["support"] == 960
-    assert domain_counts["billing"] == 480
-    assert domain_counts["product"] == 320
-    assert Counter(row["language"] for row in rows) == {"en": 1920, "vi": 1080}
+    assert domain_counts["ops"] == 1550
+    assert domain_counts["support"] == 1200
+    assert domain_counts["billing"] == 600
+    assert domain_counts["product"] == 400
+    assert domain_counts["sales"] == 250
+    assert domain_counts["internal"] == 250
+    assert domain_counts["admin"] == 250
+    assert Counter(row["language"] for row in rows) == {"en": 2760, "vi": 1590, "mixed": 150}
     assert not any("before None" in row["output"] or "they the" in row["output"] for row in rows)
 
 
 def test_generate_chat_seed_expands_bilingual_coverage() -> None:
     rows = build_chat_seed_rows()
 
-    assert len(rows) == 250
+    assert len(rows) == 310
     assert Counter(row["category"] for row in rows) == {
         "smalltalk": 40,
-        "factual_qa": 50,
+        "factual_qa": 70,
         "code_math": 30,
         "summarize_rewrite": 30,
-        "refusal": 30,
+        "refusal": 50,
         "multi_turn": 30,
-        "bilingual_switch": 20,
+        "bilingual_switch": 40,
         "technical_explain": 20,
     }
-    assert Counter(row["language"] for row in rows)["vi"] > Counter(row["language"] for row in rows)["en"]
+    assert (
+        Counter(row["language"] for row in rows)["vi"]
+        > Counter(row["language"] for row in rows)["en"]
+    )
 
 
 def test_generate_mail_eval_extends_to_120_balanced_gold_rows() -> None:
@@ -409,13 +417,24 @@ def test_generate_mail_eval_extends_to_120_balanced_gold_rows() -> None:
 
     assert len(rows) == 120
     assert Counter(row["domain"] for row in rows) == {
-        "ops": 30,
-        "sales": 30,
-        "internal": 30,
-        "admin": 30,
+        "ops": 18,
+        "support": 18,
+        "sales": 18,
+        "internal": 18,
+        "admin": 18,
+        "billing": 15,
+        "product": 15,
     }
     assert Counter(row["language"] for row in rows) == {"en": 60, "vi": 36, "mixed": 24}
-    assert all("expected" in row and row["expected"]["priority"] in {"high", "medium", "low"} for row in rows)
+    assert all(
+        "expected" in row and row["expected"]["priority"] in {"high", "medium", "low"}
+        for row in rows
+    )
+    assert all(
+        row["expected"]["deadlines"] == ["None"]
+        or any(deadline in row["input"] for deadline in row["expected"]["deadlines"])
+        for row in rows
+    )
 
 
 def test_generated_mail_triage_seed_matches_committed_raw_file() -> None:
@@ -467,13 +486,16 @@ def test_committed_mail_triage_report_tracks_en_first_distribution() -> None:
         Path("data/curated/mail_triage_vi_en_seed_report.json").read_text(encoding="utf-8")
     )
 
-    assert report["action_counts"] == {"keep": 2695, "drop": 289, "review": 16}
-    assert report["language_distribution"] == {"en": 1800, "vi": 895}
+    assert report["action_counts"] == {"keep": 4003, "drop": 497}
+    assert report["language_distribution"] == {"en": 2514, "vi": 1339, "mixed": 150}
     assert report["domain_distribution"] == {
-        "ops": 1123,
-        "support": 824,
-        "billing": 463,
-        "product": 285,
+        "ops": 1337,
+        "support": 972,
+        "billing": 573,
+        "product": 375,
+        "sales": 248,
+        "internal": 248,
+        "admin": 250,
     }
 
 
@@ -481,14 +503,15 @@ def test_committed_built_dataset_keeps_mail_focus_and_clean_phrasing() -> None:
     rows = read_jsonl("data/curated/chat_core_vi_en_train.jsonl")
 
     assert Counter(row["sampling_bucket"] for row in rows) == {
-        "chat_vi_general": 993,
-        "mail_en_all_domains": 828,
-        "chat_en_general": 827,
-        "mail_vi": 331,
-        "mixed_utility": 331,
+        "chat_vi_general": 1154,
+        "mail_en_all_domains": 1154,
+        "chat_en_general": 924,
+        "mail_vi": 462,
+        "mail_mixed": 462,
+        "mixed_utility": 462,
     }
-    assert Counter(row["language"] for row in rows) == {"en": 1655, "vi": 1324, "mixed": 331}
-    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 1159
+    assert Counter(row["language"] for row in rows) == {"en": 2078, "vi": 1616, "mixed": 924}
+    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 2078
     assert not any(
         pattern in row.get("input", "") or pattern in row.get("output", "")
         for row in rows

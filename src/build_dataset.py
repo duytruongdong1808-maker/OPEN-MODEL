@@ -55,10 +55,11 @@ TARGET_PROFILES = {
         "mixed_utility": 0.10,
     },
     "chat_balanced_with_mail": {
-        "chat_vi_general": 0.30,
-        "chat_en_general": 0.25,
+        "chat_vi_general": 0.25,
+        "chat_en_general": 0.20,
         "mail_en_all_domains": 0.25,
         "mail_vi": 0.10,
+        "mail_mixed": 0.10,
         "mixed_utility": 0.10,
     },
 }
@@ -161,15 +162,19 @@ def is_email_triage(row: dict[str, Any]) -> bool:
 
 
 def is_chat_vi_general(row: dict[str, Any]) -> bool:
-    return not is_email_triage(row) and row.get("language") == "vi" and row.get(
-        "task_type"
-    ) in CORE_CHAT_TASK_TYPES
+    return (
+        not is_email_triage(row)
+        and row.get("language") == "vi"
+        and row.get("task_type") in CORE_CHAT_TASK_TYPES
+    )
 
 
 def is_chat_en_general(row: dict[str, Any]) -> bool:
-    return not is_email_triage(row) and row.get("language") == "en" and row.get(
-        "task_type"
-    ) in CORE_CHAT_TASK_TYPES
+    return (
+        not is_email_triage(row)
+        and row.get("language") == "en"
+        and row.get("task_type") in CORE_CHAT_TASK_TYPES
+    )
 
 
 def is_mail_en_all_domains(row: dict[str, Any]) -> bool:
@@ -178,6 +183,10 @@ def is_mail_en_all_domains(row: dict[str, Any]) -> bool:
 
 def is_mail_vi(row: dict[str, Any]) -> bool:
     return is_email_triage(row) and row.get("language") == "vi"
+
+
+def is_mail_mixed(row: dict[str, Any]) -> bool:
+    return is_email_triage(row) and row.get("language") == "mixed"
 
 
 def is_general_concise(row: dict[str, Any]) -> bool:
@@ -282,6 +291,7 @@ def build_profile_buckets(
             ("chat_en_general", is_chat_en_general),
             ("mail_en_all_domains", is_mail_en_all_domains),
             ("mail_vi", is_mail_vi),
+            ("mail_mixed", is_mail_mixed),
             ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
         ]
         buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}

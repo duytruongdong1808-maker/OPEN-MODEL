@@ -72,7 +72,9 @@ def resolve_sampling(
                 if sampling_overrides.temperature is not None
                 else profile.temperature
             ),
-            top_p=sampling_overrides.top_p if sampling_overrides.top_p is not None else profile.top_p,
+            top_p=sampling_overrides.top_p
+            if sampling_overrides.top_p is not None
+            else profile.top_p,
             max_new_tokens=(
                 sampling_overrides.max_new_tokens
                 if sampling_overrides.max_new_tokens is not None
@@ -86,7 +88,9 @@ def resolve_sampling(
         )
     return SamplingOverrides(
         profile=profile.profile,
-        temperature=profile.temperature if profile.temperature is not None else fallback_temperature,
+        temperature=profile.temperature
+        if profile.temperature is not None
+        else fallback_temperature,
         top_p=profile.top_p if profile.top_p is not None else fallback_top_p,
         max_new_tokens=(
             profile.max_new_tokens

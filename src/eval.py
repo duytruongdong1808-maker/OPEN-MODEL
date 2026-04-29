@@ -3,7 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from transformers import set_seed
+try:
+    from .cache_env import configure_repo_cache_env
+except ImportError:
+    from cache_env import configure_repo_cache_env
+
+configure_repo_cache_env()
+
+from transformers import set_seed  # noqa: E402
 
 try:
     from .email_triage import ParsedTriage, score_triage_output

@@ -245,9 +245,7 @@ class AgentLoop:
                         full_result = await self._execute_tool(
                             "get_email", {"uid": uid}, user_id=user_id
                         )
-                        AGENT_TOOL_CALL_TOTAL.labels(
-                            tool_name="get_email", status="success"
-                        ).inc()
+                        AGENT_TOOL_CALL_TOTAL.labels(tool_name="get_email", status="success").inc()
                         full_step.result = to_jsonable(full_result)
                         messages.append(
                             {
@@ -261,9 +259,7 @@ class AgentLoop:
                             }
                         )
                     except Exception as exc:
-                        AGENT_TOOL_CALL_TOTAL.labels(
-                            tool_name="get_email", status="error"
-                        ).inc()
+                        AGENT_TOOL_CALL_TOTAL.labels(tool_name="get_email", status="error").inc()
                         full_step.status = "error"
                         full_step.error = str(exc)
                         messages.append(

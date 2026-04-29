@@ -1,36 +1,44 @@
 {
-  "total_rows": 250,
+  "total_rows": 310,
   "action_counts": {
-    "keep": 138,
-    "review": 71,
-    "drop": 41
+    "keep": 142,
+    "review": 87,
+    "drop": 81
   },
   "mojibake_rows": 0,
   "task_type_distribution": {
     "generation": 48,
-    "qa": 74,
+    "qa": 78,
     "summarize": 1,
     "rewrite": 15
   },
   "language_distribution": {
-    "vi": 64,
-    "en": 74
+    "vi": 66,
+    "en": 76
   },
   "domain_distribution": {},
   "top_review_reasons": [
     [
       "task_ratio_downsampled",
-      49
+      55
     ],
     [
       "task_other",
-      22
+      32
     ]
   ],
   "top_drop_reasons": [
     [
       "near_duplicate",
       41
+    ],
+    [
+      "language_mismatch",
+      40
+    ],
+    [
+      "task_other",
+      40
     ]
   ]
 }

@@ -1,6 +1,6 @@
 base_model: Qwen/Qwen2.5-3B-Instruct
 preset: rtx4060ti_8gb
-output_dir: outputs/qwen2.5_3b_lora_v1
+output_dir: outputs/qwen2.5_3b_lora_v3
 num_train_epochs: 2
 learning_rate: 5.0e-5
 per_device_train_batch_size: 1

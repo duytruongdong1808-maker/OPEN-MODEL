@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,42 +13,69 @@ except ImportError:
     from utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 
 
-ROWS_PER_RECORD = 8
-DEFAULT_TOTAL_ROWS = 3000
+ROWS_PER_RECORD = 10
+DEFAULT_TOTAL_ROWS = 4500
 DEFAULT_RECORD_COUNT = DEFAULT_TOTAL_ROWS // ROWS_PER_RECORD
-MAIL_DOMAINS = ("ops", "support", "billing", "product")
+MAIL_DOMAINS = ("ops", "support", "billing", "product", "sales", "internal", "admin")
 
 SUMMARY_INSTRUCTIONS = {
     "en": "Summarize this email in one short sentence.",
     "vi": "Tóm tắt email sau trong một câu ngắn.",
+    "mixed": "Summarize this mixed-language email in one short sentence.",
 }
 PRIORITY_INSTRUCTIONS = {
     "en": "Classify the priority of this email as high, medium, or low.",
     "vi": "Cho biết mức ưu tiên của email này là high, medium, hay low.",
+    "mixed": "Classify the priority of this mixed-language email as high, medium, or low.",
 }
 ACTION_INSTRUCTIONS = {
     "en": "Extract the action items and deadlines from this email as a short bullet list.",
     "vi": "Trích xuất việc cần làm và hạn chót từ email sau dưới dạng danh sách gạch đầu dòng ngắn.",
+    "mixed": "Extract the action items and deadlines from this mixed-language email as a short bullet list.",
 }
 EXTRACT_ONLY_INSTRUCTIONS = {
     "en": "Extract only the action items from this email.",
     "vi": "Chỉ trích xuất các việc cần làm từ email này.",
+    "mixed": "Extract only the action items from this mixed-language email.",
 }
 DEADLINE_INSTRUCTIONS = {
     "en": "Find only the deadlines mentioned in this email.",
     "vi": "Chỉ tìm các hạn chót được nhắc đến trong email này.",
+    "mixed": "Find only the deadlines mentioned in this mixed-language email.",
 }
 DRAFT_REPLY_INSTRUCTIONS = {
     "en": "Draft a concise reply to this email.",
     "vi": "Soạn một phản hồi ngắn gọn cho email này.",
+    "mixed": "Draft a concise English reply to this mixed-language email.",
 }
 THREAD_SUMMARY_INSTRUCTIONS = {
     "en": "Summarize this email thread in one concise sentence.",
     "vi": "Tóm tắt chuỗi email này trong một câu ngắn gọn.",
+    "mixed": "Summarize this mixed-language email thread in one concise sentence.",
 }
 TRIAGE_INSTRUCTIONS = {
-    "en": "Read this email and return a triage block with Summary, Priority, Action items, and Deadlines.",
-    "vi": "Đọc email sau và trả về bản triage gồm Tóm tắt, Ưu tiên, Việc cần làm, Hạn chót.",
+    "en": "Read this email and return only these exact labels: Summary, Priority, Action items, Deadlines. Do not add Subject or extra sections.",
+    "vi": "Đọc email sau và trả về đúng các nhãn tiếng Anh: Summary, Priority, Action items, Deadlines. Không thêm Subject hoặc mục khác.",
+    "mixed": "Read this mixed-language email and return only these exact labels: Summary, Priority, Action items, Deadlines. Do not add Subject or extra sections.",
+}
+STRICT_TRIAGE_INSTRUCTIONS = {
+    "en": (
+        "Return the email triage in exactly this schema:\n"
+        "Summary: ...\nPriority: high|medium|low\nAction items:\n- ...\nDeadlines: ..."
+    ),
+    "vi": (
+        "Trả về triage email đúng schema tiếng Anh này:\n"
+        "Summary: ...\nPriority: high|medium|low\nAction items:\n- ...\nDeadlines: ..."
+    ),
+    "mixed": (
+        "Return the mixed-language email triage in exactly this schema:\n"
+        "Summary: ...\nPriority: high|medium|low\nAction items:\n- ...\nDeadlines: ..."
+    ),
+}
+JSON_TO_TRIAGE_INSTRUCTIONS = {
+    "en": "Convert this email facts JSON into the exact triage block schema.",
+    "vi": "Chuyển JSON thông tin email này thành triage block đúng schema tiếng Anh.",
+    "mixed": "Convert this mixed-language email facts JSON into the exact triage block schema.",
 }
 NAME_PAIRS = [
     ("Lan", "Huy"),
@@ -442,7 +470,7 @@ def extract_deadline_phrase(text: str) -> str:
 
 
 def format_reply(record: GoldTriageRecord) -> str:
-    if record.language == "en":
+    if record.language in {"en", "mixed"}:
         action_line = (
             "I will follow up on the listed action items."
             if record.action_items == ["None"]
@@ -453,11 +481,7 @@ def format_reply(record: GoldTriageRecord) -> str:
             if record.deadlines == ["None"]
             else f"I will track the deadline: {'; '.join(record.deadlines)}."
         )
-        return (
-            "Hi,\n\n"
-            f"Thanks for the note. {action_line} {deadline_line}\n\n"
-            "Best,"
-        )
+        return f"Hi,\n\nThanks for the note. {action_line} {deadline_line}\n\nBest,"
 
     action_line = (
         "Mình sẽ theo dõi các việc cần làm."
@@ -469,15 +493,11 @@ def format_reply(record: GoldTriageRecord) -> str:
         if record.deadlines == ["None"]
         else f"Mình sẽ lưu ý hạn chót: {'; '.join(record.deadlines)}."
     )
-    return (
-        "Chào bạn,\n\n"
-        f"Cảm ơn bạn đã gửi thông tin. {action_line} {deadline_line}\n\n"
-        "Thân,"
-    )
+    return f"Chào bạn,\n\nCảm ơn bạn đã gửi thông tin. {action_line} {deadline_line}\n\nThân,"
 
 
 def format_thread_input(record: GoldTriageRecord) -> str:
-    if record.language == "en":
+    if record.language in {"en", "mixed"}:
         follow_up = (
             "Reply from recipient:\n"
             f"Thanks, I captured the priority as {record.priority} and will keep the action list visible."
@@ -491,7 +511,7 @@ def format_thread_input(record: GoldTriageRecord) -> str:
 
 
 def format_thread_summary(record: GoldTriageRecord) -> str:
-    if record.language == "en":
+    if record.language in {"en", "mixed"}:
         return f"The thread confirms that {record.summary[0].lower() + record.summary[1:]}"
     return f"Chuỗi email xác nhận rằng {record.summary[0].lower() + record.summary[1:]}"
 
@@ -920,6 +940,120 @@ def build_product_record(language: str, index: int) -> GoldTriageRecord:
     )
 
 
+TARGETED_DOMAINS = ("sales", "internal", "admin")
+TARGETED_CUSTOMERS = ("GreenLeaf", "BlueOcean", "Northstar", "Acme", "Lotus")
+TARGETED_OWNERS = ("Lan", "Minh", "Vy", "Quan", "Maya")
+TARGETED_HOURS = ("10:30 AM", "2 PM", "4 PM", "Friday noon", "tomorrow 9 AM")
+
+
+def _targeted_priority(index: int) -> str:
+    return ("high", "medium", "low", "low")[index % 4]
+
+
+def _targeted_domain_payload(
+    domain: str, customer: str, owner: str, hour: str, priority: str
+) -> dict[str, str | list[str]]:
+    if domain == "sales":
+        subject = f"Renewal quote follow-up for {customer}"
+        body = (
+            f"The {customer} renewal quote is waiting on discount approval. Please have {owner} "
+            f"send the final quote by {hour} and flag finance if approval slips."
+        )
+        summary = f"Sales needs to finish the {customer} renewal quote after discount approval."
+        actions = [f"{owner} sends the final quote by {hour}", "Flag finance if approval slips"]
+    elif domain == "internal":
+        subject = f"Team notes for {customer} incident review"
+        body = (
+            f"The incident review notes are ready. Please have {owner} review the action owner list "
+            f"by {hour}. No broad announcement is required unless you find a factual error."
+        )
+        summary = "The team needs to review incident notes, but no broad announcement is required."
+        actions = [f"{owner} reviews the action owner list by {hour}"]
+    else:
+        subject = f"Admin reminder for {customer} invoice"
+        body = (
+            f"Please have {owner} upload the {customer} invoice receipt by {hour}. "
+            "This is only for records, so no customer reply is needed."
+        )
+        summary = f"Admin needs to upload the {customer} invoice receipt for records."
+        actions = [f"{owner} uploads the {customer} invoice receipt by {hour}"]
+
+    if priority == "high":
+        body = f"URGENT: {body}"
+        deadlines = [f"by {hour}"]
+    elif priority == "medium":
+        deadlines = [f"by {hour}"]
+    else:
+        if index_is_even_marker(customer, owner):
+            actions = ["None"]
+            deadlines = ["None"]
+            body = body.replace(f" by {hour}", "").replace(f"by {hour}", "").strip()
+        else:
+            deadlines = ["None"]
+
+    return {
+        "subject": subject,
+        "body": body,
+        "summary": summary,
+        "actions": actions,
+        "deadlines": deadlines,
+    }
+
+
+def index_is_even_marker(customer: str, owner: str) -> bool:
+    return (len(customer) + len(owner)) % 2 == 0
+
+
+def build_targeted_record(domain: str, language: str, index: int) -> GoldTriageRecord:
+    customer = TARGETED_CUSTOMERS[index % len(TARGETED_CUSTOMERS)]
+    owner = TARGETED_OWNERS[index % len(TARGETED_OWNERS)]
+    hour = TARGETED_HOURS[index % len(TARGETED_HOURS)]
+    priority = _targeted_priority(index)
+    payload = _targeted_domain_payload(domain, customer, owner, hour, priority)
+    subject = str(payload["subject"])
+    body = str(payload["body"])
+    summary = str(payload["summary"])
+    actions = list(payload["actions"])
+    deadlines = list(payload["deadlines"])
+
+    if language == "vi":
+        email = (
+            f"Chủ đề: {subject}\n\n"
+            f"Chào team,\n\n{body} Vui lòng giữ đúng các mốc thời gian đã nêu.\n\nCảm ơn."
+        )
+    elif language == "mixed":
+        email = (
+            f"Subject: {subject}\n\n"
+            f"Chào team,\n\n{body} Please keep the customer name as {customer} in the update.\n\nThanks."
+        )
+    else:
+        email = f"Subject: {subject}\n\nHi team,\n\n{body}\n\nThanks."
+
+    return GoldTriageRecord(
+        domain=domain,
+        language=language,
+        email=add_reference(
+            email,
+            language="en" if language == "mixed" else language,
+            domain=domain,
+            index=500 + index,
+        ),
+        summary=summary,
+        priority=priority,
+        action_items=actions,
+        deadlines=deadlines,
+    )
+
+
+def build_targeted_records() -> list[GoldTriageRecord]:
+    records: list[GoldTriageRecord] = []
+    language_plan = ["en"] * 12 + ["vi"] * 8 + ["mixed"] * 5
+    for domain in TARGETED_DOMAINS:
+        for index, language in enumerate(language_plan):
+            records.append(build_targeted_record(domain, language, index))
+    return records
+
+
 def build_domain_records(language: str, count: int, builders: list) -> list[GoldTriageRecord]:
     records: list[GoldTriageRecord] = []
     local_index = 0
@@ -982,15 +1116,34 @@ def build_record_catalog() -> list[GoldTriageRecord]:
     records.extend(build_domain_records("en", 25, [build_product_record]))
     records.extend(build_domain_records("vi", 25, [build_billing_record]))
     records.extend(build_domain_records("vi", 15, [build_product_record]))
+    records.extend(build_targeted_records())
     return records
 
 
 def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
     language = record.language
+    label_language = "en"
     base_metadata = {
         "domain": record.domain,
         "language": record.language,
     }
+    full_triage_output = format_full_triage(
+        record.summary,
+        record.priority,
+        record.action_items,
+        record.deadlines,
+        language=label_language,
+    )
+    facts_input = f"Email:\n{record.email}\n\n" + json.dumps(
+        {
+            "summary": record.summary,
+            "priority": record.priority,
+            "action_items": record.action_items,
+            "deadlines": record.deadlines,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
     return [
         {
             "instruction": SUMMARY_INSTRUCTIONS[language],
@@ -1012,7 +1165,7 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "output": format_action_extraction(
                 record.action_items,
                 record.deadlines,
-                language=language,
+                language=label_language,
             ),
             "task_variant": "extract_actions_and_deadlines",
             **base_metadata,
@@ -1023,7 +1176,7 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "output": format_action_extraction(
                 record.action_items,
                 ["None"],
-                language=language,
+                language=label_language,
             ),
             "task_variant": "extract_only",
             **base_metadata,
@@ -1034,7 +1187,7 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "output": format_action_extraction(
                 record.action_items if record.deadlines != ["None"] else ["None"],
                 record.deadlines,
-                language=language,
+                language=label_language,
             ),
             "task_variant": "find_deadline",
             **base_metadata,
@@ -1056,14 +1209,22 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
         {
             "instruction": TRIAGE_INSTRUCTIONS[language],
             "input": record.email,
-            "output": format_full_triage(
-                record.summary,
-                record.priority,
-                record.action_items,
-                record.deadlines,
-                language=language,
-            ),
+            "output": full_triage_output,
             "task_variant": "full_triage",
+            **base_metadata,
+        },
+        {
+            "instruction": STRICT_TRIAGE_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": full_triage_output,
+            "task_variant": "full_triage_strict_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": JSON_TO_TRIAGE_INSTRUCTIONS[language],
+            "input": facts_input,
+            "output": full_triage_output,
+            "task_variant": "json_to_full_triage_schema",
             **base_metadata,
         },
     ]
