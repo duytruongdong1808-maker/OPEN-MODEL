@@ -19,7 +19,8 @@ keywords = [
   "TOKEN",
 ]
 
-[[rules.allowlists]]
+[rules.allowlist]
+description = "Allow empty or placeholder secret variables in the env template"
 paths = [
   '''(^|/)\.env\.example$''',
 ]
