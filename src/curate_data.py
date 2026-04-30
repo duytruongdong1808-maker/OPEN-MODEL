@@ -75,6 +75,7 @@ TASK_TYPE_SUMMARIZE = "summarize"
 TASK_TYPE_CLASSIFICATION = "classification"
 TASK_TYPE_GENERATION = "generation"
 TASK_TYPE_LIST_EXTRACTION = "list_extraction"
+TASK_TYPE_REFUSAL = "safety_refusal"
 TASK_TYPE_OTHER = "other"
 CORE_CHAT_TASK_TYPES = {
     TASK_TYPE_QA,
@@ -83,6 +84,7 @@ CORE_CHAT_TASK_TYPES = {
     TASK_TYPE_CLASSIFICATION,
     TASK_TYPE_GENERATION,
     TASK_TYPE_LIST_EXTRACTION,
+    TASK_TYPE_REFUSAL,
 }
 MIN_OUTPUT_CHARS = 10
 MAX_OUTPUT_CHARS = 2000
@@ -445,6 +447,25 @@ def classify_task_type(instruction: str, input_text: str, output: str) -> str:
         return TASK_TYPE_CLASSIFICATION
     if any(keyword in instruction_lower for keyword in EMAIL_ACTION_MARKERS):
         return TASK_TYPE_LIST_EXTRACTION
+    if any(
+        keyword in instruction_lower
+        for keyword in (
+            "refuse",
+            "unsafe request",
+            "safe alternative",
+            "credential theft",
+            "harmful code",
+            "từ chối",
+            "tu choi",
+            "nguy hiểm",
+            "nguy hiem",
+            "lừa đảo",
+            "lua dao",
+            "truy cập trái phép",
+            "truy cap trai phep",
+        )
+    ):
+        return TASK_TYPE_REFUSAL
     if any(
         keyword in instruction_lower
         for keyword in ("summarize", "summary", "tóm tắt", "briefly summarize")

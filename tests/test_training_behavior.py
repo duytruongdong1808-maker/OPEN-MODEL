@@ -78,6 +78,6 @@ def test_rtx4060ti_config_targets_qwen_3b_qlora() -> None:
     source = (ROOT_DIR / "configs" / "rtx4060ti_8gb.yaml").read_text(encoding="utf-8")
 
     assert "base_model: Qwen/Qwen2.5-3B-Instruct" in source
-    assert "output_dir: outputs/qwen2.5_3b_lora_v3" in source
+    assert "output_dir: outputs/qwen2.5_3b_lora_v5" in source
     assert "load_in_4bit: true" in source
     assert "gradient_accumulation_steps: 16" in source

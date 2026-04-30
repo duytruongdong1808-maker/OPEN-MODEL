@@ -1,44 +1,45 @@
 {
-  "total_rows": 310,
+  "total_rows": 410,
   "action_counts": {
-    "keep": 142,
-    "review": 87,
-    "drop": 81
+    "keep": 234,
+    "review": 83,
+    "drop": 93
   },
   "mojibake_rows": 0,
   "task_type_distribution": {
-    "generation": 48,
-    "qa": 78,
+    "generation": 46,
+    "qa": 120,
     "summarize": 1,
-    "rewrite": 15
+    "rewrite": 15,
+    "safety_refusal": 52
   },
   "language_distribution": {
-    "vi": 66,
-    "en": 76
+    "vi": 101,
+    "en": 133
   },
   "domain_distribution": {},
   "top_review_reasons": [
     [
       "task_ratio_downsampled",
-      55
+      67
     ],
     [
       "task_other",
-      32
+      16
     ]
   ],
   "top_drop_reasons": [
     [
-      "near_duplicate",
-      41
-    ],
-    [
       "language_mismatch",
-      40
+      52
     ],
     [
       "task_other",
-      40
+      42
+    ],
+    [
+      "near_duplicate",
+      41
     ]
   ]
 }

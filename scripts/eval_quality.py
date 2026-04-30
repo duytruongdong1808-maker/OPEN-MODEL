@@ -31,6 +31,9 @@ from src.utils import (  # noqa: E402
 
 DEFAULT_CHAT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "chat_quality_gold.jsonl"
 DEFAULT_MAIL_EVAL_PATH = ROOT_DIR / "data" / "eval" / "mail_triage_gold.jsonl"
+DEFAULT_EVAL_REPORT_PATH = (
+    ROOT_DIR / "outputs" / "evaluations" / "eval_report" / "eval_report.json"
+)
 
 
 @dataclass
@@ -42,6 +45,9 @@ class ChatEvalCase:
     category: str
     min_keyword_matches: int
     max_chars: int = 1200
+    language_check: bool = True
+    semantic_accept: list[list[str]] | None = None
+    min_semantic_matches: int = 0
 
 
 @dataclass
@@ -127,20 +133,40 @@ def parse_chat_case(row: dict[str, Any], *, index: int, path: Path) -> ChatEvalC
         raise ValueError(f"Chat eval row {index} in {path} must use language vi|en.")
     if not isinstance(category, str) or not category.strip():
         raise ValueError(f"Chat eval row {index} in {path} needs a category.")
+    category = category.strip()
     min_keyword_matches = row.get("min_keyword_matches", len(expected_keywords))
     if not isinstance(min_keyword_matches, int) or min_keyword_matches < 1:
         raise ValueError(f"Chat eval row {index} in {path} has invalid min_keyword_matches.")
     max_chars = row.get("max_chars", 1200)
     if not isinstance(max_chars, int) or max_chars < 1:
         raise ValueError(f"Chat eval row {index} in {path} has invalid max_chars.")
+    language_check = row.get("language_check", category != "code")
+    if not isinstance(language_check, bool):
+        raise ValueError(f"Chat eval row {index} in {path} has invalid language_check.")
+    semantic_accept = row.get("semantic_accept", [])
+    if semantic_accept is None:
+        semantic_accept = []
+    if not isinstance(semantic_accept, list):
+        raise ValueError(f"Chat eval row {index} in {path} has invalid semantic_accept.")
+    for group in semantic_accept:
+        if not isinstance(group, list) or not all(
+            isinstance(item, str) and item.strip() for item in group
+        ):
+            raise ValueError(f"Chat eval row {index} in {path} has invalid semantic_accept.")
+    min_semantic_matches = row.get("min_semantic_matches", 0)
+    if not isinstance(min_semantic_matches, int) or min_semantic_matches < 0:
+        raise ValueError(f"Chat eval row {index} in {path} has invalid min_semantic_matches.")
     return ChatEvalCase(
         prompt=prompt.strip(),
         expected_keywords=expected_keywords,
         must_not_contain=[item for item in must_not_contain if item],
         language=language,
-        category=category.strip(),
+        category=category,
         min_keyword_matches=min(min_keyword_matches, len(expected_keywords)),
         max_chars=max_chars,
+        language_check=language_check,
+        semantic_accept=semantic_accept,
+        min_semantic_matches=min_semantic_matches,
     )
 
 
@@ -187,18 +213,37 @@ def keyword_matches(output: str, expected_keywords: list[str | list[str]]) -> tu
     return len(matched), matched
 
 
+def semantic_group_matches(
+    output: str, semantic_accept: list[list[str]] | None, min_semantic_matches: int
+) -> tuple[bool, list[str]]:
+    if not semantic_accept:
+        return False, []
+    haystack = normalize_text(output)
+    for group in semantic_accept:
+        matched = [item for item in group if normalize_text(item) in haystack]
+        required = min_semantic_matches or len(group)
+        required = min(required, len(group))
+        if len(matched) >= required:
+            return True, matched
+    return False, []
+
+
 def score_chat_output(case: ChatEvalCase, output: str, *, index: int) -> CaseResult:
     keyword_count, matched = keyword_matches(output, case.expected_keywords)
+    semantic_pass, semantic_matched = semantic_group_matches(
+        output, case.semantic_accept, case.min_semantic_matches
+    )
     normalized_output = normalize_text(output)
     forbidden = [
         value for value in case.must_not_contain if normalize_text(value) in normalized_output
     ]
     language = detect_language(output)
+    language_ok = language == case.language or not case.language_check
     length_ok = 1 <= len(output.strip()) <= case.max_chars
     passed = (
-        keyword_count >= case.min_keyword_matches
+        (keyword_count >= case.min_keyword_matches or semantic_pass)
         and not forbidden
-        and language == case.language
+        and language_ok
         and length_ok
     )
     return CaseResult(
@@ -211,8 +256,12 @@ def score_chat_output(case: ChatEvalCase, output: str, *, index: int) -> CaseRes
             "keyword_matches": keyword_count,
             "min_keyword_matches": case.min_keyword_matches,
             "matched_keywords": matched,
+            "semantic_pass": semantic_pass,
+            "semantic_matched": semantic_matched,
             "forbidden_hits": forbidden,
             "detected_language": language,
+            "language_check": case.language_check,
+            "language_ok": language_ok,
             "length_chars": len(output),
             "length_ok": length_ok,
         },
@@ -342,7 +391,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-set", choices=["chat", "mail", "both"], default="both")
     parser.add_argument("--chat-path", type=Path, default=DEFAULT_CHAT_EVAL_PATH)
     parser.add_argument("--mail-path", type=Path, default=DEFAULT_MAIL_EVAL_PATH)
-    parser.add_argument("--output", type=Path, default=ROOT_DIR / "outputs" / "eval_report.json")
+    parser.add_argument("--output", type=Path, default=DEFAULT_EVAL_REPORT_PATH)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)

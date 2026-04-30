@@ -164,6 +164,18 @@ def _extract_label_value(line: str, allowed_labels: dict[str, str]) -> tuple[str
     return None
 
 
+def _extract_label_value_or_bullet(
+    line: str, allowed_labels: dict[str, str]
+) -> tuple[str, str] | None:
+    stripped = line.strip()
+    direct_match = _extract_label_value(stripped, allowed_labels)
+    if direct_match is not None:
+        return direct_match
+    if stripped.startswith("- "):
+        return _extract_label_value(stripped[2:].strip(), allowed_labels)
+    return None
+
+
 def parse_action_extraction_output(text: str) -> ParsedTriage:
     lines = [
         line.strip()
@@ -213,7 +225,7 @@ def parse_full_triage_output(text: str) -> ParsedTriage:
     summary_match = _extract_label_value(lines[0], SUMMARY_LABELS)
     priority_match = _extract_label_value(lines[1], PRIORITY_LABELS)
     action_match = _extract_label_value(lines[2], ACTION_LABELS)
-    deadline_match = _extract_label_value(lines[-1], DEADLINE_LABELS)
+    deadline_match = _extract_label_value_or_bullet(lines[-1], DEADLINE_LABELS)
 
     if (
         summary_match is None
@@ -336,6 +348,76 @@ TOKEN_LEMMAS = {
     "verifies": "verify",
     "workarounds": "workaround",
 }
+TOKEN_ALIASES = {
+    "announce": "communicate",
+    "announced": "communicate",
+    "block": "risk",
+    "blocker": "risk",
+    "blockers": "risk",
+    "communicate": "communicate",
+    "delay": "risk",
+    "delays": "risk",
+    "flag": "communicate",
+    "flagged": "communicate",
+    "flags": "communicate",
+    "note": "communicate",
+    "noted": "communicate",
+    "notes": "communicate",
+    "notify": "communicate",
+    "post": "communicate",
+    "posted": "communicate",
+    "posts": "communicate",
+    "publish": "communicate",
+    "published": "communicate",
+    "report": "communicate",
+    "reported": "communicate",
+    "risk": "risk",
+    "risks": "risk",
+    "share": "communicate",
+    "shared": "communicate",
+    "slip": "risk",
+    "slips": "risk",
+}
+GENERIC_ANCHOR_TOKENS = {
+    "action",
+    "communicate",
+    "confirm",
+    "final",
+    "follow",
+    "handle",
+    "keep",
+    "list",
+    "need",
+    "owner",
+    "priority",
+    "record",
+    "reply",
+    "respond",
+    "response",
+    "review",
+    "risk",
+    "send",
+    "sent",
+    "update",
+}
+ACTION_VERB_TOKENS = {
+    "add",
+    "attach",
+    "capture",
+    "check",
+    "confirm",
+    "flag",
+    "log",
+    "note",
+    "post",
+    "record",
+    "review",
+    "send",
+    "share",
+    "update",
+    "upload",
+    "verify",
+}
 STOPWORDS = {
     "a",
     "an",
@@ -412,17 +494,65 @@ def _semantic_tokens(value: str, *, strip_action_deadline: bool = False) -> list
     tokens: list[str] = []
     for token in CONTENT_WORDS.findall(normalized):
         canonical = TOKEN_LEMMAS.get(token.casefold(), token.casefold())
+        canonical = TOKEN_ALIASES.get(canonical, canonical)
         if canonical in STOPWORDS:
             continue
         tokens.append(canonical)
     return tokens
 
 
+def _semantic_token_set(value: str, *, strip_action_deadline: bool = False) -> set[str]:
+    return set(_semantic_tokens(value, strip_action_deadline=strip_action_deadline))
+
+
+def _anchor_tokens(value: str, *, strip_action_deadline: bool = False) -> set[str]:
+    return {
+        token
+        for token in _semantic_tokens(value, strip_action_deadline=strip_action_deadline)
+        if len(token) >= 4 and token not in GENERIC_ANCHOR_TOKENS
+    }
+
+
+def _has_anchor_overlap(
+    actual: str,
+    expected: str,
+    *,
+    strip_action_deadline: bool = False,
+    min_overlap: int = 1,
+) -> bool:
+    expected_anchors = _anchor_tokens(expected, strip_action_deadline=strip_action_deadline)
+    if not expected_anchors:
+        return True
+    actual_anchors = _anchor_tokens(actual, strip_action_deadline=strip_action_deadline)
+    required = min(min_overlap, len(expected_anchors))
+    return len(actual_anchors & expected_anchors) >= required
+
+
+def _required_proper_tokens(value: str) -> set[str]:
+    tokens: set[str] = set()
+    for token in CONTENT_WORDS.findall(value):
+        if len(token) < 2:
+            continue
+        if token.casefold() in ACTION_VERB_TOKENS:
+            continue
+        if token[0].isupper() or token.isupper():
+            tokens.add(token.casefold())
+    return tokens
+
+
+def _has_required_action_entities(actual: str, expected: str) -> bool:
+    expected_tokens = _required_proper_tokens(_strip_action_deadline_phrase(expected))
+    if not expected_tokens:
+        return True
+    actual_tokens = {token.casefold() for token in CONTENT_WORDS.findall(actual)}
+    return expected_tokens <= actual_tokens
+
+
 def _semantic_similarity(
     actual: str, expected: str, *, strip_action_deadline: bool = False
 ) -> float:
-    actual_tokens = set(_semantic_tokens(actual, strip_action_deadline=strip_action_deadline))
-    expected_tokens = set(_semantic_tokens(expected, strip_action_deadline=strip_action_deadline))
+    actual_tokens = _semantic_token_set(actual, strip_action_deadline=strip_action_deadline)
+    expected_tokens = _semantic_token_set(expected, strip_action_deadline=strip_action_deadline)
     if not actual_tokens and not expected_tokens:
         return 1.0
     if not actual_tokens or not expected_tokens:
@@ -438,7 +568,7 @@ def _semantic_similarity(
 def _summary_match(actual: str, expected: str) -> bool:
     if normalize_text_match(actual) == normalize_text_match(expected):
         return True
-    return _semantic_similarity(actual, expected) >= 0.6
+    return _has_anchor_overlap(actual, expected) and _semantic_similarity(actual, expected) >= 0.48
 
 
 def _normalize_action_match(value: str) -> str:
@@ -449,7 +579,11 @@ def _normalize_action_match(value: str) -> str:
 def _action_match(actual: str, expected: str) -> bool:
     if _normalize_action_match(actual) == _normalize_action_match(expected):
         return True
-    return _semantic_similarity(actual, expected, strip_action_deadline=True) >= 0.7
+    if not _has_required_action_entities(actual, expected):
+        return False
+    return _has_anchor_overlap(
+        actual, expected, strip_action_deadline=True
+    ) and _semantic_similarity(actual, expected, strip_action_deadline=True) >= 0.62
 
 
 def _list_match(actual_values: Sequence[str], expected_values: Sequence[str], *, matcher) -> bool:

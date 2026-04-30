@@ -45,6 +45,45 @@ def test_score_chat_output_uses_keywords_language_and_forbidden_terms() -> None:
     assert result.metrics["detected_language"] == "vi"
 
 
+def test_score_chat_output_skips_language_check_for_code_by_default() -> None:
+    case = ChatEvalCase(
+        prompt="In ra 0 den 2 bang Python.",
+        expected_keywords=["for", "range", "print"],
+        must_not_contain=[],
+        language="vi",
+        category="code",
+        min_keyword_matches=3,
+        language_check=False,
+    )
+
+    result = score_chat_output(case, "for i in range(3):\n    print(i)", index=1)
+
+    assert result.passed is True
+    assert result.metrics["language_check"] is False
+
+
+def test_score_chat_output_accepts_targeted_semantic_group() -> None:
+    case = ChatEvalCase(
+        prompt="Explain RAM vs SSD.",
+        expected_keywords=["volatile", "persistent"],
+        must_not_contain=[],
+        language="en",
+        category="factual_en",
+        min_keyword_matches=2,
+        semantic_accept=[["RAM", "SSD", "temporary", "permanent"]],
+        min_semantic_matches=4,
+    )
+
+    result = score_chat_output(
+        case,
+        "RAM is temporary working memory, while SSD storage is more permanent.",
+        index=1,
+    )
+
+    assert result.passed is True
+    assert result.metrics["semantic_pass"] is True
+
+
 def test_detect_language_handles_english_and_vietnamese() -> None:
     assert detect_language("Mình không chắc, cần kiểm tra thêm.") == "vi"
     assert detect_language("I am not sure and would need to check.") == "en"

@@ -10,8 +10,6 @@ except ImportError:
 
 configure_repo_cache_env()
 
-from transformers import set_seed  # noqa: E402
-
 try:
     from .email_triage import ParsedTriage, score_triage_output
     from .utils import (
@@ -184,6 +182,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    from transformers import set_seed
+
     logger = configure_logging()
 
     try:

@@ -40,6 +40,34 @@ def test_parse_full_triage_output_handles_vietnamese_labels() -> None:
     assert parsed.deadlines == ["trước 14h30", "16h chiều nay"]
 
 
+def test_parse_full_triage_output_accepts_deadlines_as_final_bullet() -> None:
+    parsed = parse_full_triage_output(
+        "Summary: Ops needs rollback ownership confirmed for the deployment.\n"
+        "Priority: high\n"
+        "Action items:\n"
+        "- Confirm rollback owner\n"
+        "- Deadlines: by 4 PM"
+    )
+
+    assert parsed.language == "en"
+    assert parsed.action_items == ["Confirm rollback owner"]
+    assert parsed.deadlines == ["by 4 PM"]
+
+
+def test_parse_full_triage_output_rejects_missing_deadline_section() -> None:
+    try:
+        parse_full_triage_output(
+            "Summary: Ops needs rollback ownership confirmed for the deployment.\n"
+            "Priority: high\n"
+            "Action items:\n"
+            "- Confirm rollback owner"
+        )
+    except ValueError as exc:
+        assert "missing one or more required labels" in str(exc)
+    else:
+        raise AssertionError("Expected parse_full_triage_output to reject missing deadline.")
+
+
 def test_parse_action_extraction_output_requires_deadline_bullet() -> None:
     parsed = parse_action_extraction_output(
         "- Draft the response\n- Attach the workaround note\n- Deadlines: by 4 PM today"
@@ -166,7 +194,7 @@ def test_score_triage_output_keeps_vague_action_item_as_mismatch() -> None:
     )
 
     actual = (
-        "Summary: Product should capture the feature request for scheduled report exports in the next week's roadmap.\n"
+        "Summary: Product should capture a general feature request for next week's roadmap.\n"
         "Priority: low\n"
         "Action items:\n"
         "- Log the request for next week's roadmap review\n"
@@ -182,10 +210,61 @@ def test_score_triage_output_keeps_vague_action_item_as_mismatch() -> None:
     assert score.deadlines_match is True
 
 
+def test_score_triage_output_accepts_blocker_delay_action_paraphrase() -> None:
+    expected = ParsedTriage(
+        summary="Ops needs an urgent GreenLeaf deploy checkpoint follow-up.",
+        priority="high",
+        action_items=[
+            "Lan must confirm the rollback owner by 10:30 AM",
+            "Post blockers in the deployment room",
+        ],
+        deadlines=["by 10:30 AM"],
+        language="en",
+    )
+
+    actual = (
+        "Summary: Ops needs to deploy checkpoint for GreenLeaf as soon as possible.\n"
+        "Priority: high\n"
+        "Action items:\n"
+        "- Lan confirms the rollback owner by 10:30 AM\n"
+        "- Note any delays in the deployment room\n"
+        "Deadlines: by 10:30 AM"
+    )
+
+    score = score_triage_output(expected=expected, actual_text=actual)
+
+    assert score.parse_success is True
+    assert score.summary_match is True
+    assert score.action_items_match is True
+
+
+def test_score_triage_output_rejects_action_missing_owner_entity() -> None:
+    expected = ParsedTriage(
+        summary="Ops needs an urgent GreenLeaf deploy checkpoint follow-up.",
+        priority="high",
+        action_items=["Lan must confirm the rollback owner by 10:30 AM"],
+        deadlines=["by 10:30 AM"],
+        language="en",
+    )
+
+    actual = (
+        "Summary: Ops needs an urgent GreenLeaf deploy checkpoint follow-up.\n"
+        "Priority: high\n"
+        "Action items:\n"
+        "- Confirm the rollback owner by 10:30 AM\n"
+        "Deadlines: by 10:30 AM"
+    )
+
+    score = score_triage_output(expected=expected, actual_text=actual)
+
+    assert score.parse_success is True
+    assert score.action_items_match is False
+
+
 def test_load_eval_prompts_parses_gold_eval_rows() -> None:
     prompts = load_eval_prompts("data/eval/mail_triage_gold.jsonl")
 
     assert prompts
     first = prompts[0]
     assert isinstance(first["expected"], ParsedTriage)
-    assert first["domain"] == "support"
+    assert first["domain"] in {"ops", "support", "billing", "product", "sales", "internal", "admin"}

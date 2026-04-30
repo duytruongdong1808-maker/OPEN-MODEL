@@ -13,8 +13,8 @@ except ImportError:
     from utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 
 
-ROWS_PER_RECORD = 10
-DEFAULT_TOTAL_ROWS = 4500
+ROWS_PER_RECORD = 16
+DEFAULT_TOTAL_ROWS = 7200
 DEFAULT_RECORD_COUNT = DEFAULT_TOTAL_ROWS // ROWS_PER_RECORD
 MAIL_DOMAINS = ("ops", "support", "billing", "product", "sales", "internal", "admin")
 
@@ -77,6 +77,57 @@ JSON_TO_TRIAGE_INSTRUCTIONS = {
     "vi": "Chuyển JSON thông tin email này thành triage block đúng schema tiếng Anh.",
     "mixed": "Convert this mixed-language email facts JSON into the exact triage block schema.",
 }
+REPAIR_DEADLINE_BULLET_INSTRUCTIONS = {
+    "en": "Repair this malformed email triage block into exactly this schema: Summary, Priority, Action items, Deadlines.",
+    "vi": "Sua triage email bi loi sau thanh dung schema tieng Anh: Summary, Priority, Action items, Deadlines.",
+    "mixed": "Repair this mixed-language email triage block into exactly this schema: Summary, Priority, Action items, Deadlines.",
+}
+CANONICAL_ACTION_INSTRUCTIONS = {
+    "en": "Read the email and loose action draft, then return the canonical email triage block schema.",
+    "vi": "Doc email va action draft chua chuan, roi tra ve triage email dung schema tieng Anh.",
+    "mixed": "Read the mixed-language email and loose action draft, then return the canonical email triage block schema.",
+}
+DEADLINE_CARRYOVER_INSTRUCTIONS = {
+    "en": "If an action item contains a time or date, copy that exact time or date into Deadlines. Return only Summary, Priority, Action items, Deadlines.",
+    "vi": "Neu action item co gio hoac ngay, copy dung moc do vao Deadlines. Tra ve dung Summary, Priority, Action items, Deadlines.",
+    "mixed": "If an action item contains a time or date, copy that exact time or date into Deadlines. Return only Summary, Priority, Action items, Deadlines.",
+}
+BLOCKER_RULE_INSTRUCTIONS = {
+    "en": "Return the email triage block. Include blocker or delay actions only when the email explicitly requires them, not when it is only conditional.",
+    "vi": "Tra ve triage block. Chi them blocker/delay action khi email yeu cau ro rang, khong them neu chi la dieu kien.",
+    "mixed": "Return the triage block. Include blocker or delay actions only when explicitly required, not when conditional.",
+}
+ANCHORED_SUMMARY_INSTRUCTIONS = {
+    "en": "Return a triage block. The Summary must mention the team or domain, customer or entity, and task or event. Keep it one sentence.",
+    "vi": "Tra ve triage block. Summary phai co team/domain, customer/entity, va task/event. Chi mot cau.",
+    "mixed": "Return a triage block. The Summary must mention the team/domain, customer/entity, and task/event. Keep it one sentence.",
+}
+REPAIR_MISSING_ACTIONS_DEADLINES_INSTRUCTIONS = {
+    "en": "Repair this triage block: if the email contains actions or deadlines, do not leave Action items or Deadlines as None.",
+    "vi": "Sua triage block nay: neu email co action hoac deadline, khong de Action items hoac Deadlines la None.",
+    "mixed": "Repair this triage block: if the email contains actions or deadlines, do not leave Action items or Deadlines as None.",
+}
+LOOSE_ACTION_REPLACEMENTS = (
+    ("Share any blocker", "Note any delays"),
+    ("Post any blocker", "Note any delays"),
+    ("Post blockers", "Note any delays"),
+    ("share any blocker", "note any delays"),
+    ("post any blocker", "note any delays"),
+    ("post blockers", "note any delays"),
+    ("Confirm", "Check"),
+    ("confirm", "check"),
+    ("Send", "Share"),
+    ("send", "share"),
+    ("Upload", "Add"),
+    ("upload", "add"),
+    ("Log", "Record"),
+    ("log", "record"),
+    ("Flag", "Notify"),
+    ("flag", "notify"),
+    ("Review", "Check"),
+    ("review", "check"),
+)
+
 NAME_PAIRS = [
     ("Lan", "Huy"),
     ("Minh", "Trang"),
@@ -514,6 +565,60 @@ def format_thread_summary(record: GoldTriageRecord) -> str:
     if record.language in {"en", "mixed"}:
         return f"The thread confirms that {record.summary[0].lower() + record.summary[1:]}"
     return f"Chuỗi email xác nhận rằng {record.summary[0].lower() + record.summary[1:]}"
+
+
+def format_deadline_bullet_draft(record: GoldTriageRecord, full_triage_output: str) -> str:
+    lines = full_triage_output.splitlines()
+    if not lines or not lines[-1].startswith("Deadlines: "):
+        raise ValueError("full triage output must end with a Deadlines line")
+    malformed_block = "\n".join([*lines[:-1], f"- {lines[-1]}"])
+    return f"Email reference:\n{record.email}\n\nMalformed triage block:\n{malformed_block}"
+
+
+def loosen_action_wording(action: str) -> str:
+    loosened = action
+    for old, new in LOOSE_ACTION_REPLACEMENTS:
+        loosened = loosened.replace(old, new)
+    return loosened
+
+
+def format_loose_action_input(record: GoldTriageRecord) -> str:
+    loose_actions = "\n".join(
+        f"- {loosen_action_wording(action)}" for action in record.action_items
+    )
+    return f"Email:\n{record.email}\n\nLoose action draft:\n{loose_actions}"
+
+
+def record_has_blocker_action(record: GoldTriageRecord) -> bool:
+    haystack = " ".join(record.action_items).casefold()
+    return any(token in haystack for token in ("blocker", "delay", "slip"))
+
+
+def format_blocker_rule_input(record: GoldTriageRecord) -> str:
+    rule = (
+        "This email explicitly requires a blocker/delay action; include it."
+        if record_has_blocker_action(record)
+        else "This email mentions blockers/delays only conditionally or not at all; do not invent a blocker action."
+    )
+    return f"Rule:\n{rule}\n\nEmail:\n{record.email}"
+
+
+def format_repair_missing_actions_deadlines_input(
+    record: GoldTriageRecord, full_triage_output: str
+) -> str:
+    lines = full_triage_output.splitlines()
+    if len(lines) < 5:
+        raise ValueError("full triage output must contain action and deadline sections")
+    malformed = "\n".join(
+        [
+            lines[0],
+            lines[1],
+            "Action items:",
+            "- None",
+            "Deadlines: None",
+        ]
+    )
+    return f"Email:\n{record.email}\n\nMalformed triage block:\n{malformed}"
 
 
 def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
@@ -1225,6 +1330,50 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "input": facts_input,
             "output": full_triage_output,
             "task_variant": "json_to_full_triage_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": REPAIR_DEADLINE_BULLET_INSTRUCTIONS[language],
+            "input": format_deadline_bullet_draft(record, full_triage_output),
+            "output": full_triage_output,
+            "task_variant": "repair_deadline_bullet_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": CANONICAL_ACTION_INSTRUCTIONS[language],
+            "input": format_loose_action_input(record),
+            "output": full_triage_output,
+            "task_variant": "canonicalize_action_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": DEADLINE_CARRYOVER_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": full_triage_output,
+            "task_variant": "deadline_carryover_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": BLOCKER_RULE_INSTRUCTIONS[language],
+            "input": format_blocker_rule_input(record),
+            "output": full_triage_output,
+            "task_variant": "required_blocker_schema"
+            if record_has_blocker_action(record)
+            else "conditional_blocker_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": ANCHORED_SUMMARY_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": full_triage_output,
+            "task_variant": "anchored_summary_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": REPAIR_MISSING_ACTIONS_DEADLINES_INSTRUCTIONS[language],
+            "input": format_repair_missing_actions_deadlines_input(record, full_triage_output),
+            "output": full_triage_output,
+            "task_variant": "repair_missing_actions_deadlines_schema",
             **base_metadata,
         },
     ]

@@ -14,6 +14,7 @@ from src.curate_data import (
     TASK_TYPE_CLASSIFICATION,
     TASK_TYPE_GENERATION,
     TASK_TYPE_QA,
+    TASK_TYPE_REFUSAL,
     TASK_TYPE_REWRITE,
     TASK_TYPE_SUMMARIZE,
     classify_task_type,
@@ -57,6 +58,13 @@ def test_classify_task_type_handles_core_chat_variants() -> None:
         classify_task_type("Phân loại các mục thành hai nhóm.", "", "x") == TASK_TYPE_CLASSIFICATION
     )
     assert classify_task_type("Trả lời ngắn gọn và rõ ràng.", "LoRA là gì?", "x") == TASK_TYPE_QA
+
+
+def test_classify_task_type_handles_refusal_prompts() -> None:
+    assert (
+        classify_task_type("Refuse the unsafe request and offer a safe alternative.", "", "x")
+        == TASK_TYPE_REFUSAL
+    )
 
 
 def test_detect_language_distinguishes_vi_en_and_mixed() -> None:
@@ -378,32 +386,39 @@ def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
         "full_triage": 450,
         "full_triage_strict_schema": 450,
         "json_to_full_triage_schema": 450,
+        "repair_deadline_bullet_schema": 450,
+        "canonicalize_action_schema": 450,
+        "deadline_carryover_schema": 450,
+        "conditional_blocker_schema": 410,
+        "required_blocker_schema": 40,
+        "anchored_summary_schema": 450,
+        "repair_missing_actions_deadlines_schema": 450,
     }
 
     domain_counts = Counter(row["domain"] for row in rows)
-    assert domain_counts["ops"] == 1550
-    assert domain_counts["support"] == 1200
-    assert domain_counts["billing"] == 600
-    assert domain_counts["product"] == 400
-    assert domain_counts["sales"] == 250
-    assert domain_counts["internal"] == 250
-    assert domain_counts["admin"] == 250
-    assert Counter(row["language"] for row in rows) == {"en": 2760, "vi": 1590, "mixed": 150}
+    assert domain_counts["ops"] == 2480
+    assert domain_counts["support"] == 1920
+    assert domain_counts["billing"] == 960
+    assert domain_counts["product"] == 640
+    assert domain_counts["sales"] == 400
+    assert domain_counts["internal"] == 400
+    assert domain_counts["admin"] == 400
+    assert Counter(row["language"] for row in rows) == {"en": 4416, "vi": 2544, "mixed": 240}
     assert not any("before None" in row["output"] or "they the" in row["output"] for row in rows)
 
 
 def test_generate_chat_seed_expands_bilingual_coverage() -> None:
     rows = build_chat_seed_rows()
 
-    assert len(rows) == 310
+    assert len(rows) == 410
     assert Counter(row["category"] for row in rows) == {
         "smalltalk": 40,
-        "factual_qa": 70,
-        "code_math": 30,
+        "factual_qa": 94,
+        "code_math": 46,
         "summarize_rewrite": 30,
-        "refusal": 50,
+        "refusal": 80,
         "multi_turn": 30,
-        "bilingual_switch": 40,
+        "bilingual_switch": 70,
         "technical_explain": 20,
     }
     assert (
@@ -486,16 +501,16 @@ def test_committed_mail_triage_report_tracks_en_first_distribution() -> None:
         Path("data/curated/mail_triage_vi_en_seed_report.json").read_text(encoding="utf-8")
     )
 
-    assert report["action_counts"] == {"keep": 4003, "drop": 497}
-    assert report["language_distribution"] == {"en": 2514, "vi": 1339, "mixed": 150}
+    assert report["action_counts"] == {"keep": 4941, "drop": 2068, "review": 191}
+    assert report["language_distribution"] == {"en": 3202, "vi": 1589, "mixed": 150}
     assert report["domain_distribution"] == {
-        "ops": 1337,
-        "support": 972,
-        "billing": 573,
-        "product": 375,
-        "sales": 248,
-        "internal": 248,
-        "admin": 250,
+        "ops": 1704,
+        "support": 1214,
+        "billing": 727,
+        "product": 474,
+        "sales": 331,
+        "internal": 316,
+        "admin": 175,
     }
 
 
@@ -503,15 +518,15 @@ def test_committed_built_dataset_keeps_mail_focus_and_clean_phrasing() -> None:
     rows = read_jsonl("data/curated/chat_core_vi_en_train.jsonl")
 
     assert Counter(row["sampling_bucket"] for row in rows) == {
-        "chat_vi_general": 1154,
-        "mail_en_all_domains": 1154,
-        "chat_en_general": 924,
-        "mail_vi": 462,
-        "mail_mixed": 462,
-        "mixed_utility": 462,
+        "chat_vi_general": 1404,
+        "mail_en_all_domains": 1404,
+        "chat_en_general": 1123,
+        "mixed_utility": 562,
+        "mail_vi": 562,
+        "mail_mixed": 561,
     }
-    assert Counter(row["language"] for row in rows) == {"en": 2078, "vi": 1616, "mixed": 924}
-    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 2078
+    assert Counter(row["language"] for row in rows) == {"en": 2527, "vi": 1966, "mixed": 1123}
+    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 2527
     assert not any(
         pattern in row.get("input", "") or pattern in row.get("output", "")
         for row in rows
