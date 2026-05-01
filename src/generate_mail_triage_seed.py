@@ -13,8 +13,8 @@ except ImportError:
     from utils import DEFAULT_RAW_MAIL_TRIAGE_SEED_PATH, write_jsonl
 
 
-ROWS_PER_RECORD = 16
-DEFAULT_TOTAL_ROWS = 7200
+ROWS_PER_RECORD = 18
+DEFAULT_TOTAL_ROWS = 8100
 DEFAULT_RECORD_COUNT = DEFAULT_TOTAL_ROWS // ROWS_PER_RECORD
 MAIL_DOMAINS = ("ops", "support", "billing", "product", "sales", "internal", "admin")
 
@@ -106,6 +106,16 @@ REPAIR_MISSING_ACTIONS_DEADLINES_INSTRUCTIONS = {
     "en": "Repair this triage block: if the email contains actions or deadlines, do not leave Action items or Deadlines as None.",
     "vi": "Sua triage block nay: neu email co action hoac deadline, khong de Action items hoac Deadlines la None.",
     "mixed": "Repair this triage block: if the email contains actions or deadlines, do not leave Action items or Deadlines as None.",
+}
+SUMMARY_CONTRACT_TRIAGE_INSTRUCTIONS = {
+    "en": "Return the triage block. The Summary must name the domain/team, customer/entity, task/event, and urgency or deadline signal when present. Never write Summary: None.",
+    "vi": "Tra ve triage block. Summary phai neu domain/team, customer/entity, task/event, va tin hieu khan cap/han chot neu co. Khong bao gio viet Summary: None.",
+    "mixed": "Return the triage block. The Summary must name the domain/team, customer/entity, task/event, and urgency/deadline signal when present. Never write Summary: None.",
+}
+REPAIR_GENERIC_SUMMARY_INSTRUCTIONS = {
+    "en": "Repair this email triage block. Replace generic, missing, or 'None' summaries with a one-sentence Summary that preserves domain/team, customer/entity, and task/event.",
+    "vi": "Sua triage block nay. Thay summary chung chung, thieu thong tin, hoac 'None' bang mot cau Summary giu domain/team, customer/entity, va task/event.",
+    "mixed": "Repair this triage block. Replace generic, missing, or 'None' summaries with one sentence preserving domain/team, customer/entity, and task/event.",
 }
 LOOSE_ACTION_REPLACEMENTS = (
     ("Share any blocker", "Note any delays"),
@@ -619,6 +629,22 @@ def format_repair_missing_actions_deadlines_input(
         ]
     )
     return f"Email:\n{record.email}\n\nMalformed triage block:\n{malformed}"
+
+
+def format_repair_generic_summary_input(record: GoldTriageRecord, full_triage_output: str) -> str:
+    lines = full_triage_output.splitlines()
+    if len(lines) < 4:
+        raise ValueError("full triage output must contain a summary line")
+    if record.priority == "low" and record.action_items == ["None"]:
+        bad_summary = "None, FYI only"
+    elif record.priority == "low":
+        bad_summary = "No hard deadline and a note can be logged later."
+    elif record.priority == "high":
+        bad_summary = "The team needs to follow up urgently."
+    else:
+        bad_summary = "The team needs to follow up on the email."
+    lines[0] = f"Summary: {bad_summary}"
+    return f"Email:\n{record.email}\n\nMalformed triage block:\n" + "\n".join(lines)
 
 
 def build_ops_release_record(language: str, index: int) -> GoldTriageRecord:
@@ -1374,6 +1400,20 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "input": format_repair_missing_actions_deadlines_input(record, full_triage_output),
             "output": full_triage_output,
             "task_variant": "repair_missing_actions_deadlines_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": SUMMARY_CONTRACT_TRIAGE_INSTRUCTIONS[language],
+            "input": record.email,
+            "output": full_triage_output,
+            "task_variant": "summary_contract_schema",
+            **base_metadata,
+        },
+        {
+            "instruction": REPAIR_GENERIC_SUMMARY_INSTRUCTIONS[language],
+            "input": format_repair_generic_summary_input(record, full_triage_output),
+            "output": full_triage_output,
+            "task_variant": "repair_generic_summary_schema",
             **base_metadata,
         },
     ]

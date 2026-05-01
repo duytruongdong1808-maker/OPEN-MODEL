@@ -90,6 +90,7 @@ MIN_OUTPUT_CHARS = 10
 MAX_OUTPUT_CHARS = 2000
 NEAR_DUPLICATE_JACCARD_THRESHOLD = 0.90
 MAX_TASK_TYPE_SHARE = 0.40
+PASSTHROUGH_METADATA_FIELDS = ("task_variant", "category")
 MOJIBAKE_MARKERS = ("â€™", "â€˜", "â€œ", "â€", "â€“", "â€”", "Â", "Ã", "Ù", "Ø", "Ë", "áº")
 MOJIBAKE_REPLACEMENTS = {
     "â€™": "'",
@@ -256,6 +257,13 @@ def get_domain_override(row: dict[str, Any]) -> str | None:
     if normalized in MAIL_DOMAINS:
         return normalized
     return None
+
+
+def copy_passthrough_metadata(source: dict[str, Any], target: dict[str, Any]) -> None:
+    for field in PASSTHROUGH_METADATA_FIELDS:
+        value = source.get(field)
+        if isinstance(value, str) and value.strip():
+            target[field] = value.strip()
 
 
 def validate_mail_output(
@@ -630,6 +638,7 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         }
         if domain_override:
             curated_row["domain"] = domain_override
+        copy_passthrough_metadata(row, curated_row)
         return curated_row
 
     try:
@@ -648,6 +657,7 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
         }
         if domain_override:
             curated_row["domain"] = domain_override
+        copy_passthrough_metadata(row, curated_row)
         return curated_row
 
     input_text = coerce_optional_text(row.get("input", ""), "input")
@@ -713,6 +723,7 @@ def curate_row(row: dict[str, Any], source: str) -> dict[str, Any]:
     }
     if domain_override:
         curated_row["domain"] = domain_override
+    copy_passthrough_metadata(row, curated_row)
     return curated_row
 
 

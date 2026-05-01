@@ -160,6 +160,7 @@ def test_curate_row_keeps_combined_email_triage_as_generation() -> None:
             ),
             "domain": "billing",
             "language": "vi",
+            "task_variant": "full_triage_strict_schema",
         },
         source="seed_mail_triage_vi_en",
     )
@@ -168,6 +169,7 @@ def test_curate_row_keeps_combined_email_triage_as_generation() -> None:
     assert curated["task_type"] == TASK_TYPE_GENERATION
     assert curated["language"] == "vi"
     assert curated["domain"] == "billing"
+    assert curated["task_variant"] == "full_triage_strict_schema"
 
 
 def test_build_dataset_parse_args_defaults_include_mail_seed_and_profile(
@@ -177,7 +179,7 @@ def test_build_dataset_parse_args_defaults_include_mail_seed_and_profile(
 
     args = build_dataset_module.parse_args()
 
-    assert args.target_profile == "chat_balanced_with_mail"
+    assert args.target_profile == "chat_mail_summary_v52"
     assert DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH in args.inputs
 
 
@@ -366,6 +368,77 @@ def test_build_dataset_rows_balances_mail_profile_and_email_bucket() -> None:
     )
 
 
+def test_build_dataset_rows_uses_v52_summary_and_chat_replay_buckets() -> None:
+    rows = []
+    for index, variant in enumerate(
+        [
+            "full_triage_strict_schema",
+            "summary_contract_schema",
+            "repair_generic_summary_schema",
+            "canonicalize_action_schema",
+            "classify_only",
+            "conditional_blocker_schema",
+        ]
+    ):
+        rows.append(
+            {
+                "instruction": f"mail {variant}",
+                "input": "",
+                "output": f"Summary: Mail case {index}.\nPriority: low\nAction items:\n- None\nDeadlines: None",
+                "task_type": TASK_TYPE_GENERATION,
+                "language": "en",
+                "quality_score": 95,
+                "flags": [],
+                "source": "seed_mail_triage_vi_en",
+                "action": "keep",
+                "domain": "ops",
+                "task_variant": variant,
+            }
+        )
+    for index in range(3):
+        rows.append(
+            {
+                "instruction": f"vi chat {index}",
+                "input": "",
+                "output": f"Cau tra loi ngan gon {index}.",
+                "task_type": TASK_TYPE_QA,
+                "language": "vi",
+                "quality_score": 90,
+                "flags": [],
+                "source": "seed",
+                "action": "keep",
+            }
+        )
+    for index, category in enumerate(["bilingual_switch", "refusal", "code_math"]):
+        rows.append(
+            {
+                "instruction": f"chat replay {category}",
+                "input": "",
+                "output": f"Useful replay answer {index}.",
+                "task_type": TASK_TYPE_QA if category != "refusal" else TASK_TYPE_REFUSAL,
+                "language": "en",
+                "quality_score": 90,
+                "flags": [],
+                "source": "seed",
+                "action": "keep",
+                "category": category,
+            }
+        )
+
+    built = build_dataset_rows(rows, target_profile="chat_mail_summary_v52", total_rows=100, seed=13)
+
+    counts = Counter(row["sampling_bucket"] for row in built)
+    assert counts["mail_summary_focus"] == 18
+    assert counts["mail_strict_triage"] == 10
+    assert counts["mail_action_deadline"] == 8
+    assert counts["mail_priority_deadline"] == 5
+    assert counts["mail_blocker_rules"] == 4
+    assert counts["chat_bilingual"] == 12
+    assert counts["chat_refusal"] == 10
+    assert counts["chat_code_factual"] == 12
+    assert all("task_variant" in row for row in built if row["sampling_bucket"].startswith("mail_"))
+
+
 def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
     rows = build_mail_triage_seed_rows(DEFAULT_TOTAL_ROWS)
 
@@ -393,17 +466,19 @@ def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
         "required_blocker_schema": 40,
         "anchored_summary_schema": 450,
         "repair_missing_actions_deadlines_schema": 450,
+        "summary_contract_schema": 450,
+        "repair_generic_summary_schema": 450,
     }
 
     domain_counts = Counter(row["domain"] for row in rows)
-    assert domain_counts["ops"] == 2480
-    assert domain_counts["support"] == 1920
-    assert domain_counts["billing"] == 960
-    assert domain_counts["product"] == 640
-    assert domain_counts["sales"] == 400
-    assert domain_counts["internal"] == 400
-    assert domain_counts["admin"] == 400
-    assert Counter(row["language"] for row in rows) == {"en": 4416, "vi": 2544, "mixed": 240}
+    assert domain_counts["ops"] == 2790
+    assert domain_counts["support"] == 2160
+    assert domain_counts["billing"] == 1080
+    assert domain_counts["product"] == 720
+    assert domain_counts["sales"] == 450
+    assert domain_counts["internal"] == 450
+    assert domain_counts["admin"] == 450
+    assert Counter(row["language"] for row in rows) == {"en": 4968, "vi": 2862, "mixed": 270}
     assert not any("before None" in row["output"] or "they the" in row["output"] for row in rows)
 
 
@@ -501,16 +576,16 @@ def test_committed_mail_triage_report_tracks_en_first_distribution() -> None:
         Path("data/curated/mail_triage_vi_en_seed_report.json").read_text(encoding="utf-8")
     )
 
-    assert report["action_counts"] == {"keep": 4941, "drop": 2068, "review": 191}
-    assert report["language_distribution"] == {"en": 3202, "vi": 1589, "mixed": 150}
+    assert report["action_counts"] == {"keep": 5226, "drop": 2652, "review": 222}
+    assert report["language_distribution"] == {"en": 3329, "vi": 1753, "mixed": 144}
     assert report["domain_distribution"] == {
-        "ops": 1704,
-        "support": 1214,
-        "billing": 727,
-        "product": 474,
-        "sales": 331,
-        "internal": 316,
-        "admin": 175,
+        "ops": 1831,
+        "support": 1270,
+        "billing": 754,
+        "product": 492,
+        "sales": 355,
+        "internal": 334,
+        "admin": 190,
     }
 
 
@@ -518,15 +593,23 @@ def test_committed_built_dataset_keeps_mail_focus_and_clean_phrasing() -> None:
     rows = read_jsonl("data/curated/chat_core_vi_en_train.jsonl")
 
     assert Counter(row["sampling_bucket"] for row in rows) == {
-        "chat_vi_general": 1404,
-        "mail_en_all_domains": 1404,
-        "chat_en_general": 1123,
-        "mixed_utility": 562,
-        "mail_vi": 562,
-        "mail_mixed": 561,
+        "mail_summary_focus": 1063,
+        "chat_code_factual": 708,
+        "chat_bilingual": 708,
+        "chat_vi_general": 649,
+        "chat_refusal": 590,
+        "mail_strict_triage": 590,
+        "mail_action_deadline": 472,
+        "chat_en_general": 354,
+        "mail_priority_deadline": 295,
+        "mail_blocker_rules": 236,
+        "mixed_utility": 236,
     }
-    assert Counter(row["language"] for row in rows) == {"en": 2527, "vi": 1966, "mixed": 1123}
-    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 2527
+    assert Counter(row["language"] for row in rows) == {"en": 3028, "vi": 2572, "mixed": 301}
+    assert sum(1 for row in rows if row["source"] == "seed_mail_triage_vi_en") == 2656
+    assert all("task_variant" in row for row in rows if row["source"] == "seed_mail_triage_vi_en")
+    assert sum(1 for row in rows if row.get("category") == "bilingual_switch") >= 600
+    assert sum(1 for row in rows if row.get("category") == "refusal") >= 500
     assert not any(
         pattern in row.get("input", "") or pattern in row.get("output", "")
         for row in rows

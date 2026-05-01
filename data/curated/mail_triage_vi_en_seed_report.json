@@ -1,53 +1,53 @@
 {
-  "total_rows": 7200,
+  "total_rows": 8100,
   "action_counts": {
-    "keep": 4941,
-    "drop": 2068,
-    "review": 191
+    "keep": 5226,
+    "drop": 2652,
+    "review": 222
   },
   "mojibake_rows": 0,
   "task_type_distribution": {
-    "summarize": 1179,
+    "summarize": 1343,
     "classification": 389,
     "list_extraction": 1327,
-    "generation": 2046
+    "generation": 2167
   },
   "language_distribution": {
-    "en": 3202,
-    "vi": 1589,
-    "mixed": 150
+    "en": 3329,
+    "vi": 1753,
+    "mixed": 144
   },
   "domain_distribution": {
-    "ops": 1704,
-    "support": 1214,
-    "billing": 727,
-    "product": 474,
-    "sales": 331,
-    "internal": 316,
-    "admin": 175
+    "ops": 1831,
+    "support": 1270,
+    "billing": 754,
+    "product": 492,
+    "sales": 355,
+    "internal": 334,
+    "admin": 190
   },
   "top_review_reasons": [
     [
       "task_ratio_downsampled",
-      176
+      192
     ],
     [
       "task_other",
-      15
+      30
     ]
   ],
   "top_drop_reasons": [
     [
       "mail_malformed_action_output",
-      1059
+      1350
     ],
     [
       "near_duplicate",
-      1009
+      1302
     ],
     [
       "list_format_drift",
-      62
+      75
     ]
   ]
 }

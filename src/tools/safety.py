@@ -14,8 +14,8 @@ from .errors import PolicyError
 from .ledger import SendLedger
 from .schemas import SendRequest, SendResult
 
-DEFAULT_DRY_RUN_LOG = ROOT_DIR / "outputs" / "agent_dry_run.log"
-DEFAULT_SAFETY_LOG = ROOT_DIR / "outputs" / "agent_safety.log"
+DEFAULT_DRY_RUN_LOG = ROOT_DIR / "outputs" / "logs" / "agent" / "agent_dry_run.log"
+DEFAULT_SAFETY_LOG = ROOT_DIR / "outputs" / "logs" / "agent" / "agent_safety.log"
 
 
 @dataclass(frozen=True)

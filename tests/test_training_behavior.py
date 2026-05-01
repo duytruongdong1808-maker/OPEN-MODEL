@@ -23,7 +23,10 @@ def apply_completion_only_mask(
 
 
 def test_trl_source_still_prefers_prompt_completion_and_masks_non_completion_tokens() -> None:
-    spec = importlib.util.find_spec("trl.trainer.sft_trainer")
+    try:
+        spec = importlib.util.find_spec("trl.trainer.sft_trainer")
+    except ModuleNotFoundError:
+        spec = None
     if spec is None or spec.origin is None:
         pytest.skip("TRL is not installed in this environment.")
 
@@ -78,6 +81,6 @@ def test_rtx4060ti_config_targets_qwen_3b_qlora() -> None:
     source = (ROOT_DIR / "configs" / "rtx4060ti_8gb.yaml").read_text(encoding="utf-8")
 
     assert "base_model: Qwen/Qwen2.5-3B-Instruct" in source
-    assert "output_dir: outputs/qwen2.5_3b_lora_v5" in source
+    assert "output_dir: outputs/qwen2.5_3b_lora_v5_2" in source
     assert "load_in_4bit: true" in source
     assert "gradient_accumulation_steps: 16" in source

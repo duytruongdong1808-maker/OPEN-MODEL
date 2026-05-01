@@ -62,6 +62,29 @@ TARGET_PROFILES = {
         "mail_mixed": 0.10,
         "mixed_utility": 0.10,
     },
+    "chat_mail_triage_v51": {
+        "mail_strict_triage": 0.20,
+        "mail_summary_anchor": 0.10,
+        "mail_priority_calibration": 0.08,
+        "mail_blocker_rules": 0.08,
+        "mail_deadline_repair": 0.09,
+        "chat_vi_general": 0.18,
+        "chat_en_general": 0.17,
+        "mixed_utility": 0.10,
+    },
+    "chat_mail_summary_v52": {
+        "mail_summary_focus": 0.18,
+        "mail_strict_triage": 0.10,
+        "mail_action_deadline": 0.08,
+        "mail_priority_deadline": 0.05,
+        "mail_blocker_rules": 0.04,
+        "chat_bilingual": 0.12,
+        "chat_refusal": 0.10,
+        "chat_code_factual": 0.12,
+        "chat_vi_general": 0.11,
+        "chat_en_general": 0.06,
+        "mixed_utility": 0.04,
+    },
 }
 MIXED_UTILITY_TASK_TYPES = {"summarize", "classification", "list_extraction", "generation"}
 EMAIL_TRIAGE_SOURCE = "seed_mail_triage_vi_en"
@@ -94,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         "--target_profile",
         type=str,
         choices=sorted(TARGET_PROFILES),
-        default="chat_balanced_with_mail",
+        default="chat_mail_summary_v52",
         help="Sampling profile to use when balancing the dataset.",
     )
     parser.add_argument(
@@ -177,6 +200,24 @@ def is_chat_en_general(row: dict[str, Any]) -> bool:
     )
 
 
+def is_chat_category(row: dict[str, Any], categories: set[str]) -> bool:
+    return not is_email_triage(row) and row.get("category") in categories
+
+
+def is_chat_bilingual(row: dict[str, Any]) -> bool:
+    return is_chat_category(row, {"bilingual_switch"})
+
+
+def is_chat_refusal(row: dict[str, Any]) -> bool:
+    return is_chat_category(row, {"refusal"}) or (
+        not is_email_triage(row) and row.get("task_type") == "safety_refusal"
+    )
+
+
+def is_chat_code_factual(row: dict[str, Any]) -> bool:
+    return is_chat_category(row, {"code_math", "factual_qa", "technical_explain"})
+
+
 def is_mail_en_all_domains(row: dict[str, Any]) -> bool:
     return is_email_triage(row) and row.get("language") == "en"
 
@@ -217,6 +258,79 @@ def is_mail_vi_ops_support(row: dict[str, Any]) -> bool:
 
 def is_mail_other(row: dict[str, Any]) -> bool:
     return is_email_triage(row) and row.get("domain") not in PRIORITY_MAIL_DOMAINS
+
+
+def has_task_variant(row: dict[str, Any], variants: set[str]) -> bool:
+    return is_email_triage(row) and row.get("task_variant") in variants
+
+
+def is_mail_strict_triage(row: dict[str, Any]) -> bool:
+    return has_task_variant(
+        row,
+        {
+            "full_triage",
+            "full_triage_strict_schema",
+            "json_to_full_triage_schema",
+        },
+    )
+
+
+def is_mail_summary_focus(row: dict[str, Any]) -> bool:
+    return has_task_variant(
+        row,
+        {
+            "summarize_email",
+            "anchored_summary_schema",
+            "summary_contract_schema",
+            "repair_generic_summary_schema",
+        },
+    )
+
+
+def is_mail_summary_anchor(row: dict[str, Any]) -> bool:
+    return has_task_variant(row, {"anchored_summary_schema", "summary_contract_schema"})
+
+
+def is_mail_priority_calibration(row: dict[str, Any]) -> bool:
+    return has_task_variant(row, {"classify_only", "priority_calibration_schema"})
+
+
+def is_mail_blocker_rule(row: dict[str, Any]) -> bool:
+    return has_task_variant(row, {"conditional_blocker_schema", "required_blocker_schema"})
+
+
+def is_mail_deadline_repair(row: dict[str, Any]) -> bool:
+    return has_task_variant(
+        row,
+        {
+            "deadline_carryover_schema",
+            "repair_deadline_bullet_schema",
+            "repair_missing_actions_deadlines_schema",
+        },
+    )
+
+
+def is_mail_action_deadline(row: dict[str, Any]) -> bool:
+    return has_task_variant(
+        row,
+        {
+            "extract_actions_and_deadlines",
+            "canonicalize_action_schema",
+            "repair_missing_actions_deadlines_schema",
+        },
+    )
+
+
+def is_mail_priority_deadline(row: dict[str, Any]) -> bool:
+    return has_task_variant(
+        row,
+        {
+            "classify_only",
+            "deadline_carryover_schema",
+            "repair_deadline_bullet_schema",
+            "find_deadline",
+        },
+    )
 
 
 def distribute_counts(total_rows: int, profile: dict[str, float]) -> dict[str, int]:
@@ -292,6 +406,47 @@ def build_profile_buckets(
             ("mail_en_all_domains", is_mail_en_all_domains),
             ("mail_vi", is_mail_vi),
             ("mail_mixed", is_mail_mixed),
+            ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
+        ]
+        buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
+        for row in keep_rows:
+            for bucket_name, predicate in ordered_buckets:
+                if predicate(row):
+                    buckets[bucket_name].append(row)
+                    break
+        return buckets
+
+    if target_profile == "chat_mail_triage_v51":
+        ordered_buckets = [
+            ("mail_strict_triage", is_mail_strict_triage),
+            ("mail_summary_anchor", is_mail_summary_anchor),
+            ("mail_priority_calibration", is_mail_priority_calibration),
+            ("mail_blocker_rules", is_mail_blocker_rule),
+            ("mail_deadline_repair", is_mail_deadline_repair),
+            ("chat_vi_general", is_chat_vi_general),
+            ("chat_en_general", is_chat_en_general),
+            ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
+        ]
+        buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
+        for row in keep_rows:
+            for bucket_name, predicate in ordered_buckets:
+                if predicate(row):
+                    buckets[bucket_name].append(row)
+                    break
+        return buckets
+
+    if target_profile == "chat_mail_summary_v52":
+        ordered_buckets = [
+            ("mail_summary_focus", is_mail_summary_focus),
+            ("mail_strict_triage", is_mail_strict_triage),
+            ("mail_action_deadline", is_mail_action_deadline),
+            ("mail_priority_deadline", is_mail_priority_deadline),
+            ("mail_blocker_rules", is_mail_blocker_rule),
+            ("chat_bilingual", is_chat_bilingual),
+            ("chat_refusal", is_chat_refusal),
+            ("chat_code_factual", is_chat_code_factual),
+            ("chat_vi_general", is_chat_vi_general),
+            ("chat_en_general", is_chat_en_general),
             ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
         ]
         buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}

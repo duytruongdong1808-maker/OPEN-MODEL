@@ -77,7 +77,7 @@ services:
       --chat-template /chat_templates/qwen_chat_template.jinja
       --port 8001
     volumes:
-      - ./outputs/qwen2.5_3b_lora_v1/final_adapter:/adapters/final_adapter:ro
+      - ./outputs/qwen2.5_3b_lora_v5/final_adapter:/adapters/final_adapter:ro
       - ./configs/qwen_chat_template.jinja:/chat_templates/qwen_chat_template.jinja:ro
       - hf-cache:/root/.cache/huggingface
     read_only: false

@@ -85,6 +85,12 @@ open-model-v1/
     rtx4060ti_8gb.yaml
     a100_40gb.yaml
   outputs/
+    analysis/
+    app/
+    comparisons/
+    databases/
+    evaluations/
+    logs/
   .gitignore
   pyproject.toml
   README.md
@@ -524,11 +530,11 @@ python src/eval.py --adapter_path outputs/qwen2.5_3b_lora_v2/final_adapter
 For the metric-first comparison flow, keep each adapter output separate and compare JSON reports:
 
 ```bash
-python scripts/eval_quality.py --base Qwen/Qwen2.5-1.5B-Instruct --adapter outputs/qwen2.5_1.5b_mail_triage_lora_v4/final_adapter --eval-set both --output outputs/eval_qwen25_1p5b_mail_triage_v4.json
-python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v1/final_adapter --eval-set both --output outputs/eval_qwen25_3b_lora_v1.json
-python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v2/final_adapter --eval-set both --output outputs/eval_qwen25_3b_lora_v2.json
-python scripts/compare_eval.py outputs/eval_qwen25_1p5b_mail_triage_v4.json outputs/eval_qwen25_3b_lora_v1.json --output outputs/compare_1p5b_vs_3b_v1.md
-python scripts/compare_eval.py outputs/eval_qwen25_3b_lora_v1.json outputs/eval_qwen25_3b_lora_v2.json --output outputs/compare_3b_v1_vs_3b_v2.md
+python scripts/eval_quality.py --base Qwen/Qwen2.5-1.5B-Instruct --adapter outputs/qwen2.5_1.5b_mail_triage_lora_v4/final_adapter --eval-set both --output outputs/evaluations/qwen25_1p5b_mail_triage_v4/eval_qwen25_1p5b_mail_triage_v4.json
+python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v1/final_adapter --eval-set both --output outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json
+python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v2/final_adapter --eval-set both --output outputs/evaluations/qwen25_3b_lora_v2/eval_qwen25_3b_lora_v2.json
+python scripts/compare_eval.py outputs/evaluations/qwen25_1p5b_mail_triage_v4/eval_qwen25_1p5b_mail_triage_v4.json outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json --output outputs/comparisons/compare_1p5b_vs_3b_v1.md
+python scripts/compare_eval.py outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json outputs/evaluations/qwen25_3b_lora_v2/eval_qwen25_3b_lora_v2.json --output outputs/comparisons/compare_3b_v1_vs_3b_v2.md
 ```
 
 ## Local Chat
