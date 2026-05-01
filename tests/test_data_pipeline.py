@@ -439,6 +439,91 @@ def test_build_dataset_rows_uses_v52_summary_and_chat_replay_buckets() -> None:
     assert all("task_variant" in row for row in built if row["sampling_bucket"].startswith("mail_"))
 
 
+def test_build_dataset_rows_uses_mail_agent_profile_with_small_chat_replay() -> None:
+    rows = []
+    for index, variant in enumerate(
+        [
+            "summary_contract_schema",
+            "full_triage_strict_schema",
+            "canonicalize_action_schema",
+            "deadline_carryover_schema",
+            "conditional_blocker_schema",
+        ]
+    ):
+        rows.append(
+            {
+                "instruction": f"mail {variant}",
+                "input": "",
+                "output": (
+                    f"Summary: Mail case {index} keeps the customer and task.\n"
+                    "Priority: medium\n"
+                    "Action items:\n"
+                    "- Review the customer update by 3 PM\n"
+                    "Deadlines: by 3 PM"
+                ),
+                "task_type": TASK_TYPE_GENERATION,
+                "language": "en",
+                "quality_score": 95,
+                "flags": [],
+                "source": "seed_mail_triage_vi_en",
+                "action": "keep",
+                "domain": "ops",
+                "task_variant": variant,
+            }
+        )
+    rows.append(
+        {
+            "instruction": "mail low no action",
+            "input": "",
+            "output": (
+                "Summary: Ops shared reference notes for later reading.\n"
+                "Priority: low\n"
+                "Action items:\n"
+                "- None\n"
+                "Deadlines: None"
+            ),
+            "task_type": TASK_TYPE_GENERATION,
+            "language": "en",
+            "quality_score": 95,
+            "flags": [],
+            "source": "seed_mail_triage_vi_en",
+            "action": "keep",
+            "domain": "ops",
+            "task_variant": "full_triage_strict_schema",
+        }
+    )
+    for index, category in enumerate(["bilingual_switch", "refusal", "code_math"]):
+        rows.append(
+            {
+                "instruction": f"chat replay {category}",
+                "input": "",
+                "output": f"Useful replay answer {index}.",
+                "task_type": TASK_TYPE_QA if category != "refusal" else TASK_TYPE_REFUSAL,
+                "language": "en",
+                "quality_score": 90,
+                "flags": [],
+                "source": "seed",
+                "action": "keep",
+                "category": category,
+            }
+        )
+
+    built = build_dataset_rows(rows, target_profile="mail_agent_v1", total_rows=100, seed=17)
+
+    counts = Counter(row["sampling_bucket"] for row in built)
+    assert counts["mail_summary_focus"] == 22
+    assert counts["mail_strict_triage"] == 18
+    assert counts["mail_action_deadline"] == 15
+    assert counts["mail_deadline_repair"] == 12
+    assert counts["mail_blocker_rules"] == 10
+    assert counts["mail_low_no_action"] == 10
+    assert counts["chat_bilingual"] == 5
+    assert counts["chat_code_factual"] == 4
+    assert counts["chat_refusal"] == 4
+    assert all("task_variant" in row for row in built if row["sampling_bucket"].startswith("mail_"))
+    assert sum(1 for row in built if row["source"] == "seed_mail_triage_vi_en") == 87
+
+
 def test_generate_mail_triage_seed_rows_are_balanced_and_unique() -> None:
     rows = build_mail_triage_seed_rows(DEFAULT_TOTAL_ROWS)
 

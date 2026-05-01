@@ -3,29 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { IconModel } from "@/components/ui/icons";
-import { createBrowserApiClient, formatApiError } from "@/lib/api";
-import type { ApiClient } from "@/lib/api";
-
-let pendingBootstrapConversation: Promise<string> | null = null;
-
-async function resolveInitialConversationId(apiClient: ApiClient): Promise<string> {
-  const conversations = await apiClient.listConversations();
-  if (conversations.length > 0) {
-    return conversations[0].id;
-  }
-
-  if (!pendingBootstrapConversation) {
-    pendingBootstrapConversation = apiClient
-      .createConversation()
-      .then((conversation) => conversation.id)
-      .finally(() => {
-        pendingBootstrapConversation = null;
-      });
-  }
-
-  return pendingBootstrapConversation;
-}
+import { IconMail } from "@/components/ui/icons";
 
 export function HomeBootstrap() {
   const router = useRouter();
@@ -35,13 +13,12 @@ export function HomeBootstrap() {
     let cancelled = false;
 
     async function bootstrapConversation() {
-      const apiClient = createBrowserApiClient();
       try {
-        const conversationId = await resolveInitialConversationId(apiClient);
+        await Promise.resolve();
         if (cancelled) return;
-        router.replace(`/chat/${conversationId}`);
+        router.replace("/mail");
       } catch (cause) {
-        if (!cancelled) setError(formatApiError(cause));
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to open mail.");
       }
     }
 
@@ -57,20 +34,20 @@ export function HomeBootstrap() {
       <section className="w-full max-w-md rounded-xl border border-line bg-bg-rail px-6 py-8 shadow-soft">
         <div className="flex items-center gap-2.5">
           <span className="grid h-8 w-8 place-items-center rounded-[9px] border border-accent-ring bg-accent-soft text-accent-fg">
-            <IconModel size={15} />
+            <IconMail size={15} />
           </span>
           <div>
-            <div className="text-[13.5px] font-semibold tracking-tight text-text">Open Model</div>
-            <div className="om-meta">Local - on-device</div>
+            <div className="text-[13.5px] font-semibold tracking-tight text-text">Mail Agent</div>
+            <div className="om-meta">Gmail - read-only</div>
           </div>
         </div>
 
         <h1 className="mt-6 text-2xl font-semibold tracking-tight text-text">
-          {error ? "Couldn't start a session" : "Preparing your workspace"}
+          {error ? "Couldn't open mail" : "Opening mail workspace"}
         </h1>
 
         <p className="mt-2 text-sm leading-6 text-text-3">
-          {error ?? "Loading the latest conversation or creating a fresh thread..."}
+          {error ?? "Loading the Gmail triage dashboard..."}
         </p>
 
         {!error && (

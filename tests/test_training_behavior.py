@@ -84,3 +84,16 @@ def test_rtx4060ti_config_targets_qwen_3b_qlora() -> None:
     assert "output_dir: outputs/qwen2.5_3b_lora_v5_2" in source
     assert "load_in_4bit: true" in source
     assert "gradient_accumulation_steps: 16" in source
+
+
+def test_mail_agent_config_targets_dedicated_adapter_output() -> None:
+    source = (ROOT_DIR / "configs" / "rtx4060ti_8gb_mail_agent.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "base_model: Qwen/Qwen2.5-3B-Instruct" in source
+    assert "dataset_path: data/processed/train_sft_mail_agent_v1.jsonl" in source
+    assert "val_dataset_path: data/processed/val_sft_mail_agent_v1.jsonl" in source
+    assert "output_dir: outputs/qwen2.5_3b_lora_mail_agent_v1" in source
+    assert "load_in_4bit: true" in source
+    assert "gradient_accumulation_steps: 16" in source

@@ -85,6 +85,17 @@ TARGET_PROFILES = {
         "chat_en_general": 0.06,
         "mixed_utility": 0.04,
     },
+    "mail_agent_v1": {
+        "mail_summary_focus": 0.22,
+        "mail_strict_triage": 0.18,
+        "mail_action_deadline": 0.15,
+        "mail_deadline_repair": 0.12,
+        "mail_blocker_rules": 0.10,
+        "mail_low_no_action": 0.10,
+        "chat_bilingual": 0.05,
+        "chat_code_factual": 0.04,
+        "chat_refusal": 0.04,
+    },
 }
 MIXED_UTILITY_TASK_TYPES = {"summarize", "classification", "list_extraction", "generation"}
 EMAIL_TRIAGE_SOURCE = "seed_mail_triage_vi_en"
@@ -333,6 +344,18 @@ def is_mail_priority_deadline(row: dict[str, Any]) -> bool:
     )
 
 
+def is_mail_low_no_action(row: dict[str, Any]) -> bool:
+    if not is_email_triage(row):
+        return False
+    output = str(row.get("output", "")).casefold()
+    return (
+        "priority: low" in output
+        and "action items:" in output
+        and "- none" in output
+        and "deadlines: none" in output
+    )
+
+
 def distribute_counts(total_rows: int, profile: dict[str, float]) -> dict[str, int]:
     counts = {bucket: int(total_rows * ratio) for bucket, ratio in profile.items()}
     assigned = sum(counts.values())
@@ -448,6 +471,26 @@ def build_profile_buckets(
             ("chat_vi_general", is_chat_vi_general),
             ("chat_en_general", is_chat_en_general),
             ("mixed_utility", lambda row: not is_email_triage(row) and is_mixed_utility(row)),
+        ]
+        buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
+        for row in keep_rows:
+            for bucket_name, predicate in ordered_buckets:
+                if predicate(row):
+                    buckets[bucket_name].append(row)
+                    break
+        return buckets
+
+    if target_profile == "mail_agent_v1":
+        ordered_buckets = [
+            ("mail_low_no_action", is_mail_low_no_action),
+            ("mail_summary_focus", is_mail_summary_focus),
+            ("mail_strict_triage", is_mail_strict_triage),
+            ("mail_action_deadline", is_mail_action_deadline),
+            ("mail_deadline_repair", is_mail_deadline_repair),
+            ("mail_blocker_rules", is_mail_blocker_rule),
+            ("chat_bilingual", is_chat_bilingual),
+            ("chat_code_factual", is_chat_code_factual),
+            ("chat_refusal", is_chat_refusal),
         ]
         buckets = {bucket_name: [] for bucket_name, _ in ordered_buckets}
         for row in keep_rows:

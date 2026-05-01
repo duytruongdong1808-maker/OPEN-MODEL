@@ -55,6 +55,49 @@ export interface GmailStatus {
   scopes: string[];
 }
 
+export interface EmailAttachment {
+  filename: string | null;
+  content_type: string;
+  size_bytes: number;
+  content_id: string | null;
+  disposition: string | null;
+}
+
+export interface EmailSummary {
+  uid: string;
+  from: string;
+  to: string[];
+  subject: string;
+  date: string;
+  snippet: string;
+  unread: boolean;
+  has_attachments: boolean;
+}
+
+export interface EmailMessage extends EmailSummary {
+  body_text: string;
+  body_html: string | null;
+  headers: Record<string, string>;
+  message_id: string;
+  in_reply_to: string | null;
+  references: string[];
+  attachments: EmailAttachment[];
+  truncated: boolean;
+}
+
+export interface MailTriageRequest {
+  uid?: string;
+  limit?: number;
+  unread_only?: boolean;
+}
+
+export interface MailTriageResponse {
+  triage_markdown: string;
+  steps: AgentStep[];
+  source_uid: string | null;
+  email: EmailMessage | EmailSummary | null;
+}
+
 export interface AgentStep {
   index: number;
   kind: "model" | "tool";

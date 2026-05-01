@@ -14,7 +14,11 @@ import type {
   ChatStreamRequest,
   ConversationDetail,
   ConversationSummary,
+  EmailMessage,
+  EmailSummary,
   GmailStatus,
+  MailTriageRequest,
+  MailTriageResponse,
   StreamEvent,
 } from "@/lib/types";
 
@@ -99,6 +103,18 @@ class FakeApiClient implements ApiClient {
 
   getGmailLoginUrl(): string {
     return "/api/backend/auth/gmail/login";
+  }
+
+  async listMailInbox(): Promise<EmailSummary[]> {
+    return [];
+  }
+
+  async getMailMessage(uid: string): Promise<EmailMessage> {
+    throw new Error(`Unexpected mail message request: ${uid}`);
+  }
+
+  async triageMail(_payload: MailTriageRequest): Promise<MailTriageResponse> {
+    throw new Error("Unexpected mail triage request.");
   }
 
   async streamConversationMessage(

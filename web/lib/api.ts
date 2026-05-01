@@ -3,7 +3,11 @@ import type {
   ChatStreamRequest,
   ConversationDetail,
   ConversationSummary,
+  EmailMessage,
+  EmailSummary,
   GmailStatus,
+  MailTriageRequest,
+  MailTriageResponse,
   StreamEvent,
 } from "@/lib/types";
 
@@ -24,6 +28,9 @@ export interface ApiClient {
   getGmailStatus(): Promise<GmailStatus>;
   disconnectGmail(): Promise<GmailStatus>;
   getGmailLoginUrl(): string;
+  listMailInbox(options?: { limit?: number; unread_only?: boolean }): Promise<EmailSummary[]>;
+  getMailMessage(uid: string): Promise<EmailMessage>;
+  triageMail(payload: MailTriageRequest): Promise<MailTriageResponse>;
   streamConversationMessage(
     conversationId: string,
     payload: ChatStreamRequest,
@@ -162,6 +169,28 @@ export class HttpApiClient implements ApiClient {
 
   getGmailLoginUrl(): string {
     return `${resolveApiBaseUrl()}/auth/gmail/login`;
+  }
+
+  async listMailInbox(options: { limit?: number; unread_only?: boolean } = {}): Promise<EmailSummary[]> {
+    const params = new URLSearchParams();
+    params.set("limit", String(options.limit ?? 20));
+    params.set("unread_only", String(options.unread_only ?? true));
+    const response = await requestJson<{ messages: EmailSummary[] }>(`/mail/inbox?${params}`);
+    return response.messages;
+  }
+
+  async getMailMessage(uid: string): Promise<EmailMessage> {
+    const response = await requestJson<{ message: EmailMessage }>(
+      `/mail/messages/${encodeURIComponent(uid)}`,
+    );
+    return response.message;
+  }
+
+  async triageMail(payload: MailTriageRequest): Promise<MailTriageResponse> {
+    return requestJson<MailTriageResponse>("/mail/triage", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   async streamConversationMessage(

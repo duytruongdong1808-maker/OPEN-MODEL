@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from .deps import verify_tools_token
-from .routes import agent, audit, conversations, gmail_auth, health, tools
+from .routes import agent, audit, conversations, gmail_auth, health, mail, tools
 
 
 def create_api_router(*, protect_chat_routes: bool = True) -> APIRouter:
@@ -13,6 +13,7 @@ def create_api_router(*, protect_chat_routes: bool = True) -> APIRouter:
     api_router.include_router(audit.me_router, dependencies=chat_dependencies)
     api_router.include_router(gmail_auth.router)
     api_router.include_router(tools.router)
+    api_router.include_router(mail.router, dependencies=chat_dependencies)
     api_router.include_router(agent.router)
     api_router.include_router(conversations.router, dependencies=chat_dependencies)
     return api_router
