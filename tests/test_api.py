@@ -445,16 +445,14 @@ def test_mail_triage_endpoint_formats_required_sections_and_source(
     triage = payload["triage_markdown"]
     assert payload["source_uid"] == "msg-1"
     assert payload["steps"][0]["tool_name"] == "get_email"
-    assert "**Sender**: alice@example.com" in triage
-    assert "**Subject**: Launch checklist" in triage
-    assert "**Date**:" in triage
-    assert "**Unread**: yes" in triage
-    assert "**Summary**" in triage
-    assert "**Priority**" in triage
-    assert "**Action items**:" in triage
-    assert "**Deadlines**:" in triage
-    assert "**Attachments**:" in triage
-    assert "**Source**: configured inbox UID msg-1" in triage
+    assert "**Tóm tắt**" in triage
+    assert "**Ý chính**" in triage
+    assert "**Việc cần làm**" in triage
+    assert "**Mốc thời gian / deadline**" in triage
+    assert "**Người / bên liên quan**" in triage
+    assert "**File đính kèm**" in triage
+    assert "alice@example.com" in triage
+    assert "configured inbox UID msg-1" in triage
     assert "by 3 PM" in triage
     assert send_calls == []
 
@@ -472,9 +470,11 @@ def test_mail_triage_endpoint_handles_empty_inbox(tmp_path: Path, monkeypatch) -
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_uid"] is None
-    assert "No message was returned" in payload["triage_markdown"]
-    assert "**Action items**:\n- None" in payload["triage_markdown"]
-    assert "**Deadlines**:\n- None" in payload["triage_markdown"]
+    assert "Không có thư nào được trả về" in payload["triage_markdown"]
+    assert "**Việc cần làm**\n- Không thấy yêu cầu hành động rõ ràng." in payload["triage_markdown"]
+    assert (
+        "**Mốc thời gian / deadline**\n- Không thấy deadline rõ ràng." in payload["triage_markdown"]
+    )
 
 
 def test_agent_mode_streams_read_only_steps_and_persists_summary(
@@ -511,12 +511,14 @@ def test_agent_mode_streams_read_only_steps_and_persists_summary(
     assert events[2][1]["tool_name"] == "read_inbox"
     assert events[3][1]["tool_name"] == "get_email"
     assert "read-only email summarization agent" in runtime.calls[0]["system_prompt"]
+    assert "**Tóm tắt**" in runtime.calls[0]["system_prompt"]
     assert "Tool result for get_email" in runtime.calls[1]["messages"][-1]["content"]
 
     conversation = client.get(f"/conversations/{conversation_id}").json()
     assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
-    assert "Summary: Launch checklist" in conversation["messages"][1]["content"]
-    assert "Action items:" in conversation["messages"][1]["content"]
+    assert "**Tóm tắt**" in conversation["messages"][1]["content"]
+    assert "**Việc cần làm**" in conversation["messages"][1]["content"]
+    assert "Launch checklist" in conversation["messages"][1]["content"]
 
 
 def test_agent_mode_fallback_reports_latest_inbox_message_clearly(
@@ -541,13 +543,13 @@ def test_agent_mode_fallback_reports_latest_inbox_message_clearly(
     conversation = client.get(f"/conversations/{conversation_id}").json()
     answer = conversation["messages"][1]["content"]
     assert "Hộp thư đến (INBOX)" in answer
-    assert "**Source**: configured inbox UID 101" in answer
+    assert "configured inbox UID 101" in answer
     assert "Launch checklist" in answer
     assert "Mình đã đọc inbox" not in answer
-    assert "**Summary**" in answer
-    assert "**Priority**" in answer
-    assert "**Action items**" in answer
-    assert "**Deadlines**" in answer
+    assert "**Tóm tắt**" in answer
+    assert "**Ý chính**" in answer
+    assert "**Việc cần làm**" in answer
+    assert "**Mốc thời gian / deadline**" in answer
     assert "MÃ¬nh" not in answer
 
 
@@ -575,6 +577,166 @@ def test_agent_mode_rejects_unavailable_write_tool(tmp_path: Path, monkeypatch) 
     assert tool_step["status"] == "error"
     assert "not available" in tool_step["error"]
     assert events[-1][0] == "message_complete"
+
+
+def test_mail_mode_reads_selected_email_and_streams_natural_answer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = FakeChatRuntime(chunks=["This mail asks you to review the checklist."])
+
+    async def fake_get_email(user_id: str, uid: str):
+        assert user_id == DEFAULT_USER_ID
+        assert uid == "msg-1"
+        return EmailMessage(
+            uid=uid,
+            **{"from": "alice@example.com"},
+            to=["reader@example.com"],
+            subject="Launch checklist",
+            date=datetime(2026, 4, 18, 11, 0, tzinfo=timezone.utc),
+            snippet="Please review the checklist.",
+            unread=True,
+            has_attachments=False,
+            body_text="Please review the launch checklist and send comments by 3 PM.",
+            body_html=None,
+            headers={},
+            message_id="<msg-1@example.com>",
+            in_reply_to=None,
+            references=[],
+            attachments=[],
+            truncated=False,
+        )
+
+    monkeypatch.setattr("src.server.api.routes.conversations.email_tools.get_email", fake_get_email)
+    client = create_test_client(tmp_path, runtime=runtime)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={
+            "message": "summarize this mail",
+            "mode": "mail",
+            "selected_email_uid": "msg-1",
+            "max_steps": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    assert [name for name, _ in events] == [
+        "message_start",
+        "agent_step",
+        "assistant_delta",
+        "message_complete",
+    ]
+    assert events[1][1]["tool_name"] == "get_email"
+    assert events[1][1]["arguments"] == {"uid": "msg-1"}
+    assert runtime.calls[0]["mode"] == "mail"
+    assert "read-only mail chat assistant" in runtime.calls[0]["system_prompt"]
+    assert "**Tóm tắt**" in runtime.calls[0]["system_prompt"]
+    assert "**Việc cần làm**" in runtime.calls[0]["system_prompt"]
+    assert "**Mốc thời gian / deadline**" in runtime.calls[0]["system_prompt"]
+    assert "Selected email for this mail chat" in runtime.calls[0]["messages"][-1]["content"]
+    assert "Launch checklist" in runtime.calls[0]["messages"][-1]["content"]
+
+    conversation = client.get(f"/conversations/{conversation_id}").json()
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert "**Tóm tắt**" in conversation["messages"][1]["content"]
+    assert "This mail asks you to review the checklist." in conversation["messages"][1]["content"]
+    assert "**Priority**" not in conversation["messages"][1]["content"]
+
+
+def test_mail_mode_without_selected_email_runs_inbox_agent(tmp_path: Path, monkeypatch) -> None:
+    runtime = ScriptedAgentRuntime(
+        [
+            '{"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":false}}}',
+            '{"final":"Inbox summary"}',
+        ]
+    )
+    monkeypatch.setattr("src.server.app.get_web_agent_registry", fake_read_only_registry)
+    client = create_test_client(tmp_path, runtime=runtime)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "summarize this mail", "mode": "mail"},
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    assert any(
+        name == "agent_step" and payload["tool_name"] == "read_inbox"
+        for name, payload in events
+        if payload.get("kind") == "tool"
+    )
+    conversation = client.get(f"/conversations/{conversation_id}").json()
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert "**Tóm tắt**" in conversation["messages"][1]["content"]
+
+
+def test_mail_mode_reports_selected_email_read_failure(tmp_path: Path, monkeypatch) -> None:
+    async def fake_get_email(user_id: str, uid: str):
+        raise AuthError("Gmail is not connected.")
+
+    monkeypatch.setattr("src.server.api.routes.conversations.email_tools.get_email", fake_get_email)
+    client = create_test_client(tmp_path)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "summarize this mail", "mode": "mail", "selected_email_uid": "msg-1"},
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    assert events[1][0] == "agent_step"
+    assert events[1][1]["status"] == "error"
+    assert events[1][1]["tool_name"] == "get_email"
+    assert events[-1] == ("error", {"message": "Gmail is not connected."})
+
+
+def test_mail_mode_truncates_selected_email_context_for_4096_vllm_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = FakeChatRuntime(chunks=["Short answer."])
+    long_body = "A" * 8000
+
+    async def fake_get_email(user_id: str, uid: str):
+        return EmailMessage(
+            uid=uid,
+            **{"from": "alice@example.com"},
+            to=["reader@example.com"],
+            subject="Very long email",
+            date=datetime(2026, 4, 18, 11, 0, tzinfo=timezone.utc),
+            snippet="Please review this long message.",
+            unread=False,
+            has_attachments=False,
+            body_text=long_body,
+            body_html=None,
+            headers={"X-Large": "B" * 8000},
+            message_id="<msg-1@example.com>",
+            in_reply_to=None,
+            references=[],
+            attachments=[],
+            truncated=False,
+        )
+
+    monkeypatch.setattr("src.server.api.routes.conversations.email_tools.get_email", fake_get_email)
+    client = create_test_client(tmp_path, runtime=runtime)
+    conversation_id = client.post("/conversations").json()["id"]
+
+    response = client.post(
+        f"/conversations/{conversation_id}/messages/stream",
+        json={"message": "summarize this mail", "mode": "mail", "selected_email_uid": "msg-1"},
+    )
+
+    assert response.status_code == 200
+    prompt_content = runtime.calls[0]["messages"][0]["content"]
+    assert len(prompt_content) < 6500
+    assert "Very long email" in prompt_content
+    assert "Selected email for this mail chat" in prompt_content
+    assert "[truncated]" in prompt_content
+    assert "X-Large" not in prompt_content
+    assert long_body not in prompt_content
 
 
 def configure_tools_env(monkeypatch) -> None:

@@ -3,6 +3,7 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
 
 import type { ChatStreamMode, StepUpdate, UiMessage } from "@/lib/types";
+import { EmailSummaryCard } from "@/features/mail/components/EmailSummaryCard";
 
 import {
   IconAlert,
@@ -181,19 +182,23 @@ function AssistantMessage({
       <div className="min-w-0 flex-1">
         <div className="mb-1.5 flex items-center gap-2.5">
           <span className="text-[12px] font-semibold text-text-2">
-            {mode === "agent" ? "Mail agent" : "Open Model"}
+            {mode === "agent" || mode === "mail" ? "Mail agent" : "Open Model"}
           </span>
           {streaming && (
             <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-accent-fg">
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current" />
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current [animation-delay:.15s]" />
               <span className="h-1 w-1 animate-om-pulse rounded-full bg-current [animation-delay:.3s]" />
-              {mode === "agent" ? "Reading" : "Generating"}
+              {mode === "agent" || mode === "mail" ? "Reading" : "Generating"}
             </span>
           )}
         </div>
         <div className="text-[15px] leading-[1.7] text-text [&>p]:mb-3.5 [&>p:last-child]:mb-0">
-          {renderRichText(message.content)}
+          {mode === "mail" && !streaming ? (
+            <EmailSummaryCard content={message.content} />
+          ) : (
+            renderRichText(message.content)
+          )}
           {streaming && (
             <span className="ml-0.5 inline-block h-4 w-2 -translate-y-[3px] animate-om-blink bg-accent-fg align-baseline" />
           )}
@@ -247,7 +252,7 @@ function AssistantMessage({
             </div>
             <div className="flex-1">
               <div className="text-[13px] font-semibold text-text">
-                {mode === "agent" ? "Agent failed" : "Generation failed"}
+                {mode === "agent" || mode === "mail" ? "Agent failed" : "Generation failed"}
               </div>
               <div className="text-[12.5px] leading-relaxed text-text-2">{message.error}</div>
             </div>

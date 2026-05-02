@@ -476,7 +476,7 @@ def build_chat_seed_rows() -> list[dict[str, str]]:
         (
             "Cho vi du JSON hop le co name va age.",
             "JSON example please.",
-            "{\"name\": \"Lan\", \"age\": 30}",
+            '{"name": "Lan", "age": 30}',
             "vi",
             "code_math",
         ),

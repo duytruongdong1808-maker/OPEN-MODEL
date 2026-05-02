@@ -31,9 +31,7 @@ from src.utils import (  # noqa: E402
 
 DEFAULT_CHAT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "chat_quality_gold.jsonl"
 DEFAULT_MAIL_EVAL_PATH = ROOT_DIR / "data" / "eval" / "mail_triage_gold.jsonl"
-DEFAULT_EVAL_REPORT_PATH = (
-    ROOT_DIR / "outputs" / "evaluations" / "eval_report" / "eval_report.json"
-)
+DEFAULT_EVAL_REPORT_PATH = ROOT_DIR / "outputs" / "evaluations" / "eval_report" / "eval_report.json"
 
 
 @dataclass

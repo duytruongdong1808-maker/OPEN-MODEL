@@ -1,6 +1,6 @@
 export type MessageRole = "user" | "assistant";
 export type StepStatus = "pending" | "active" | "complete" | "error";
-export type ChatStreamMode = "chat" | "agent" | "news";
+export type ChatStreamMode = "chat" | "agent" | "mail" | "news";
 
 export interface SourceItem {
   title: string;
@@ -47,6 +47,7 @@ export interface ChatStreamRequest {
   system_prompt?: string;
   mode?: ChatStreamMode;
   max_steps?: number;
+  selected_email_uid?: string;
 }
 
 export interface GmailStatus {

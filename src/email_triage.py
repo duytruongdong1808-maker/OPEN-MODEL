@@ -17,7 +17,7 @@ BAD_MAIL_OUTPUT_PATTERNS = (
 SUMMARY_LABELS = {"en": "Summary", "vi": "Tóm tắt"}
 PRIORITY_LABELS = {"en": "Priority", "vi": "Ưu tiên"}
 ACTION_LABELS = {"en": "Action items", "vi": "Việc cần làm"}
-DEADLINE_LABELS = {"en": "Deadlines", "vi": "Hạn chót"}
+DEADLINE_LABELS = {"en": "Deadlines", "vi": "Mốc thời gian / deadline"}
 NONE_VALUES = {"none", "không có"}
 PRIORITY_ALIASES = {
     "high": "high",
@@ -581,9 +581,10 @@ def _action_match(actual: str, expected: str) -> bool:
         return True
     if not _has_required_action_entities(actual, expected):
         return False
-    return _has_anchor_overlap(
-        actual, expected, strip_action_deadline=True
-    ) and _semantic_similarity(actual, expected, strip_action_deadline=True) >= 0.62
+    return (
+        _has_anchor_overlap(actual, expected, strip_action_deadline=True)
+        and _semantic_similarity(actual, expected, strip_action_deadline=True) >= 0.62
+    )
 
 
 def _list_match(actual_values: Sequence[str], expected_values: Sequence[str], *, matcher) -> bool:

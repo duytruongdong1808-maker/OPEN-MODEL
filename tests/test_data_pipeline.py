@@ -425,7 +425,9 @@ def test_build_dataset_rows_uses_v52_summary_and_chat_replay_buckets() -> None:
             }
         )
 
-    built = build_dataset_rows(rows, target_profile="chat_mail_summary_v52", total_rows=100, seed=13)
+    built = build_dataset_rows(
+        rows, target_profile="chat_mail_summary_v52", total_rows=100, seed=13
+    )
 
     counts = Counter(row["sampling_bucket"] for row in built)
     assert counts["mail_summary_focus"] == 18

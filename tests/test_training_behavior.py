@@ -87,9 +87,7 @@ def test_rtx4060ti_config_targets_qwen_3b_qlora() -> None:
 
 
 def test_mail_agent_config_targets_dedicated_adapter_output() -> None:
-    source = (ROOT_DIR / "configs" / "rtx4060ti_8gb_mail_agent.yaml").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT_DIR / "configs" / "rtx4060ti_8gb_mail_agent.yaml").read_text(encoding="utf-8")
 
     assert "base_model: Qwen/Qwen2.5-3B-Instruct" in source
     assert "dataset_path: data/processed/train_sft_mail_agent_v1.jsonl" in source

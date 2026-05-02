@@ -72,7 +72,7 @@ services:
       --lora-modules adapter=/adapters/final_adapter
       --max-loras 1
       --max-lora-rank 16
-      --max-model-len 1536
+      --max-model-len 4096
       --gpu-memory-utilization 0.85
       --chat-template /chat_templates/qwen_chat_template.jinja
       --port 8001

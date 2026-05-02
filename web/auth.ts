@@ -196,7 +196,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const sourceToken = token as typeof token & TokenWithGoogle;
       const nextSession = session as typeof session & SessionWithGoogle;
       if (nextSession.user && sourceToken.sub) {
-        nextSession.user.id = sourceToken.sub;
+        nextSession.user.id = sourceToken.googleUserId ?? sourceToken.sub;
       }
       nextSession.googleUserId = sourceToken.googleUserId;
       nextSession.googleEmail = sourceToken.googleEmail;

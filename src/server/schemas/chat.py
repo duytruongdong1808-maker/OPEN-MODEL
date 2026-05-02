@@ -41,6 +41,7 @@ class ChatStreamRequest(BaseModel):
     system_prompt: str | None = None
     mode: str = Field(default="chat")
     max_steps: int = Field(default=5, ge=1, le=10)
+    selected_email_uid: str | None = Field(default=None, min_length=1)
 
 
 class ConversationUpdateRequest(BaseModel):

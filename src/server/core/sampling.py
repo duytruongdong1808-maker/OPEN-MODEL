@@ -47,6 +47,7 @@ MODE_TO_PROFILE = {
     "agent": "agent_json",
     "agent_json": "agent_json",
     "chat": "chat",
+    "mail": "mail_summary",
     "mail_summary": "mail_summary",
     "news": "news",
 }

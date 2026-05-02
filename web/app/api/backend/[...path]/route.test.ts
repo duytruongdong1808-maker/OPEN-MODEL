@@ -93,6 +93,26 @@ test("forwards allowed requests with rate limit headers", async () => {
   );
 });
 
+test("uses Google user id as backend identity when available", async () => {
+  vi.mocked(auth).mockResolvedValue({
+    googleUserId: "google-user-123",
+    googleEmail: "user@example.com",
+    user: {
+      id: "nextauth-session-user",
+      email: "user@example.com",
+    },
+  });
+  const { GET } = await import("@/app/api/backend/[...path]/route");
+
+  const response = await GET(request(), context());
+
+  expect(response.status).toBe(200);
+  const [, init] = vi.mocked(fetch).mock.calls[0];
+  const headers = init?.headers as Headers;
+  expect(headers.get("x-user-id")).toBe("google-user-123");
+  expect(headers.get("x-open-model-google-user-id")).toBe("google-user-123");
+});
+
 test("returns 429 with Retry-After and rate limit headers when blocked", async () => {
   vi.mocked(getRateLimiter).mockReturnValue({
     check: vi.fn().mockResolvedValue({

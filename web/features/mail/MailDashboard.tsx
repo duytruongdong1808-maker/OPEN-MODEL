@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 
 import {
@@ -14,11 +14,49 @@ import {
 import type { ApiClient } from "@/lib/api";
 import { createBrowserApiClient } from "@/lib/api";
 import { formatPublishedAt, truncatePreview } from "@/lib/format";
-import type { AgentStep, EmailMessage, EmailSummary, GmailStatus } from "@/lib/types";
+import type {
+  AgentStep,
+  ChatStreamMode,
+  EmailSummary,
+  GmailStatus,
+  StepUpdate,
+  StreamEvent,
+  UiMessage,
+} from "@/lib/types";
+import { Composer } from "@/features/chat/components/Composer";
+import { MessageThread } from "@/features/chat/components/MessageThread";
 
 interface MailDashboardProps {
   googleConfigured: boolean;
   apiClient?: ApiClient;
+}
+
+const MAIL_CONVERSATION_STORAGE_KEY = "open-model-mail-conversation-id";
+
+function createOptimisticMessage(role: "user" | "assistant", content: string): UiMessage {
+  return {
+    id: `temp-mail-${role}-${crypto.randomUUID()}`,
+    role,
+    content,
+    created_at: new Date().toISOString(),
+    sources: [],
+    pending: true,
+    error: null,
+    localOnly: true,
+  };
+}
+
+function agentStepLabel(step: AgentStep): string {
+  if (step.kind === "tool") return step.tool_name ? `Tool: ${step.tool_name}` : "Tool call";
+  return "Model";
+}
+
+function agentStepToRuntimeStep(step: AgentStep, position: number): StepUpdate {
+  return {
+    step_id: `mail-${position}-${step.kind}-${step.tool_name ?? "model"}-${step.index}`,
+    label: agentStepLabel(step),
+    status: step.status === "error" ? "error" : "complete",
+  };
 }
 
 export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }: MailDashboardProps) {
@@ -26,22 +64,45 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
   const [messages, setMessages] = useState<EmailSummary[]>([]);
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
-  const [selectedMessage, setSelectedMessage] = useState<EmailMessage | null>(null);
-  const [triageMarkdown, setTriageMarkdown] = useState("");
-  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
-  const [unreadOnly, setUnreadOnly] = useState(true);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState("Mail chat");
+  const [chatMessages, setChatMessages] = useState<UiMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [liveSteps, setLiveSteps] = useState<StepUpdate[]>([]);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
+  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [unreadOnly, setUnreadOnly] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [loadingInbox, setLoadingInbox] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState(false);
-  const [runningAgent, setRunningAgent] = useState(false);
+  const [loadingChat, setLoadingChat] = useState(true);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [mobileInboxOpen, setMobileInboxOpen] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const draftRef = useRef(draft);
+  const isStreamingRef = useRef(isStreaming);
 
   const connected = gmailStatus?.connected ?? false;
   const selectedSummary = useMemo(
     () => messages.find((message) => message.uid === selectedUid) ?? null,
     [messages, selectedUid],
   );
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  useEffect(() => {
+    return () => abortControllerRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    document.getElementById("mail-thread-anchor")?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [chatMessages, liveSteps]);
 
   const refreshGmailStatus = useCallback(async () => {
     try {
@@ -51,50 +112,46 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
     }
   }, [apiClient]);
 
-  const runTriage = useCallback(
-    async (uid: string | null, options?: { limit?: number; unread_only?: boolean }) => {
-      setRunningAgent(true);
-      setNotice(null);
-      try {
-        const result = await apiClient.triageMail(
-          uid
-            ? { uid }
-            : {
-                limit: options?.limit ?? 1,
-                unread_only: options?.unread_only ?? unreadOnly,
-              },
-        );
-        setTriageMarkdown(result.triage_markdown);
-        setAgentSteps(result.steps);
-      } catch (cause) {
-        setNotice(cause instanceof Error ? cause.message : "Unable to triage mail.");
-      } finally {
-        setRunningAgent(false);
+  const ensureMailConversation = useCallback(async () => {
+    setLoadingChat(true);
+    try {
+      const storedId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(MAIL_CONVERSATION_STORAGE_KEY)
+          : null;
+      if (storedId) {
+        try {
+          const conversation = await apiClient.getConversation(storedId);
+          setConversationId(conversation.id);
+          setConversationTitle(conversation.title || "Mail chat");
+          setChatMessages(conversation.messages);
+          return conversation.id;
+        } catch {
+          window.localStorage.removeItem(MAIL_CONVERSATION_STORAGE_KEY);
+        }
       }
-    },
-    [apiClient, unreadOnly],
-  );
 
-  const selectMessage = useCallback(
-    async (uid: string) => {
-      setSelectedUid(uid);
-      setMobileInboxOpen(false);
-      setLoadingMessage(true);
-      setNotice(null);
-      try {
-        const [message] = await Promise.all([
-          apiClient.getMailMessage(uid),
-          runTriage(uid),
-        ]);
-        setSelectedMessage(message);
-      } catch (cause) {
-        setNotice(cause instanceof Error ? cause.message : "Unable to open this email.");
-      } finally {
-        setLoadingMessage(false);
-      }
-    },
-    [apiClient, runTriage],
-  );
+      const conversation = await apiClient.createConversation();
+      window.localStorage.setItem(MAIL_CONVERSATION_STORAGE_KEY, conversation.id);
+      setConversationId(conversation.id);
+      setConversationTitle(conversation.title || "Mail chat");
+      setChatMessages([]);
+      return conversation.id;
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Unable to prepare mail chat.");
+      return null;
+    } finally {
+      setLoadingChat(false);
+    }
+  }, [apiClient]);
+
+  const selectMessage = useCallback((uid: string) => {
+    setSelectedUid(uid);
+    setMobileInboxOpen(false);
+    setNotice(null);
+    setLiveSteps([]);
+    setAgentSteps([]);
+  }, []);
 
   const loadInbox = useCallback(
     async (nextUnreadOnly = unreadOnly) => {
@@ -103,25 +160,24 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
       try {
         const inbox = await apiClient.listMailInbox({ limit: 20, unread_only: nextUnreadOnly });
         setMessages(inbox);
-        if (inbox.length > 0) {
-          await selectMessage(inbox[0].uid);
-        } else {
-          setSelectedUid(null);
-          setSelectedMessage(null);
-          await runTriage(null, { limit: 1, unread_only: nextUnreadOnly });
-        }
+        setSelectedUid((current) => {
+          if (current && inbox.some((message) => message.uid === current)) return current;
+          return inbox[0]?.uid ?? null;
+        });
       } catch (cause) {
         setNotice(cause instanceof Error ? cause.message : "Unable to load Gmail inbox.");
       } finally {
         setLoadingInbox(false);
       }
     },
-    [apiClient, runTriage, selectMessage, unreadOnly],
+    [apiClient, unreadOnly],
   );
 
   useEffect(() => {
     let cancelled = false;
     async function boot() {
+      await ensureMailConversation();
+      if (cancelled) return;
       await refreshGmailStatus();
       if (cancelled) return;
       setLoadingInbox(false);
@@ -130,7 +186,7 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
     return () => {
       cancelled = true;
     };
-  }, [refreshGmailStatus]);
+  }, [ensureMailConversation, refreshGmailStatus]);
 
   useEffect(() => {
     if (!connected) return;
@@ -145,13 +201,160 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
     void signIn("google", { callbackUrl: "/mail" });
   }, [googleConfigured]);
 
-  const handleAskAgent = useCallback(() => {
-    const prompt = draft.trim();
-    if (!prompt && !selectedUid) return;
-    setDraft("");
-    setNotice(prompt ? "Read-only mail agent refreshed the selected email." : null);
-    void runTriage(selectedUid);
-  }, [draft, runTriage, selectedUid]);
+  const updateAssistantMessage = useCallback(
+    (assistantId: string, nextValue: UiMessage | ((current: UiMessage) => UiMessage)) => {
+      setChatMessages((current) =>
+        current.map((message) => {
+          if (message.id !== assistantId) return message;
+          return typeof nextValue === "function" ? nextValue(message) : nextValue;
+        }),
+      );
+    },
+    [],
+  );
+
+  const sendMessage = useCallback(
+    async (promptOverride?: string) => {
+      const prompt = (promptOverride ?? draftRef.current).trim();
+      if (!prompt || isStreamingRef.current) return;
+      if (!connected) {
+        setNotice("Connect Gmail before asking about mail.");
+        return;
+      }
+
+      const activeConversationId = conversationId ?? (await ensureMailConversation());
+      if (!activeConversationId) return;
+
+      const optimisticUser = createOptimisticMessage("user", prompt);
+      const optimisticAssistant = createOptimisticMessage("assistant", "");
+      const streamController = new AbortController();
+      abortControllerRef.current = streamController;
+      setDraft("");
+      setLastPrompt(prompt);
+      setNotice(null);
+      setLiveSteps([]);
+      setAgentSteps([]);
+      setIsStreaming(true);
+      setMessageModes((current) => ({ ...current, [optimisticAssistant.id]: "mail" }));
+      setChatMessages((current) => [...current, optimisticUser, optimisticAssistant]);
+
+      let streamErrored = false;
+      const handleStreamEvent = (event: StreamEvent) => {
+        switch (event.type) {
+          case "message_start":
+            setConversationTitle(event.payload.conversation.title || "Mail chat");
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === optimisticUser.id ? { ...event.payload.user_message } : message,
+              ),
+            );
+            break;
+          case "step_update":
+            setLiveSteps((current) => {
+              const remaining = current.filter((step) => step.step_id !== event.payload.step_id);
+              return [...remaining, event.payload];
+            });
+            break;
+          case "assistant_delta":
+            updateAssistantMessage(optimisticAssistant.id, (current) => ({
+              ...current,
+              content: `${current.content}${event.payload.delta}`,
+              pending: true,
+              error: null,
+            }));
+            break;
+          case "agent_step":
+            setAgentSteps((current) => [...current, event.payload]);
+            setLiveSteps((current) => [
+              ...current,
+              agentStepToRuntimeStep(event.payload, current.length),
+            ]);
+            break;
+          case "source_add":
+            break;
+          case "message_complete":
+            setConversationTitle(event.payload.conversation.title || "Mail chat");
+            setMessageModes((current) => {
+              const { [optimisticAssistant.id]: _removed, ...remaining } = current;
+              return { ...remaining, [event.payload.assistant_message.id]: "mail" };
+            });
+            updateAssistantMessage(optimisticAssistant.id, {
+              ...event.payload.assistant_message,
+              pending: false,
+            });
+            break;
+          case "error":
+            streamErrored = true;
+            setDraft(prompt);
+            setNotice(event.payload.message);
+            updateAssistantMessage(optimisticAssistant.id, (current) => ({
+              ...current,
+              pending: false,
+              error: event.payload.message,
+            }));
+            setLiveSteps((current) =>
+              current.map((step) => ({
+                ...step,
+                status: step.status === "complete" ? step.status : "error",
+              })),
+            );
+            break;
+        }
+      };
+
+      try {
+        await apiClient.streamConversationMessage(
+          activeConversationId,
+          {
+            message: prompt,
+            mode: "mail",
+            max_steps: 5,
+            selected_email_uid: selectedUid || undefined,
+          },
+          { signal: streamController.signal, onEvent: handleStreamEvent },
+        );
+      } catch (cause) {
+        if (streamController.signal.aborted) {
+          setNotice("Generation stopped.");
+          updateAssistantMessage(optimisticAssistant.id, (current) => ({ ...current, pending: false }));
+        } else {
+          const message = cause instanceof Error ? cause.message : "Unable to stream a response.";
+          setDraft(prompt);
+          setNotice(message);
+          updateAssistantMessage(optimisticAssistant.id, (current) => ({
+            ...current,
+            pending: false,
+            error: message,
+          }));
+        }
+      } finally {
+        abortControllerRef.current = null;
+        setIsStreaming(false);
+        if (!streamErrored) {
+          setLiveSteps((current) =>
+            current.map((step) => ({ ...step, status: step.status === "active" ? "complete" : step.status })),
+          );
+        }
+      }
+    },
+    [apiClient, connected, conversationId, ensureMailConversation, selectedUid, updateAssistantMessage],
+  );
+
+  const handleSend = useCallback(() => {
+    void sendMessage();
+  }, [sendMessage]);
+
+  const handleRetry = useCallback(() => {
+    void sendMessage(lastPrompt ?? undefined);
+  }, [lastPrompt, sendMessage]);
+
+  const stopStreaming = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  const handlePromptSelect = useCallback((prompt: string) => {
+    setDraft(prompt);
+  }, []);
 
   return (
     <main className="grid h-screen min-h-0 grid-cols-1 bg-bg-thread text-text lg:grid-cols-[340px_minmax(0,1fr)_360px]">
@@ -181,7 +384,7 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
           >
             <IconMenu size={17} />
           </button>
-          <div className="text-[13px] font-semibold">Mail Agent</div>
+          <div className="text-[13px] font-semibold">Mail Chat</div>
           <button
             type="button"
             aria-label="Refresh inbox"
@@ -199,54 +402,64 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
           </div>
         ) : null}
 
-        <EmailReader
-          loading={loadingMessage}
-          message={selectedMessage}
-          summary={selectedSummary}
-          triageMarkdown={triageMarkdown}
-        />
-
-        <div className="shrink-0 border-t border-line bg-bg-rail px-4 py-3">
-          <div className="rounded-lg border border-line-strong bg-bg-input p-3 shadow-soft">
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  handleAskAgent();
-                }
-              }}
-              placeholder="Ask about this email. The agent stays read-only."
-              aria-label="Ask mail agent"
-              rows={2}
-              className="om-scroll block max-h-[130px] min-h-[54px] w-full resize-none border-0 bg-transparent text-[14px] leading-6 text-text outline-none placeholder:text-text-4"
-            />
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-text-4">
-                <IconMail size={11} /> read-only Gmail agent
-              </span>
-              <button
-                type="button"
-                onClick={handleAskAgent}
-                disabled={runningAgent || !connected}
-                className="om-btn om-btn-send disabled:opacity-40"
-              >
-                Ask <IconSend size={13} />
-              </button>
-            </div>
-          </div>
+        <div className="om-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <MailContextBar summary={selectedSummary} />
+          <MessageThread
+            canRetry={Boolean(lastPrompt)}
+            isLoading={loadingChat}
+            liveSteps={liveSteps}
+            messageModes={messageModes}
+            messages={chatMessages}
+            onPromptSelect={handlePromptSelect}
+            onRetry={handleRetry}
+            title={selectedSummary?.subject ? `Mail: ${selectedSummary.subject}` : conversationTitle}
+          />
+          <div id="mail-thread-anchor" />
         </div>
+
+        <Composer
+          draft={draft}
+          disabled={!connected || loadingChat}
+          isStreaming={isStreaming}
+          canRetry={Boolean(lastPrompt)}
+          onDraftChange={setDraft}
+          onSend={handleSend}
+          onStop={stopStreaming}
+          onRetry={handleRetry}
+        />
       </section>
 
       <AgentInspector
         connected={connected}
         email={gmailStatus?.email ?? null}
-        running={runningAgent}
+        running={isStreaming}
         sourceUid={selectedUid}
+        selectedSummary={selectedSummary}
         steps={agentSteps}
       />
     </main>
+  );
+}
+
+function MailContextBar({ summary }: { summary: EmailSummary | null }) {
+  return (
+    <div className="border-b border-line bg-bg-rail px-5 py-3">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-accent-ring bg-accent-soft text-accent-fg">
+          <IconMail size={14} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold text-text">
+            {summary ? summary.subject || "(no subject)" : "Select an email to chat about"}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[10.5px] text-text-3">
+            {summary
+              ? `${summary.from} - UID ${summary.uid}`
+              : "Mail chat will answer using the selected message only."}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -293,7 +506,7 @@ function InboxRail({
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="om-meta">Gmail</div>
-              <h1 className="mt-1 text-lg font-semibold tracking-tight">Mail Agent</h1>
+              <h1 className="mt-1 text-lg font-semibold tracking-tight">Mail Chat</h1>
             </div>
             <button type="button" onClick={onRefresh} aria-label="Refresh inbox" className="om-icon-btn">
               <IconRetry size={15} />
@@ -308,7 +521,7 @@ function InboxRail({
                 {connected ? email ?? "Gmail connected" : "Gmail not connected"}
               </div>
               <div className="font-mono text-[10px] text-text-3">
-                {connected ? "read-only inbox access" : "connect to read inbox"}
+                {connected ? "selected email context" : "connect to read inbox"}
               </div>
             </div>
           </div>
@@ -388,86 +601,26 @@ function InboxRail({
   );
 }
 
-function EmailReader({
-  loading,
-  message,
-  summary,
-  triageMarkdown,
-}: {
-  loading: boolean;
-  message: EmailMessage | null;
-  summary: EmailSummary | null;
-  triageMarkdown: string;
-}) {
-  const active = message ?? summary;
-  return (
-    <div className="om-scroll min-h-0 flex-1 overflow-y-auto">
-      {!active ? (
-        <div className="flex h-full items-center justify-center px-6 text-center text-text-3">
-          Select an inbox message to inspect its triage.
-        </div>
-      ) : (
-        <div className="mx-auto max-w-4xl px-5 py-5">
-          <div className="border-b border-line pb-4">
-            <div className="om-meta">Selected message</div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-text">
-              {active.subject || "(no subject)"}
-            </h2>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-text-3">
-              <span>from {active.from}</span>
-              <span>{formatPublishedAt(active.date)}</span>
-              <span>{active.unread ? "unread" : "read"}</span>
-              <span>UID {active.uid}</span>
-            </div>
-          </div>
-
-          <section className="grid gap-5 py-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <article>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-[13px] font-semibold text-text">Email body</h3>
-                {loading ? <span className="font-mono text-[10px] text-text-4">loading...</span> : null}
-              </div>
-              <pre className="om-scroll max-h-[52vh] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-bg-raised px-4 py-3 text-[13px] leading-6 text-text-2">
-                {message?.body_text || active.snippet || "No readable body was returned."}
-              </pre>
-            </article>
-
-            <aside>
-              <div className="mb-2 flex items-center gap-2">
-                <span className="grid h-6 w-6 place-items-center rounded-md border border-accent-ring bg-accent-soft text-accent-fg">
-                  <IconCpu size={12} />
-                </span>
-                <h3 className="text-[13px] font-semibold text-text">Triage</h3>
-              </div>
-              <pre className="om-scroll max-h-[52vh] overflow-auto whitespace-pre-wrap rounded-md border border-line-strong bg-bg-input px-4 py-3 text-[12.5px] leading-6 text-text-2">
-                {triageMarkdown || "Triage will appear here after the agent reads the message."}
-              </pre>
-            </aside>
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function AgentInspector({
   connected,
   email,
   running,
   sourceUid,
+  selectedSummary,
   steps,
 }: {
   connected: boolean;
   email: string | null;
   running: boolean;
   sourceUid: string | null;
+  selectedSummary: EmailSummary | null;
   steps: AgentStep[];
 }) {
   return (
     <aside className="hidden min-h-0 flex-col bg-bg-rail lg:flex">
       <header className="border-b border-line px-4 py-4">
         <div className="om-meta">Agent</div>
-        <h2 className="mt-1 text-[14px] font-semibold">{running ? "Reading mail..." : "Read-only trace"}</h2>
+        <h2 className="mt-1 text-[14px] font-semibold">{running ? "Reading selected mail..." : "Read-only trace"}</h2>
         <div className="mt-2 text-[12px] text-text-3">
           {connected ? email ?? "Gmail connected" : "Gmail disconnected"}
         </div>
@@ -476,18 +629,24 @@ function AgentInspector({
         <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-text-2">
           <div className="rounded-md border border-line bg-bg-raised px-2.5 py-2">
             <div className="text-[10px] uppercase tracking-wider text-text-4">Mode</div>
-            <div className="mt-0.5 text-text">read-only</div>
+            <div className="mt-0.5 text-text">mail chat</div>
           </div>
           <div className="rounded-md border border-line bg-bg-raised px-2.5 py-2">
             <div className="text-[10px] uppercase tracking-wider text-text-4">Source</div>
             <div className="mt-0.5 truncate text-text">{sourceUid ? `UID ${sourceUid}` : "none"}</div>
           </div>
         </div>
+        {selectedSummary ? (
+          <div className="mt-3 rounded-md border border-line bg-bg-raised px-2.5 py-2">
+            <div className="truncate text-[12px] font-medium text-text">{selectedSummary.subject || "(no subject)"}</div>
+            <div className="mt-1 truncate text-[11px] text-text-3">{selectedSummary.from}</div>
+          </div>
+        ) : null}
       </div>
       <div className="om-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {steps.length === 0 ? (
           <div className="rounded-md border border-dashed border-line-strong p-4 text-center text-[12px] leading-6 text-text-3">
-            Tool calls appear here after the agent reads Gmail.
+            Tool calls appear here after the model reads the selected email.
           </div>
         ) : (
           <ol className="relative ml-1.5 border-l border-line pl-4">

@@ -171,7 +171,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext): Promis
     );
   }
   const sessionWithGoogle = session as typeof session & SessionWithGoogle;
-  const userId = sessionWithGoogle.user?.id?.trim();
+  const userId = sessionWithGoogle.googleUserId?.trim() || sessionWithGoogle.user?.id?.trim();
   if (!userId) {
     return Response.json(
       { detail: "Authenticated session is missing a user id." },

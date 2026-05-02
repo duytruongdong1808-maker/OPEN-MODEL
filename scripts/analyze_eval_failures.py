@@ -80,7 +80,9 @@ def expected_anchor_tokens(expected: ParsedTriage, domain: str) -> set[str]:
     return tokens
 
 
-def summary_missing_anchor(actual: ParsedTriage | None, expected: ParsedTriage, domain: str) -> bool:
+def summary_missing_anchor(
+    actual: ParsedTriage | None, expected: ParsedTriage, domain: str
+) -> bool:
     if actual is None:
         return True
     expected_tokens = expected_anchor_tokens(expected, domain)
@@ -113,9 +115,9 @@ def format_actual(actual: ParsedTriage | None, raw_output: str) -> str:
 def analyze_mail(report: dict[str, Any], mail_gold: list[dict[str, Any]]) -> list[str]:
     results = report.get("results", {}).get("mail", [])
     counters: Counter[str] = Counter()
-    failures_by_field: dict[str, list[tuple[dict[str, Any], dict[str, Any], ParsedTriage | None]]] = {
-        field: [] for field in MAIL_FIELDS
-    }
+    failures_by_field: dict[
+        str, list[tuple[dict[str, Any], dict[str, Any], ParsedTriage | None]]
+    ] = {field: [] for field in MAIL_FIELDS}
 
     for result in results:
         index = int(result["id"]) - 1
@@ -174,11 +176,15 @@ def analyze_chat(report: dict[str, Any], chat_path: Path) -> list[str]:
             continue
         grouped[result.get("category", "unknown")].append((result, case))
         metrics = result.get("metrics", {})
-        keyword_ok = int(metrics.get("keyword_matches", 0)) >= int(
-            metrics.get("min_keyword_matches", case.min_keyword_matches)
-        ) or metrics.get("semantic_pass") is True
+        keyword_ok = (
+            int(metrics.get("keyword_matches", 0))
+            >= int(metrics.get("min_keyword_matches", case.min_keyword_matches))
+            or metrics.get("semantic_pass") is True
+        )
         forbidden = bool(metrics.get("forbidden_hits"))
-        language_ok = bool(metrics.get("language_ok", metrics.get("detected_language") == case.language))
+        language_ok = bool(
+            metrics.get("language_ok", metrics.get("detected_language") == case.language)
+        )
         length_ok = bool(metrics.get("length_ok", True))
 
         if not language_ok:
