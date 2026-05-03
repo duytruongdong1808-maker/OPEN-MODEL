@@ -44,7 +44,7 @@ Default to the latest message in the configured inbox only. Do not imply you sea
 If the user asks for unread mail, call read_inbox with limit up to 10 and unread_only=true.
 Otherwise call read_inbox with limit up to 10 and unread_only=false.
 After read_inbox returns UIDs, call get_email only when full content is needed for the user's request.
-Final summary or triage answers must use these exact Vietnamese Markdown sections inside the JSON final string:
+Final summary or triage answers must use language-matched Markdown sections inside the JSON final string. If answering in Vietnamese, use these exact headers:
 **Tóm tắt**
 1-3 sentences about what the email is about, who sent it, and the main purpose.
 
@@ -64,6 +64,26 @@ Final summary or triage answers must use these exact Vietnamese Markdown section
 
 **File đính kèm**
 - Attachments and their likely role when present, or "Không thấy file đính kèm."
+If answering in English, use these exact headers:
+**Summary**
+1-3 sentences about what the email is about, who sent it, and the main purpose.
+
+**Key points**
+- Important point 1
+- Important point 2
+- Important point 3
+
+**Action items**
+- Action items with owner and due date when present, or "No clear action requested."
+
+**Deadlines**
+- Dates, times, deadlines, or appointments when present, or "No clear deadline found."
+
+**People**
+- Sender, recipients, mentioned people, organizations, or companies.
+
+**Attachments**
+- Attachments and their likely role when present, or "No attachments found."
 Return only one valid JSON object: either a tool_call or final answer.
 Example:
 {"tool_call":{"name":"read_inbox","arguments":{"limit":10,"unread_only":false}}}
@@ -623,12 +643,12 @@ def _classify_email_priority(subject: str, body: str) -> str:
         "xac nhan",
         "cap nhat",
     )
-    if any(marker in haystack for marker in low_markers):
-        return "low"
     if any(marker in haystack for marker in high_markers):
         return "high"
     if any(marker in haystack for marker in medium_markers):
         return "medium"
+    if any(marker in haystack for marker in low_markers):
+        return "low"
     return "low"
 
 
@@ -861,14 +881,51 @@ def _prefers_english(message: str) -> bool:
         "kiem tra",
         "phan hoi",
         "thu moi nhat",
+        "vui long",
+        "xin vui",
+        "mong ban",
+        "nho ban",
+        "ban co the",
+        "lam on",
+        "cho minh",
+        "cho toi",
+        "hay giup",
+        "xem xet",
+        "toi muon",
+        "ban hay",
+        "minh can",
+        "duoc khong",
+        "nhe ban",
+        "nen lam",
+        "can lam",
+        "can phai",
+        "gui cho toi",
+        "kiem tra email",
+        "doc email",
+        "thu cua toi",
     )
     return "cần" not in raw_lowered and not any(marker in lowered for marker in vietnamese_markers)
 
 
 def _summarize_email_body(subject: str, body: str, english: bool) -> str:
-    source = _clean_text(body or subject, 260)
+    source = _clean_text(body or subject, 800)
     if not source:
         return "No readable body was returned." if english else "Không có nội dung đọc được."
+    sentences = re.split(r"(?<=[.!?])\s+", source)
+    collected: list[str] = []
+    greeting_markers = ("hi ", "hello ", "dear ", "chào ", "xin chào ", "kính gửi ")
+    for index, sentence in enumerate(sentences):
+        cleaned = sentence.strip()
+        if not cleaned:
+            continue
+        if index == 0 and cleaned.lower().startswith(greeting_markers):
+            continue
+        if len(cleaned) >= 20:
+            collected.append(cleaned)
+        if len(collected) >= 2:
+            break
+    if collected:
+        return _clean_text(" ".join(collected), 220)
     first_sentence = _first_sentence(source)
     if first_sentence:
         return _clean_text(first_sentence, 220)
@@ -933,6 +990,20 @@ def _extract_deadlines(body: str) -> list[str]:
         r"\bhom nay\b",
         r"\bngày mai\b",
         r"\bngay mai\b",
+        r"\b\d{4}-\d{2}-\d{2}\b",
+        r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?\b",
+        r"\bEOD\b",
+        r"\bEOM\b",
+        r"\bCOB\b",
+        r"\bend\s+of\s+(?:day|week|month|quarter)\b",
+        r"\bthứ\s+[2-7Bba-zA-Z]+\b",
+        r"\bthứ\s+[^\s.;,\n]+\b",
+        r"\bthu\s+[2-7]\b",
+        r"\bcuối\s+tuần\b",
+        r"\bcuoi\s+tuan\b",
+        r"\bngày\s+\d{1,2}\s+tháng\s+\d{1,2}(?:\s+năm\s+\d{4})?\b",
+        r"\bngay\s+\d{1,2}\s+thang\s+\d{1,2}(?:\s+nam\s+\d{4})?\b",
     )
     matches: list[str] = []
     for pattern in patterns:
