@@ -10,9 +10,9 @@ test("unauthenticated user is redirected to sign-in when visiting home", async (
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
 
-test("correct credentials log in and reach a chat", async ({ page }) => {
+test("correct credentials log in and reach mail", async ({ page }) => {
   await login(page);
-  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mail Chat", exact: true })).toBeVisible();
 });
 
 test("wrong credentials show an error and stay on sign-in page", async ({ page }) => {

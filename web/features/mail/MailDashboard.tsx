@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, signOut } from "next-auth/react";
 
 import {
   IconAlert,
   IconCpu,
+  IconLogOut,
   IconMail,
   IconMenu,
   IconRetry,
@@ -201,6 +202,10 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
     void signIn("google", { callbackUrl: "/mail" });
   }, [googleConfigured]);
 
+  const handleSignOut = useCallback(() => {
+    void signOut({ callbackUrl: "/login" });
+  }, []);
+
   const updateAssistantMessage = useCallback(
     (assistantId: string, nextValue: UiMessage | ((current: UiMessage) => UiMessage)) => {
       setChatMessages((current) =>
@@ -371,6 +376,7 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
         onGoogleLogin={handleGoogleLogin}
         onRefresh={() => void loadInbox(unreadOnly)}
         onSelect={selectMessage}
+        onSignOut={handleSignOut}
         onUnreadOnlyChange={setUnreadOnly}
       />
 
@@ -476,6 +482,7 @@ function InboxRail({
   onGoogleLogin,
   onRefresh,
   onSelect,
+  onSignOut,
   onUnreadOnlyChange,
 }: {
   connected: boolean;
@@ -490,6 +497,7 @@ function InboxRail({
   onGoogleLogin: () => void;
   onRefresh: () => void;
   onSelect: (uid: string) => void;
+  onSignOut: () => void;
   onUnreadOnlyChange: (value: boolean) => void;
 }) {
   return (
@@ -508,9 +516,14 @@ function InboxRail({
               <div className="om-meta">Gmail</div>
               <h1 className="mt-1 text-lg font-semibold tracking-tight">Mail Chat</h1>
             </div>
-            <button type="button" onClick={onRefresh} aria-label="Refresh inbox" className="om-icon-btn">
-              <IconRetry size={15} />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button type="button" onClick={onRefresh} aria-label="Refresh inbox" className="om-icon-btn">
+                <IconRetry size={15} />
+              </button>
+              <button type="button" onClick={onSignOut} aria-label="Sign out" className="om-icon-btn">
+                <IconLogOut size={15} />
+              </button>
+            </div>
           </div>
           <div className="mt-3 flex items-center gap-2 rounded-md border border-line bg-bg-raised px-2.5 py-2">
             <span className="grid h-7 w-7 place-items-center rounded-md border border-accent-ring bg-accent-soft text-accent-fg">

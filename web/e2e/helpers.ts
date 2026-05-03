@@ -16,11 +16,16 @@ export async function login(page: Page) {
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: /^sign in$/i }).click();
-  await expect(page).toHaveURL(/\/chat\/[^/?#]+/, { timeout: 15_000 });
+  await page.waitForURL((url) => !url.pathname.startsWith(SIGN_IN_PATH), { timeout: 15_000 });
+  await page.goto("/mail");
+  await expect(page).toHaveURL(/\/mail$/, { timeout: 15_000 });
 }
 
 export async function openExistingConversation(page: Page) {
-  await page.goto("/");
+  const response = await page.request.post("/api/backend/conversations", { data: {} });
+  expect(response.ok()).toBeTruthy();
+  const conversation = (await response.json()) as { id: string };
+  await page.goto(`/chat/${conversation.id}`);
   await expect(page).toHaveURL(/\/chat\/[^/?#]+/, { timeout: 15_000 });
   await expect(page.getByTestId("chat-thread")).toBeVisible();
   return currentConversationId(page);

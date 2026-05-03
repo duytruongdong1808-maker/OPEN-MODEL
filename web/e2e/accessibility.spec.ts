@@ -15,7 +15,7 @@ async function expectNoBlockingA11yViolations(page: Page) {
 
 test("home page has no serious or critical axe violations", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveURL(/\/chat\/[^/?#]+/);
+  await expect(page).toHaveURL(/\/mail$/);
   await expectNoBlockingA11yViolations(page);
 });
 
