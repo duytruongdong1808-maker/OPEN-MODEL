@@ -441,15 +441,22 @@ export function ChatShell({
 
       try {
         const customInstructions = systemPromptOverride.trim();
-        const streamPayload =
+        const streamPayload: {
+          message: string;
+          mode: ChatStreamMode;
+          max_steps?: number;
+          system_prompt?: string;
+        } =
           mode === "agent"
             ? {
                 message: prompt,
                 mode,
                 max_steps: 5,
-                system_prompt: customInstructions,
               }
-            : { message: prompt, mode, system_prompt: customInstructions };
+            : { message: prompt, mode };
+        if (customInstructions) {
+          streamPayload.system_prompt = customInstructions;
+        }
         await apiClient.streamConversationMessage(
           conversationId,
           streamPayload,
