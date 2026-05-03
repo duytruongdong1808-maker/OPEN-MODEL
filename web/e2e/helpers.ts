@@ -16,8 +16,6 @@ export async function login(page: Page) {
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: /^sign in$/i }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith(SIGN_IN_PATH), { timeout: 15_000 });
-  await page.goto("/mail");
   await expect(page).toHaveURL(/\/mail$/, { timeout: 15_000 });
 }
 
