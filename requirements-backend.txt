@@ -24,3 +24,4 @@ opentelemetry-instrumentation-httpx>=0.48b0
 opentelemetry-instrumentation-sqlalchemy>=0.48b0
 opentelemetry-exporter-otlp>=1.27
 sentry-sdk[fastapi]>=2.18
+python-dateutil>=2.8

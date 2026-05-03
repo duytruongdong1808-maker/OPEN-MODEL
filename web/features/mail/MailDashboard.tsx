@@ -73,6 +73,7 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [loadingInbox, setLoadingInbox] = useState(true);
@@ -287,6 +288,7 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
               ...event.payload.assistant_message,
               pending: false,
             });
+            setLastAssistantMessageId(event.payload.assistant_message.id);
             break;
           case "error":
             streamErrored = true;
@@ -421,6 +423,13 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
             title={selectedSummary?.subject ? `Mail: ${selectedSummary.subject}` : conversationTitle}
           />
           <div id="mail-thread-anchor" />
+          {lastAssistantMessageId && conversationId && apiClient && (
+            <MailFeedbackBar
+              conversationId={conversationId}
+              messageId={lastAssistantMessageId}
+              apiClient={apiClient}
+            />
+          )}
         </div>
 
         <Composer
@@ -444,6 +453,52 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
         steps={agentSteps}
       />
     </main>
+  );
+}
+
+function MailFeedbackBar({
+  conversationId,
+  messageId,
+  apiClient,
+}: {
+  conversationId: string;
+  messageId: string;
+  apiClient: ApiClient;
+}) {
+  const [sent, setSent] = useState<1 | -1 | null>(null);
+
+  async function handleRate(rating: 1 | -1) {
+    if (sent !== null) return;
+    setSent(rating);
+    try {
+      await apiClient.submitMailFeedback(conversationId, messageId, rating);
+    } catch {
+      setSent(null);
+    }
+  }
+
+  return (
+    <div className="mt-1 flex items-center gap-2 text-[11px] text-text-4">
+      <span>Helpful?</span>
+      <button
+        type="button"
+        disabled={sent !== null}
+        onClick={() => handleRate(1)}
+        className={`rounded px-1.5 py-0.5 ${sent === 1 ? "text-ok-fg" : "hover:text-text"}`}
+        aria-label="Thumbs up"
+      >
+        &#128077;
+      </button>
+      <button
+        type="button"
+        disabled={sent !== null}
+        onClick={() => handleRate(-1)}
+        className={`rounded px-1.5 py-0.5 ${sent === -1 ? "text-error-fg" : "hover:text-text"}`}
+        aria-label="Thumbs down"
+      >
+        &#128078;
+      </button>
+    </div>
   );
 }
 

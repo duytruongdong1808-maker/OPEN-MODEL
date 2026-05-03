@@ -7,8 +7,11 @@ from contextlib import suppress
 from importlib import import_module
 from typing import AsyncIterator
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....agent import READ_ONLY_EMAIL_PROTOCOL, AgentLoop, AgentStep
 from ....agent.loop import to_jsonable
@@ -16,6 +19,7 @@ from ....tools import email_tools
 from ....tools.schemas import EmailMessage
 from ....utils import DEFAULT_SYSTEM_PROMPT
 from ...core.runtime import SupportsStreamingReply
+from ...db.session import get_session
 from ...repositories.conversation_store import ConversationStore
 from ...schemas import (
     AssistantDeltaPayload,
@@ -83,6 +87,17 @@ _VI_SECTIONS = (
     "Người / bên liên quan",
     "File đính kèm",
 )
+
+
+class MailFeedbackRequest(BaseModel):
+    rating: int
+
+
+async def get_db(
+    conversation_store: ConversationStore = Depends(get_store),
+) -> AsyncIterator[AsyncSession]:
+    async with get_session(conversation_store.database_url) as session:
+        yield session
 
 
 def _app_compat():
@@ -572,6 +587,39 @@ async def stream_conversation_message(
             yield sse_event("error", ErrorPayload(message=str(exc)).model_dump(mode="json"))
 
     return _stream_response(event_stream())
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/mail-feedback",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def submit_mail_feedback(
+    conversation_id: str,
+    message_id: str,
+    payload: MailFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> Response:
+    if payload.rating not in (1, -1):
+        raise HTTPException(status_code=422, detail="rating must be 1 or -1")
+    import uuid as _uuid
+    from datetime import datetime as _dt
+
+    await db.execute(
+        sa.text(
+            "INSERT INTO mail_triage_feedback (id, user_id, message_id, rating, created_at)"
+            " VALUES (:id, :user_id, :message_id, :rating, :created_at)"
+        ),
+        {
+            "id": str(_uuid.uuid4()),
+            "user_id": user_id,
+            "message_id": message_id,
+            "rating": payload.rating,
+            "created_at": _dt.utcnow().isoformat(),
+        },
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _stream_response(events: AsyncIterator[str]) -> StreamingResponse:

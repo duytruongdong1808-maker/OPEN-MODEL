@@ -31,6 +31,7 @@ export interface ApiClient {
   listMailInbox(options?: { limit?: number; unread_only?: boolean }): Promise<EmailSummary[]>;
   getMailMessage(uid: string): Promise<EmailMessage>;
   triageMail(payload: MailTriageRequest): Promise<MailTriageResponse>;
+  submitMailFeedback(conversationId: string, messageId: string, rating: 1 | -1): Promise<void>;
   streamConversationMessage(
     conversationId: string,
     payload: ChatStreamRequest,
@@ -191,6 +192,20 @@ export class HttpApiClient implements ApiClient {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  async submitMailFeedback(conversationId: string, messageId: string, rating: 1 | -1): Promise<void> {
+    const response = await fetch(
+      `${resolveApiBaseUrl()}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/mail-feedback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
   }
 
   async streamConversationMessage(

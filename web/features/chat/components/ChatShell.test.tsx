@@ -117,6 +117,10 @@ class FakeApiClient implements ApiClient {
     throw new Error("Unexpected mail triage request.");
   }
 
+  async submitMailFeedback(): Promise<void> {
+    throw new Error("Unexpected mail feedback request.");
+  }
+
   async streamConversationMessage(
     _conversationId: string,
     payload: ChatStreamRequest,

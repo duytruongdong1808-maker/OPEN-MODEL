@@ -134,6 +134,8 @@ class FakeMailApiClient implements ApiClient {
     };
   }
 
+  async submitMailFeedback(): Promise<void> {}
+
   async streamConversationMessage(
     _conversationId: string,
     payload: ChatStreamRequest,

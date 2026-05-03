@@ -11,10 +11,12 @@ import unicodedata
 from collections.abc import Awaitable, Callable
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime as _datetime
 from typing import Any
 
-from pydantic import BaseModel
+from dateutil import parser as _dateutil_parser
 from opentelemetry import trace
+from pydantic import BaseModel
 
 from ..server.observability.metrics import (
     AGENT_PARSE_RETRY_TOTAL,
@@ -217,9 +219,11 @@ class AgentLoop:
 
             if "final" in command:
                 answer = str(command["final"])
-                if self.system_protocol == READ_ONLY_EMAIL_PROTOCOL:
+                if self.system_protocol == READ_ONLY_EMAIL_PROTOCOL and _email_final_needs_triage(
+                    answer
+                ):
                     fallback_answer = build_email_fallback_answer(message, steps)
-                    if fallback_answer is not None and _email_final_needs_triage(answer):
+                    if fallback_answer is not None:
                         answer = fallback_answer
                 return finish(answer, "final")
 
@@ -741,11 +745,17 @@ def _format_email_triage(
     body = _clean_text(str(item.get("body_text") or item.get("snippet") or ""), 1500)
     summary = _summarize_email_body(subject, body, english)
     key_points = _key_points(item, summary)
-    actions = [action for action in _extract_action_items(body) if action.lower() != "none"] or [
+    actions = [
+        action
+        for action in _extract_action_items(body, email_date=item.get("date"))
+        if action.lower() != "none"
+    ] or [
         "No clear action requested." if english else "Không thấy yêu cầu hành động rõ ràng."
     ]
     deadlines = [
-        deadline for deadline in _extract_deadlines(body) if deadline.lower() != "none"
+        deadline
+        for deadline in _extract_deadlines(body, email_date=item.get("date"))
+        if deadline.lower() != "none"
     ] or ["No clear deadline found." if english else "Không thấy deadline rõ ràng."]
     attachment_text = _format_attachments(item, english)
     attachments = (
@@ -932,7 +942,7 @@ def _summarize_email_body(subject: str, body: str, english: bool) -> str:
     return _clean_text(source, 220)
 
 
-def _extract_action_items(body: str) -> list[str]:
+def _extract_action_items(body: str, email_date: str | None = None) -> list[str]:
     if not body.strip():
         return ["None"]
     normalized = " ".join(body.split())
@@ -967,13 +977,32 @@ def _extract_action_items(body: str) -> list[str]:
             continue
         lowered = _strip_vietnamese_diacritics(cleaned.lower())
         if any(marker in lowered for marker in markers):
+            owner_match = re.search(r"\b([A-Z][a-z]+|you|I)\b", cleaned)
+            owner = owner_match.group(1) if owner_match else None
+            due_candidates = _extract_deadlines(cleaned, email_date)
+            due = next((d for d in due_candidates if d.lower() != "none"), None)
+            suffix_parts = []
+            if owner:
+                suffix_parts.append(f"owner: {owner}")
+            if due:
+                suffix_parts.append(f"due: {due}")
+            if suffix_parts:
+                cleaned = f"{cleaned} ({', '.join(suffix_parts)})"
             actions.append(cleaned)
     if not actions:
         return ["None"]
     return _dedupe_text(actions)[:3]
 
 
-def _extract_deadlines(body: str) -> list[str]:
+def _try_resolve(raw: str, anchor: _datetime | None) -> str:
+    try:
+        parsed = _dateutil_parser.parse(raw, default=anchor or _datetime.utcnow(), fuzzy=True)
+        return parsed.date().isoformat()
+    except Exception:
+        return raw
+
+
+def _extract_deadlines(body: str, email_date: str | None = None) -> list[str]:
     if not body.strip():
         return ["None"]
     patterns = (
@@ -1009,6 +1038,13 @@ def _extract_deadlines(body: str) -> list[str]:
     for pattern in patterns:
         matches.extend(match.group(0).strip() for match in re.finditer(pattern, body, re.I))
     cleaned = [_clean_text(value.rstrip(" ."), 100) for value in matches]
+    anchor: _datetime | None = None
+    if email_date:
+        try:
+            anchor = _dateutil_parser.parse(email_date, fuzzy=True)
+        except Exception:
+            anchor = None
+    cleaned = [_try_resolve(v, anchor) for v in cleaned]
     return _dedupe_text(cleaned)[:4] or ["None"]
 
 

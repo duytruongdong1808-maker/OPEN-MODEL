@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     MetaData,
+    SmallInteger,
     Table,
     Text,
     event,
@@ -126,6 +127,17 @@ send_approvals = Table(
     Column("decided_at", Text),
     Column("decided_by", Text),
     Index("idx_send_approvals_status", "status"),
+)
+
+mail_triage_feedback = Table(
+    "mail_triage_feedback",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, nullable=False),
+    Column("message_id", Text, nullable=False),
+    Column("rating", SmallInteger, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Index("idx_mail_feedback_message_id", "message_id"),
 )
 
 _engines: dict[str, AsyncEngine] = {}
@@ -263,6 +275,7 @@ __all__ = [
     "get_session",
     "gmail_credentials",
     "initialize_schema",
+    "mail_triage_feedback",
     "message_sources",
     "messages",
     "metadata",
