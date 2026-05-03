@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+os.environ.setdefault("OPEN_MODEL_SKIP_MODEL_LOAD", "true")
+
 
 @pytest.fixture(scope="session")
 def postgres_container():
