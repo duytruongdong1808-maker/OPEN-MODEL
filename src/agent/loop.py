@@ -749,9 +749,7 @@ def _format_email_triage(
         action
         for action in _extract_action_items(body, email_date=item.get("date"))
         if action.lower() != "none"
-    ] or [
-        "No clear action requested." if english else "Không thấy yêu cầu hành động rõ ràng."
-    ]
+    ] or ["No clear action requested." if english else "Không thấy yêu cầu hành động rõ ràng."]
     deadlines = [
         deadline
         for deadline in _extract_deadlines(body, email_date=item.get("date"))

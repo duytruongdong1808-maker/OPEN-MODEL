@@ -1,4 +1,5 @@
 """add mail_triage_feedback table"""
+
 from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
