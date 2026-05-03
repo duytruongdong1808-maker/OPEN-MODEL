@@ -81,7 +81,7 @@ async def triage_mail(
             arguments={"uid": payload.uid},
             result=message,
         )
-        triage = build_email_fallback_answer("Summarize this selected email.", [step])
+        triage = build_email_fallback_answer("Tom tat email da chon.", [step])
         source_uid = message.uid
         email: EmailMessage | EmailSummary | None = message
     else:
@@ -97,7 +97,7 @@ async def triage_mail(
             result=messages,
         )
         triage = (
-            build_email_fallback_answer("Summarize my inbox.", [step])
+            build_email_fallback_answer("Tom tat inbox cua toi.", [step])
             if messages
             else _empty_triage()
         )

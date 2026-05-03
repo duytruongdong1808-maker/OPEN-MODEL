@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 CANONICAL_PRIORITIES = ("high", "medium", "low")
 MAIL_DOMAINS = ("ops", "support", "billing", "product", "sales", "internal", "admin")
@@ -18,6 +18,10 @@ SUMMARY_LABELS = {"en": "Summary", "vi": "Tóm tắt"}
 PRIORITY_LABELS = {"en": "Priority", "vi": "Ưu tiên"}
 ACTION_LABELS = {"en": "Action items", "vi": "Việc cần làm"}
 DEADLINE_LABELS = {"en": "Deadlines", "vi": "Mốc thời gian / deadline"}
+DEADLINE_LABEL_MATCHES = {
+    "en": ("Deadlines",),
+    "vi": ("Mốc thời gian / deadline", "Hạn chót"),
+}
 NONE_VALUES = {"none", "không có"}
 PRIORITY_ALIASES = {
     "high": "high",
@@ -156,16 +160,20 @@ def _parse_deadline_value(value: str) -> list[str]:
     return sanitize_deadlines(cleaned)
 
 
-def _extract_label_value(line: str, allowed_labels: dict[str, str]) -> tuple[str, str] | None:
-    for language, label in allowed_labels.items():
-        prefix = f"{label}:"
-        if line.startswith(prefix):
-            return language, line[len(prefix) :].strip()
+def _extract_label_value(
+    line: str, allowed_labels: Mapping[str, str | Sequence[str]]
+) -> tuple[str, str] | None:
+    for language, labels in allowed_labels.items():
+        candidate_labels = (labels,) if isinstance(labels, str) else labels
+        for label in candidate_labels:
+            prefix = f"{label}:"
+            if line.startswith(prefix):
+                return language, line[len(prefix) :].strip()
     return None
 
 
 def _extract_label_value_or_bullet(
-    line: str, allowed_labels: dict[str, str]
+    line: str, allowed_labels: Mapping[str, str | Sequence[str]]
 ) -> tuple[str, str] | None:
     stripped = line.strip()
     direct_match = _extract_label_value(stripped, allowed_labels)
@@ -192,7 +200,7 @@ def parse_action_extraction_output(text: str) -> ParsedTriage:
         if not line.startswith("- "):
             raise ValueError("Action extraction lines must start with '- '.")
         bullet_value = line[2:].strip()
-        deadline_match = _extract_label_value(bullet_value, DEADLINE_LABELS)
+        deadline_match = _extract_label_value(bullet_value, DEADLINE_LABEL_MATCHES)
         if deadline_match is not None:
             deadline_language, deadline_value = deadline_match
             continue
@@ -225,7 +233,7 @@ def parse_full_triage_output(text: str) -> ParsedTriage:
     summary_match = _extract_label_value(lines[0], SUMMARY_LABELS)
     priority_match = _extract_label_value(lines[1], PRIORITY_LABELS)
     action_match = _extract_label_value(lines[2], ACTION_LABELS)
-    deadline_match = _extract_label_value_or_bullet(lines[-1], DEADLINE_LABELS)
+    deadline_match = _extract_label_value_or_bullet(lines[-1], DEADLINE_LABEL_MATCHES)
 
     if (
         summary_match is None

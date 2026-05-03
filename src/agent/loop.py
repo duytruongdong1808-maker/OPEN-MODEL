@@ -398,9 +398,10 @@ class AgentLoop:
             requested_limit = int(arguments.get("limit") or 10)
         except (TypeError, ValueError):
             requested_limit = 10
+        normalized_limit = 1 if _requests_email_read_or_summary(message) else requested_limit
         return {
             **arguments,
-            "limit": max(1, min(requested_limit, 10)),
+            "limit": max(1, min(normalized_limit, 10)),
             "unread_only": _requests_unread_mail(message),
         }
 
@@ -712,29 +713,58 @@ def _format_full_email_answer(message: str, items: list[dict[str, Any]], unread_
 def _format_email_triage(
     item: dict[str, Any], english: bool, mailbox_label: str, query_label: str
 ) -> list[str]:
-    del english, mailbox_label, query_label
+    del mailbox_label, query_label
     subject = _clean_text(str(item.get("subject") or "(no subject)"), 160)
     sender = _clean_text(str(item.get("from") or "unknown sender"), 100)
     date = _clean_text(str(item.get("date") or ""), 60)
     uid = _clean_text(str(item.get("uid") or ""), 40)
     body = _clean_text(str(item.get("body_text") or item.get("snippet") or ""), 1500)
-    summary = _summarize_email_body(subject, body, False)
+    summary = _summarize_email_body(subject, body, english)
     key_points = _key_points(item, summary)
     actions = [action for action in _extract_action_items(body) if action.lower() != "none"] or [
-        "Không thấy yêu cầu hành động rõ ràng."
+        "No clear action requested." if english else "Không thấy yêu cầu hành động rõ ràng."
     ]
     deadlines = [
         deadline for deadline in _extract_deadlines(body) if deadline.lower() != "none"
-    ] or ["Không thấy deadline rõ ràng."]
-    attachment_text = _format_attachments(item, True)
+    ] or ["No clear deadline found." if english else "Không thấy deadline rõ ràng."]
+    attachment_text = _format_attachments(item, english)
     attachments = (
-        ["Không thấy file đính kèm."]
+        ["No attachments found." if english else "Không thấy file đính kèm."]
         if attachment_text in {"none", "unknown"}
         else [attachment_text]
     )
     recipients = item.get("to") or []
     if not isinstance(recipients, list):
         recipients = [recipients]
+    if english:
+        people = _dedupe_text(
+            [
+                f"Sender: {sender}",
+                f"Recipients: {', '.join(str(value) for value in recipients[:5]) or 'unknown'}",
+                f"Date: {date or 'unknown'}",
+            ]
+        )
+        return [
+            "**Summary**",
+            f'{summary} Email from {sender} with subject "{subject}".',
+            "",
+            "**Priority**",
+            _priority_with_reason(_classify_email_priority(subject, body), body, english),
+            "",
+            "**Action items**",
+            *[f"- {action}" for action in actions],
+            "",
+            "**Deadlines**",
+            *[f"- {deadline}" for deadline in deadlines],
+            "",
+            f"**Source**: configured inbox UID {uid or 'unknown'}",
+            "",
+            "**People**",
+            *[f"- {person}" for person in people],
+            "",
+            "**Attachments**",
+            *[f"- {attachment}" for attachment in attachments],
+        ]
     people = _dedupe_text(
         [
             f"Người gửi: {sender}",
