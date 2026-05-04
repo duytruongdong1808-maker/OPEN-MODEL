@@ -65,6 +65,7 @@ services:
   # development, use: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
   inference:
     image: vllm/vllm-openai:v0.6.3
+    restart: unless-stopped
     command: >
       --model Qwen/Qwen2.5-3B-Instruct-AWQ
       --quantization awq
@@ -72,8 +73,13 @@ services:
       --lora-modules adapter=/adapters/final_adapter
       --max-loras 1
       --max-lora-rank 16
-      --max-model-len 4096
+      --max-model-len 1024
+      --max-num-seqs 4
+      --dtype half
       --gpu-memory-utilization 0.85
+      --swap-space 1
+      --enforce-eager
+      --disable-log-requests
       --chat-template /chat_templates/qwen_chat_template.jinja
       --port 8001
     volumes:
@@ -101,8 +107,8 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 180s
+      retries: 20
+      start_period: 900s
 
   backend:
     build:
@@ -129,6 +135,10 @@ services:
       OPEN_MODEL_INFERENCE_BACKEND: vllm
       OPEN_MODEL_VLLM_URL: http://inference:8001/v1
       OPEN_MODEL_VLLM_MODEL: adapter
+      OPEN_MODEL_VLLM_CONTEXT_WINDOW: 1024
+      OPEN_MODEL_MAX_NEW_TOKENS: 256
+      OPEN_MODEL_FREQUENCY_PENALTY: 0.4
+      OPEN_MODEL_REPETITION_PENALTY: 1.08
     volumes:
       - open-model-outputs:/app/outputs
     secrets:

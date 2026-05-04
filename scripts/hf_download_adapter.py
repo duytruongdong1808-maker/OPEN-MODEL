@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-
 DEFAULT_ADAPTER_PATH = Path("outputs/qwen2.5_1.5b_lora/final_adapter")
 DEFAULT_MERGED_PATH = Path("outputs/qwen2.5_1.5b_lora/merged")
 

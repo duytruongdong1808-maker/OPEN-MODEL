@@ -65,12 +65,12 @@ def create_app(
         await fastapi_app.state.store.initialize()
         await fastapi_app.state.audit.initialize()
         await fastapi_app.state.ledger.initialize()
-        if (
-            fastapi_app.state.runtime is None
-            and not fastapi_app.state.settings.open_model_skip_model_load
-        ):
+        if fastapi_app.state.runtime is None:
             resolved_runtime = build_chat_service(fastapi_app.state.settings)
-            if hasattr(resolved_runtime, "_ensure_loaded"):
+            if (
+                hasattr(resolved_runtime, "_ensure_loaded")
+                and not fastapi_app.state.settings.open_model_skip_model_load
+            ):
                 resolved_runtime._ensure_loaded()
             fastapi_app.state.runtime = resolved_runtime
         try:

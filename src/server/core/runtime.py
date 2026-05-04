@@ -28,7 +28,35 @@ class GenerationStream:
     cancel: Callable[[], None]
 
 
+class StubChatService:
+    supports_constrained_decoding = False
+    is_loaded = True
+
+    def stream_reply(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        system_prompt: str,
+        mode: str = "chat",
+        sampling_overrides: SamplingOverrides | None = None,
+        response_format: dict[str, Any] | None = None,
+        guided_json: dict[str, Any] | None = None,
+    ) -> GenerationStream:
+        del system_prompt, mode, sampling_overrides, response_format, guided_json
+        last_user_message = next(
+            (message["content"] for message in reversed(messages) if message["role"] == "user"),
+            "",
+        )
+        text = (
+            "Development inference is running without a loaded model. "
+            f"I received: {last_user_message}"
+        )
+        return GenerationStream(chunks=iter([text]), cancel=lambda: None)
+
+
 def build_chat_service(settings: OpenModelSettings) -> SupportsStreamingReply:
+    if settings.open_model_skip_model_load:
+        return StubChatService()
     if settings.open_model_inference_backend == "vllm":
         from ..inference.vllm import VLLMChatService
 
@@ -38,8 +66,10 @@ def build_chat_service(settings: OpenModelSettings) -> SupportsStreamingReply:
             max_new_tokens=settings.open_model_max_new_tokens,
             temperature=settings.open_model_temperature,
             top_p=settings.open_model_top_p,
+            frequency_penalty=settings.open_model_frequency_penalty,
             repetition_penalty=settings.open_model_repetition_penalty,
             timeout=settings.open_model_vllm_timeout_s,
+            context_window=settings.open_model_vllm_context_window,
         )
     from ..inference.local import LocalModelChatService
 

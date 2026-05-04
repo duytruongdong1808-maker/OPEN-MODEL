@@ -22,6 +22,9 @@ import { ConversationSidebar } from "./ConversationSidebar";
 import { MessageThread } from "./MessageThread";
 
 const DEFAULT_CONVERSATION_TITLE = "New chat";
+const LONG_CHAT_MESSAGE_THRESHOLD = 10;
+
+type ComposerMode = Extract<ChatStreamMode, "chat" | "agent">;
 
 function isBlankConversation(conversation: ConversationSummary | null | undefined): boolean {
   return (
@@ -81,14 +84,14 @@ const MAIL_READ_PATTERNS = [
   /\b(read|check|summari[sz]e|triage|review|scan)\s+(my\s+)?(mail|email|emails|inbox)\b/i,
   /\b(mail|email|emails|inbox)\s+(summary|brief|triage|priorit(?:y|ies)|unread|needs?\s+reply)\b/i,
   /\b(unread|recent|latest|today'?s?)\s+(mail|email|emails|inbox)\b/i,
-  /\b(mail|email|emails)\s+(n[aà]o|c[aầ]n|ch[uư]a)\b/i,
-  /\b(d[oọ]c|kiem tra|ki[eể]m tra|tom tat|t[oó]m t[aắ]t|loc|l[oọ]c)\s+(mail|email|inbox|hop thu|h[oộ]p th[uư])\b/i,
-  /\b(mail|email|inbox|hop thu|h[oộ]p th[uư])\s+(chua doc|ch[uư]a [dđ]oc|ch[uư]a [dđ][oọ]c|can phan hoi|c[aầ]n ph[aả]n h[oồ]i|hom nay|h[oô]m nay)\b/i,
+  /\b(mail|email|emails)\s+(nao|can|chua)\b/i,
+  /\b(doc|kiem tra|tom tat|loc)\s+(mail|email|inbox|hop thu)\b/i,
+  /\b(mail|email|inbox|hop thu)\s+(chua doc|can phan hoi|hom nay)\b/i,
 ];
 
 const EMAIL_WRITE_PATTERNS = [
   /\b(write|draft|compose|send|reply|respond|forward)\s+(an?\s+)?(mail|email|emails)\b/i,
-  /\b(soan|so[aạ]n|gui|g[uử]i|tra loi|tr[aả] l[oờ]i|phan hoi|ph[aả]n h[oồ]i)\s+(mail|email)\b/i,
+  /\b(soan|gui|tra loi|phan hoi)\s+(mail|email)\b/i,
 ];
 
 function stripVietnameseDiacritics(value: string): string {
@@ -104,6 +107,29 @@ function detectMailAgentIntent(prompt: string): boolean {
     return false;
   }
   return MAIL_READ_PATTERNS.some((pattern) => pattern.test(prompt) || pattern.test(normalized));
+}
+
+function friendlyStreamError(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : String(cause || "");
+  const lower = raw.toLowerCase();
+  if (lower.includes("maximum context length") || lower.includes("context length")) {
+    return "Cuộc chat này đã quá dài cho model local. Hãy tạo chat mới hoặc gửi lại câu hỏi ngắn hơn để model ổn định hơn.";
+  }
+  if (lower.includes("vllm rejected")) {
+    return "Model local đã từ chối request vì giới hạn cấu hình. Hãy thử gửi lại ngắn hơn hoặc tạo chat mới.";
+  }
+  if (
+    lower.includes("all connection attempts failed") ||
+    lower.includes("backend service is unavailable") ||
+    lower.includes("inference request failed") ||
+    lower.includes("engine loop has died")
+  ) {
+    return "Inference local đang chưa sẵn sàng hoặc vừa khởi động lại. Đợi vài giây rồi bấm Retry.";
+  }
+  if (lower.includes("unable to stream") || lower.includes("failed to fetch")) {
+    return "Kết nối chat bị ngắt. Kiểm tra backend/web đang chạy rồi thử lại.";
+  }
+  return raw || "Không thể tạo phản hồi. Hãy thử lại.";
 }
 
 interface ChatShellProps {
@@ -131,6 +157,7 @@ export function ChatShell({
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [liveSources, setLiveSources] = useState<SourceItem[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<ComposerMode>("chat");
   const [messageModes, setMessageModes] = useState<Record<string, ChatStreamMode>>({});
   const [systemPromptOverride, setSystemPromptOverride] = useState("");
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
@@ -167,6 +194,11 @@ export function ChatShell({
     () => (liveSources.length > 0 ? liveSources : latestAssistantSources(messages)),
     [liveSources, messages],
   );
+  const effectiveMode: ComposerMode = useMemo(() => {
+    if (selectedMode === "agent") return "agent";
+    return detectMailAgentIntent(draft) ? "agent" : "chat";
+  }, [draft, selectedMode]);
+  const longChatRecommended = messages.length >= LONG_CHAT_MESSAGE_THRESHOLD;
 
   useEffect(() => {
     let cancelled = false;
@@ -344,7 +376,8 @@ export function ChatShell({
       const prompt = (promptOverride ?? draftRef.current).trim();
       if (!prompt || isStreamingRef.current) return;
 
-      const mode: ChatStreamMode = detectMailAgentIntent(prompt) ? "agent" : "chat";
+      const mode: ChatStreamMode =
+        selectedMode === "agent" || detectMailAgentIntent(prompt) ? "agent" : "chat";
       const optimisticUser = createOptimisticMessage("user", prompt);
       const optimisticAssistant = createOptimisticMessage("assistant", "");
       const streamController = new AbortController();
@@ -423,11 +456,11 @@ export function ChatShell({
           case "error":
             streamErrored = true;
             setDraft(prompt);
-            setBanner(event.payload.message);
+            setBanner(friendlyStreamError(event.payload.message));
             updateAssistantMessage((current) => ({
               ...current,
               pending: false,
-              error: event.payload.message,
+              error: friendlyStreamError(event.payload.message),
             }));
             setLiveSteps((current) =>
               current.map((step) => ({
@@ -467,7 +500,7 @@ export function ChatShell({
           setBanner("Generation stopped.");
           updateAssistantMessage((current) => ({ ...current, pending: false }));
         } else {
-          const message = cause instanceof Error ? cause.message : "Unable to stream a response.";
+          const message = friendlyStreamError(cause);
           setDraft(prompt);
           setBanner(message);
           updateAssistantMessage((current) => ({
@@ -489,7 +522,7 @@ export function ChatShell({
         }
       }
     },
-    [apiClient, conversationId, systemPromptOverride],
+    [apiClient, conversationId, selectedMode, systemPromptOverride],
   );
 
   const stopStreaming = useCallback(() => {
@@ -615,9 +648,11 @@ export function ChatShell({
           <MessageThread
             canRetry={Boolean(lastPrompt)}
             isLoading={isLoading}
+            longChatRecommended={longChatRecommended}
             liveSteps={liveSteps}
             messageModes={messageModes}
             messages={messages}
+            onNewConversation={handleNewConversation}
             onPromptSelect={handlePromptSelect}
             onRetry={handleRetry}
             title={conversationTitle}
@@ -629,11 +664,14 @@ export function ChatShell({
           canRetry={Boolean(lastPrompt)}
           disabled={isLoading}
           draft={draft}
+          effectiveMode={effectiveMode}
           isStreaming={isStreaming}
           onDraftChange={setDraft}
+          onModeChange={setSelectedMode}
           onRetry={handleRetry}
           onSend={handleSend}
           onStop={stopStreaming}
+          selectedMode={selectedMode}
         />
       </main>
 
@@ -647,6 +685,8 @@ export function ChatShell({
         systemPromptOverride={systemPromptOverride}
         open={panelOpen}
         onSystemPromptOverrideChange={setSystemPromptOverride}
+        activeMode={isStreaming ? effectiveMode : null}
+        hasError={Boolean(banner)}
         onGmailLogin={handleGmailLogin}
         onGmailLogout={handleGmailLogout}
         onToggle={togglePanel}

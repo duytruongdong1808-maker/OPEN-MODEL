@@ -11,6 +11,7 @@ import {
   IconCompare,
   IconDoc,
   IconModel,
+  IconPlus,
   IconRetry,
   IconSpark,
 } from "@/components/ui/icons";
@@ -22,25 +23,30 @@ interface MessageThreadProps {
   messageModes: Record<string, ChatStreamMode>;
   isLoading: boolean;
   canRetry: boolean;
+  longChatRecommended: boolean;
   onPromptSelect: (prompt: string) => void;
   onRetry: () => void;
+  onNewConversation: () => void;
 }
 
 const STARTERS = [
   {
     Icon: IconDoc,
-    title: "Summarize this idea",
-    body: "Turn notes or a question into a clear, useful answer.",
+    title: "Tóm tắt nhanh",
+    prompt: "Tóm tắt nội dung này thành các ý chính.",
+    body: "Biến ghi chú hoặc câu hỏi dài thành câu trả lời gọn, rõ.",
   },
   {
     Icon: IconCompare,
-    title: "Compare options",
-    body: "Weigh choices side by side with tradeoffs and next steps.",
+    title: "So sánh lựa chọn",
+    prompt: "So sánh các lựa chọn này theo ưu, nhược điểm và bước tiếp theo.",
+    body: "Đặt các phương án cạnh nhau để ra quyết định nhanh hơn.",
   },
   {
     Icon: IconSpark,
     title: "Tóm tắt mail chưa đọc",
-    body: "Khi cần, agent sẽ đọc inbox và gom ưu tiên cho bạn.",
+    prompt: "Tóm tắt mail chưa đọc hôm nay.",
+    body: "Mail agent đọc inbox ở chế độ read-only và gom ưu tiên.",
   },
 ];
 
@@ -104,30 +110,34 @@ function renderRichText(text: string) {
 
 function PromptStarters({ onPick }: { onPick: (prompt: string) => void }) {
   return (
-    <div className="relative mx-auto max-w-[720px] px-7 pt-20 pb-14 text-center">
+    <div className="relative mx-auto max-w-[760px] px-6 pt-16 pb-14 text-center">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-[-100px] -top-10 h-[380px]"
-        style={{ background: "radial-gradient(circle at center, var(--accent-glow), transparent 60%)" }}
+        className="pointer-events-none absolute inset-x-[-120px] -top-16 h-[420px] opacity-90"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 20%, var(--accent-glow), transparent 34%), radial-gradient(circle at 18% 60%, rgba(103,232,249,.12), transparent 28%), radial-gradient(circle at 82% 64%, rgba(34,211,238,.10), transparent 26%)",
+        }}
       />
-      <div className="relative mx-auto mb-4 grid h-11 w-11 place-items-center rounded-xl border border-accent-ring bg-accent-soft text-accent-fg">
-        <IconSpark size={20} />
+      <div className="relative mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl border border-accent-ring bg-accent-soft text-accent-fg shadow-[0_0_36px_var(--accent-glow)]">
+        <IconSpark size={22} />
       </div>
-      <h2 className="relative mb-2 text-[26px] font-semibold tracking-tight text-text">
-        What should we work on?
+      <p className="relative om-meta mb-2">Local inference ready</p>
+      <h2 className="relative mb-2 text-[30px] font-semibold tracking-tight text-text">
+        Open Model is ready.
       </h2>
-      <p className="relative mx-auto max-w-[440px] text-[14px] leading-6 text-text-3">
-        Chat normally, or ask about your inbox when you want the read-only mail agent to step in.
+      <p className="relative mx-auto max-w-[500px] text-[14px] leading-6 text-text-3">
+        Chat with the local model, or switch to the read-only Mail agent when inbox context matters.
       </p>
       <div className="relative mt-7 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        {STARTERS.map(({ Icon, title, body }) => (
+        {STARTERS.map(({ Icon, title, prompt, body }) => (
           <button
             key={title}
             type="button"
-            onClick={() => onPick(title)}
-            className="om-focus group flex flex-col gap-1.5 rounded-lg border border-line bg-bg-raised p-3.5 text-left transition-all hover:-translate-y-px hover:border-line-hi hover:bg-bg-emph"
+            onClick={() => onPick(prompt)}
+            className="om-focus group flex min-h-[142px] flex-col gap-2 rounded-xl border border-line bg-bg-raised/90 p-4 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-accent-ring hover:bg-bg-emph hover:shadow-[0_0_28px_var(--accent-glow)]"
           >
-            <div className="mb-1 grid h-7 w-7 place-items-center rounded-md border border-line bg-white/[0.04] text-text-2">
+            <div className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white/[0.04] text-accent-fg transition group-hover:border-accent-ring group-hover:bg-accent-soft">
               <Icon size={16} />
             </div>
             <div className="text-[13px] font-semibold text-text">{title}</div>
@@ -158,12 +168,14 @@ function AssistantMessage({
   streaming,
   canRegenerate,
   onRegenerate,
+  onNewConversation,
 }: {
   message: UiMessage;
   mode: ChatStreamMode;
   streaming: boolean;
   canRegenerate: boolean;
   onRegenerate: () => void;
+  onNewConversation: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -176,7 +188,7 @@ function AssistantMessage({
 
   return (
     <div data-testid="message" data-role="assistant" className="group flex gap-3.5">
-      <div className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-accent-ring bg-accent-soft text-accent-fg">
+      <div className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-accent-ring bg-accent-soft text-accent-fg shadow-[0_0_18px_var(--accent-glow)]">
         <IconModel size={14} />
       </div>
       <div className="min-w-0 flex-1">
@@ -225,7 +237,7 @@ function AssistantMessage({
         )}
 
         {!streaming && message.content && !message.error && (
-          <div className="mt-2.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="mt-2.5 flex gap-1 opacity-80 transition-opacity group-hover:opacity-100">
             <button
               type="button"
               onClick={() => void copyMessage()}
@@ -246,15 +258,27 @@ function AssistantMessage({
         )}
 
         {message.error && (
-          <div className="mt-3 flex items-start gap-3 rounded-lg border border-err-bd bg-err-bg px-3.5 py-3 text-err-fg">
-            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-red-400/10">
-              <IconAlert size={16} />
-            </div>
-            <div className="flex-1">
-              <div className="text-[13px] font-semibold text-text">
-                {mode === "agent" || mode === "mail" ? "Agent failed" : "Generation failed"}
+          <div className="mt-3 rounded-lg border border-err-bd bg-err-bg px-3.5 py-3 text-err-fg">
+            <div className="flex items-start gap-3">
+              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-red-400/10">
+                <IconAlert size={16} />
               </div>
-              <div className="text-[12.5px] leading-relaxed text-text-2">{message.error}</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-text">
+                  {mode === "agent" || mode === "mail" ? "Agent failed" : "Generation failed"}
+                </div>
+                <div className="mt-0.5 text-[12.5px] leading-relaxed text-text-2">
+                  {message.error}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 pl-10">
+              <button type="button" onClick={onRegenerate} className="om-btn om-btn-ghost">
+                <IconRetry size={13} /> Retry
+              </button>
+              <button type="button" onClick={onNewConversation} className="om-btn om-btn-ghost">
+                <IconPlus size={13} /> New chat
+              </button>
             </div>
           </div>
         )}
@@ -270,8 +294,10 @@ function MessageThreadImpl({
   messageModes,
   isLoading,
   canRetry,
+  longChatRecommended,
   onPromptSelect,
   onRetry,
+  onNewConversation,
 }: MessageThreadProps) {
   const latestAssistantId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -304,22 +330,34 @@ function MessageThreadImpl({
       aria-label="Conversation messages"
       aria-live="polite"
     >
-      <header className="flex items-center justify-between gap-3 border-b border-line px-6 py-3.5">
-        <div>
+      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3.5 sm:px-6">
+        <div className="min-w-0">
           <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-4">
             Workspace / Local chat
           </div>
-          <h1 className="mt-1 text-[16px] font-semibold tracking-tight text-text">{title}</h1>
+          <h1 className="mt-1 truncate text-[16px] font-semibold tracking-tight text-text">
+            {title}
+          </h1>
         </div>
-        <span className="om-chip">
-          <span className="font-mono text-[11px]">Open Model</span>
-        </span>
+        {longChatRecommended ? (
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="om-focus inline-flex shrink-0 items-center gap-1.5 rounded-full border border-warn-bd bg-warn-bg px-3 py-1.5 text-[11.5px] font-semibold text-warn-fg"
+          >
+            <IconPlus size={13} /> New chat recommended
+          </button>
+        ) : (
+          <span className="om-chip shrink-0">
+            <span className="font-mono text-[11px]">Open Model</span>
+          </span>
+        )}
       </header>
 
       {messages.length === 0 ? (
         <PromptStarters onPick={onPromptSelect} />
       ) : (
-        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-7 py-8">
+        <div className="mx-auto flex w-full max-w-[800px] flex-col gap-5 px-4 py-8 sm:px-7">
           {messages.map((message) => {
             const showLiveSteps =
               message.role === "assistant" && message.id === latestAssistantId && liveSteps.length > 0;
@@ -332,7 +370,7 @@ function MessageThreadImpl({
                         key={step.step_id}
                         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
                           step.status === "active"
-                            ? "border-accent-ring bg-accent-soft text-accent-fg"
+                            ? "border-accent-ring bg-accent-soft text-accent-fg shadow-[0_0_16px_var(--accent-glow)]"
                             : step.status === "complete"
                               ? "border-ok-bd bg-ok-bg text-ok-fg"
                               : step.status === "error"
@@ -354,6 +392,7 @@ function MessageThreadImpl({
                     streaming={Boolean(message.pending) && !message.error}
                     canRegenerate={canRetry && message.id === latestAssistantId}
                     onRegenerate={onRetry}
+                    onNewConversation={onNewConversation}
                   />
                 )}
               </div>

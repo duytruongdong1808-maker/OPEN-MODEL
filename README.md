@@ -598,7 +598,7 @@ OPEN_MODEL_VLLM_MODEL=adapter
 OPEN_MODEL_VLLM_TIMEOUT_S=120
 ```
 
-The vLLM compose service runs `Qwen/Qwen2.5-3B-Instruct-AWQ` with the LoRA adapter from `outputs/qwen2.5_3b_lora_v1/final_adapter`. GPU hosts need CUDA 12+, `nvidia-container-toolkit`, and an 8 GB card is the intended target with `--max-model-len 1536` and `--gpu-memory-utilization 0.85`. If vLLM runs out of memory, lower `--max-model-len` or temporarily roll back to the 1.5B base and adapter through environment variables.
+The vLLM compose service runs `Qwen/Qwen2.5-3B-Instruct-AWQ` with the LoRA adapter from `outputs/qwen2.5_3b_lora_v5/final_adapter`. GPU hosts need CUDA 12+, `nvidia-container-toolkit`, and an 8 GB card is the intended target. The compose command uses a conservative `--max-model-len 1024`, `--max-num-seqs 4`, and `--dtype half` profile for lower-memory GPUs. If vLLM runs out of memory, lower `--max-model-len` or `--gpu-memory-utilization` in `docker-compose.yml`.
 
 #### Agent constrained decoding
 

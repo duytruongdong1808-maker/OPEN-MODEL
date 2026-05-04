@@ -65,6 +65,15 @@ class ScriptedAgentRuntime:
         return GenerationStream(chunks=iterator(), cancel=lambda: None)
 
 
+class LazyFakeRuntime(FakeChatRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ensure_loaded_calls = 0
+
+    def _ensure_loaded(self) -> None:
+        self.ensure_loaded_calls += 1
+
+
 def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     current_event: str | None = None
@@ -1155,6 +1164,24 @@ def test_ready_check_reports_components(tmp_path: Path, monkeypatch) -> None:
     assert payload["checks"]["db"]["status"] == "ok"
     assert payload["checks"]["model"]["status"] == "ok"
     assert payload["checks"]["gmail"]["status"] == "not_checked"
+
+
+def test_skip_model_load_still_builds_runtime_without_preload(tmp_path: Path, monkeypatch) -> None:
+    configure_tools_env(monkeypatch)
+    monkeypatch.setenv("OPEN_MODEL_SKIP_MODEL_LOAD", "true")
+    get_open_model_settings.cache_clear()
+    runtime = LazyFakeRuntime()
+    monkeypatch.setattr("src.server.app.build_chat_service", lambda settings: runtime)
+    app = create_app(store=ConversationStore(tmp_path / "chat.sqlite3"), runtime=None)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/health/ready", headers={**tools_headers(), **user_headers("user-a")}
+        )
+
+    assert response.status_code == 200
+    assert app.state.runtime is runtime
+    assert runtime.ensure_loaded_calls == 0
 
 
 def test_agent_approval_endpoints_update_ledger(tmp_path: Path, monkeypatch) -> None:

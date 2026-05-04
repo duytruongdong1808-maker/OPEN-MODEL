@@ -406,7 +406,48 @@ test("chat shell keeps email drafting prompts in regular chat mode", async () =>
 
   expect(apiClient.streamPayloads[0]).toMatchObject({ mode: "chat" });
   expect(apiClient.streamPayloads[0].max_steps).toBeUndefined();
-  expect(screen.queryByText("Mail agent")).not.toBeInTheDocument();
+});
+
+test("chat shell can force the read-only mail agent from the mode selector", async () => {
+  const user = userEvent.setup();
+  const apiClient = new FakeApiClient(baseConversation, [
+    {
+      type: "message_complete",
+      payload: {
+        conversation: {
+          ...baseConversation,
+          title: "Read inbox",
+          last_message_preview: "Inbox checked.",
+          updated_at: "2026-04-18T11:05:10Z",
+        },
+        assistant_message: {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Inbox checked.",
+          created_at: "2026-04-18T11:05:10Z",
+          sources: [],
+        },
+      },
+    },
+  ]);
+
+  render(
+    <ChatShell
+      apiClient={apiClient}
+      conversationId="conversation-1"
+      onNavigateConversation={vi.fn()}
+    />,
+  );
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /daily workspace/i })).toBeInTheDocument(),
+  );
+
+  await user.click(screen.getByRole("radio", { name: /mail agent/i }));
+  await user.type(screen.getByRole("textbox", { name: /message/i }), "Check this thread");
+  await user.click(screen.getByRole("button", { name: /send/i }));
+
+  expect(apiClient.streamPayloads[0]).toMatchObject({ mode: "agent", max_steps: 5 });
 });
 
 test("chat shell copies the latest agent response", async () => {

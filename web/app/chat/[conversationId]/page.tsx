@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { ChatPageClient } from "@/features/chat/ChatPageClient";
 
+export const dynamic = "force-dynamic";
+
 function googleSignInConfigured(): boolean {
   return Boolean(
     process.env.AUTH_SECRET?.trim() &&

@@ -108,6 +108,40 @@ def test_vllm_payload_omits_guided_json_when_none() -> None:
         assert "guided_json" not in body
 
 
+def test_vllm_payload_trims_old_messages_to_fit_context() -> None:
+    service = VLLMChatService(
+        base_url="http://vllm.test/v1",
+        model="adapter",
+        max_new_tokens=128,
+        temperature=0.2,
+        top_p=0.9,
+        timeout=1.0,
+        context_window=256,
+    )
+    messages = [
+        {"role": "user", "content": "old " * 400},
+        {"role": "assistant", "content": "older answer " * 200},
+        {"role": "user", "content": "latest question"},
+    ]
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post("http://vllm.test/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                content=b"data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+        )
+
+        generation = service.stream_reply(messages=messages, system_prompt="You are concise.")
+
+        assert list(generation.chunks) == []
+        body = json.loads(route.calls.last.request.content)
+        sent_content = "\n".join(message["content"] for message in body["messages"])
+        assert "latest question" in sent_content
+        assert "old old old" not in sent_content
+        assert body["max_tokens"] <= 128
+
+
 def test_stream_reply_cancel_closes_response_stream() -> None:
     stream = BlockingSSEStream()
     with respx.mock(assert_all_called=True) as router:

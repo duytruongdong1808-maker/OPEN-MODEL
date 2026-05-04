@@ -49,16 +49,20 @@ class VLLMChatService:
         max_new_tokens: int,
         temperature: float,
         top_p: float,
+        frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.05,
         timeout: float = 120.0,
+        context_window: int = 1536,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.frequency_penalty = frequency_penalty
         self.repetition_penalty = repetition_penalty
         self.timeout = timeout
+        self.context_window = context_window
         self._limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
 
     async def check_ready(self) -> bool:
@@ -192,14 +196,24 @@ class VLLMChatService:
         chat_messages.extend(
             {"role": message["role"], "content": message["content"]} for message in messages
         )
+        chat_messages = self._fit_messages_to_context(chat_messages)
+        prompt_tokens = self._estimate_messages_tokens(chat_messages)
+        available_completion_tokens = max(32, self.context_window - prompt_tokens - 32)
+        max_tokens = min(
+            sampling.max_new_tokens,
+            max(self.max_new_tokens, self.context_window // 2),
+            available_completion_tokens,
+        )
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": chat_messages,
-            "max_tokens": sampling.max_new_tokens,
+            "max_tokens": max_tokens,
             "repetition_penalty": sampling.repetition_penalty,
             "sampling_profile": sampling.profile,
             "stream": True,
         }
+        if self.frequency_penalty:
+            payload["frequency_penalty"] = self.frequency_penalty
         if (sampling.temperature or 0) > 0:
             payload["temperature"] = sampling.temperature
             payload["top_p"] = sampling.top_p
@@ -210,6 +224,46 @@ class VLLMChatService:
         if response_format is not None:
             payload["response_format"] = response_format
         return payload
+
+    def _fit_messages_to_context(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        if not messages:
+            return messages
+        reserved_completion_tokens = min(self.max_new_tokens, max(64, self.context_window // 4))
+        prompt_budget = max(64, self.context_window - reserved_completion_tokens - 128)
+        system_messages = [message for message in messages if message["role"] == "system"]
+        non_system_messages = [message for message in messages if message["role"] != "system"]
+        if not non_system_messages:
+            return messages
+
+        kept: list[dict[str, str]] = [non_system_messages[-1]]
+        for message in reversed(non_system_messages[:-1]):
+            candidate = system_messages + [message] + list(reversed(kept))
+            if self._estimate_messages_tokens(candidate) > prompt_budget:
+                continue
+            kept.append(message)
+
+        fitted = system_messages + list(reversed(kept))
+        if self._estimate_messages_tokens(fitted) <= self.context_window - 64:
+            return fitted
+
+        # The latest user message alone is too large for this GPU profile. Keep the end of it,
+        # where users usually place their concrete question, and leave room for a short answer.
+        last = dict(non_system_messages[-1])
+        system_tokens = self._estimate_messages_tokens(system_messages)
+        available_tokens = max(
+            64, self.context_window - system_tokens - reserved_completion_tokens - 128
+        )
+        available_chars = max(256, available_tokens)
+        if len(last["content"]) > available_chars:
+            last["content"] = (
+                "[Earlier content truncated to fit the local model context.]\n"
+                + last["content"][-available_chars:]
+            )
+        return system_messages + [last]
+
+    @staticmethod
+    def _estimate_messages_tokens(messages: list[dict[str, str]]) -> int:
+        return sum(len(message.get("content", "")) + 8 for message in messages) + 4
 
     async def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 400:

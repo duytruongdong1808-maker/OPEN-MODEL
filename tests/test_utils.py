@@ -11,6 +11,7 @@ from src.utils import (
     WINDOWS_4BIT_DISABLED_MESSAGE,
     collect_cli_option_names,
     coerce_required_text,
+    detect_device,
     format_user_message,
     format_missing_dependency_error,
     generate_response_from_messages,
@@ -79,15 +80,33 @@ def test_resolve_runtime_preset_merges_with_fallback_defaults() -> None:
     assert resolved["custom_value"] == "kept"
 
 
-def test_windows_4bit_banner_only_shows_for_implicit_windows_fallback() -> None:
-    assert should_show_windows_4bit_disabled_banner(False, False, system_name="Windows") is True
-    assert should_show_windows_4bit_disabled_banner(False, True, system_name="Windows") is False
-    assert should_show_windows_4bit_disabled_banner(True, False, system_name="Windows") is False
-    assert should_show_windows_4bit_disabled_banner(False, False, system_name="Linux") is False
-    assert "4-bit disabled on Windows" in WINDOWS_4BIT_DISABLED_MESSAGE
+def test_no_gpu_banner_shows_only_when_4bit_off_by_default_and_no_cuda(monkeypatch) -> None:
+    monkeypatch.setattr("src.utils.detect_device", lambda: "cpu")
+    assert should_show_windows_4bit_disabled_banner(False, False) is True
+    assert should_show_windows_4bit_disabled_banner(False, True) is False
+    assert should_show_windows_4bit_disabled_banner(True, False) is False
+
+    monkeypatch.setattr("src.utils.detect_device", lambda: "cuda")
+    assert should_show_windows_4bit_disabled_banner(False, False) is False
+
+    monkeypatch.setattr("src.utils.detect_device", lambda: "mps")
+    assert should_show_windows_4bit_disabled_banner(False, False) is False
+
+    assert "CUDA" in WINDOWS_4BIT_DISABLED_MESSAGE
 
 
-def test_should_default_to_4bit_returns_false_when_torch_is_missing(monkeypatch) -> None:
+def test_should_default_to_4bit_returns_false_when_no_cuda(monkeypatch) -> None:
+    monkeypatch.setattr("src.utils.detect_device", lambda: "cpu")
+    assert should_default_to_4bit() is False
+
+    monkeypatch.setattr("src.utils.detect_device", lambda: "mps")
+    assert should_default_to_4bit() is False
+
+    monkeypatch.setattr("src.utils.detect_device", lambda: "cuda")
+    assert should_default_to_4bit() is True
+
+
+def test_detect_device_returns_cpu_when_torch_missing(monkeypatch) -> None:
     original_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -97,7 +116,7 @@ def test_should_default_to_4bit_returns_false_when_torch_is_missing(monkeypatch)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    assert should_default_to_4bit() is False
+    assert detect_device() == "cpu"
 
 
 def test_format_missing_dependency_error_mentions_virtualenv_for_torch() -> None:

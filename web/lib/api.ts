@@ -6,6 +6,7 @@ import type {
   EmailMessage,
   EmailSummary,
   GmailStatus,
+  HardwareInfo,
   MailTriageRequest,
   MailTriageResponse,
   StreamEvent,
@@ -27,6 +28,7 @@ export interface ApiClient {
   deleteConversation(conversationId: string): Promise<void>;
   getGmailStatus(): Promise<GmailStatus>;
   disconnectGmail(): Promise<GmailStatus>;
+  fetchSystemInfo(): Promise<HardwareInfo>;
   getGmailLoginUrl(): string;
   listMailInbox(options?: { limit?: number; unread_only?: boolean }): Promise<EmailSummary[]>;
   getMailMessage(uid: string): Promise<EmailMessage>;
@@ -166,6 +168,10 @@ export class HttpApiClient implements ApiClient {
       method: "POST",
       body: JSON.stringify({}),
     });
+  }
+
+  async fetchSystemInfo(): Promise<HardwareInfo> {
+    return requestJson<HardwareInfo>("/system/info");
   }
 
   getGmailLoginUrl(): string {

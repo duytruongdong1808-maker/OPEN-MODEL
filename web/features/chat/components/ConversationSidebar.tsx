@@ -127,7 +127,7 @@ function ConversationSidebarImpl({
           data-testid="new-conversation"
           aria-label="Create new chat"
           onClick={onNewConversation}
-          className="om-focus mx-3 mt-3 flex items-center gap-2.5 rounded-md border border-line-strong bg-bg-raised px-3 py-2.5 text-left text-[13px] font-medium text-text transition-colors hover:border-accent-ring hover:bg-bg-emph"
+          className="om-focus mx-3 mt-3 flex items-center gap-2.5 rounded-lg border border-accent-ring bg-accent-soft px-3 py-2.5 text-left text-[13px] font-semibold text-text shadow-[0_0_20px_var(--accent-glow)] transition-colors hover:bg-bg-emph"
         >
           <span className="grid h-[22px] w-[22px] place-items-center rounded-md border border-accent-ring bg-accent-soft text-accent-fg">
             <IconPlus size={15} />

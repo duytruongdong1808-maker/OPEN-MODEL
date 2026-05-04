@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-import platform
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 try:
     from .cache_env import configure_repo_cache_env
@@ -51,7 +51,8 @@ DEFAULT_LOG_LEVEL = "INFO"
 LOG_LEVEL_NAMES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 LOGGER_NAME = "open_model"
 WINDOWS_4BIT_DISABLED_MESSAGE = (
-    "Running full-precision LoRA (4-bit disabled on Windows). Pass --load_in_4bit true to override."
+    "No CUDA GPU detected — loading in full-precision float32 (CPU-only). "
+    "Inference will be very slow. Install CUDA drivers or set OPEN_MODEL_INFERENCE_BACKEND=vllm."
 )
 
 
@@ -85,13 +86,111 @@ def get_logger() -> logging.Logger:
     return logging.getLogger(LOGGER_NAME)
 
 
+def detect_device() -> str:
+    """Return the best available compute device: 'cuda', 'mps', or 'cpu'."""
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    try:
+        if torch.backends.mps.is_available():
+            return "mps"
+    except AttributeError:
+        pass
+    return "cpu"
+
+
+class HardwareProfile(TypedDict):
+    device: Literal["cuda", "mps", "cpu"]
+    gpu_name: str | None
+    vram_gb: float | None
+    compute_dtype: Literal["float16", "bfloat16", "float32"]
+    quantization: Literal["4bit", "none"]
+    recommended_model: str
+    recommended_max_tokens: int
+    warning: str | None
+
+
+def _recommended_runtime_for_vram(vram_gb: float | None) -> tuple[str, int]:
+    if vram_gb is None or vram_gb < 4:
+        return "Qwen/Qwen2.5-1.5B-Instruct", 256
+    if vram_gb < 8:
+        return "Qwen/Qwen2.5-3B-Instruct (4-bit)", 384
+    if vram_gb < 16:
+        return "Qwen/Qwen2.5-7B-Instruct (4-bit)", 512
+    return "Qwen/Qwen2.5-7B-Instruct", 768
+
+
+@lru_cache(maxsize=1)
+def get_hardware_profile() -> HardwareProfile:
+    device = detect_device()
+
+    try:
+        import torch
+    except ModuleNotFoundError:
+        recommended_model, recommended_max_tokens = _recommended_runtime_for_vram(None)
+        return {
+            "device": "cpu",
+            "gpu_name": None,
+            "vram_gb": None,
+            "compute_dtype": "float32",
+            "quantization": "none",
+            "recommended_model": recommended_model,
+            "recommended_max_tokens": recommended_max_tokens,
+            "warning": "PyTorch not installed; running on CPU.",
+        }
+
+    if device == "cuda":
+        vram_gb = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
+        recommended_model, recommended_max_tokens = _recommended_runtime_for_vram(vram_gb)
+        return {
+            "device": "cuda",
+            "gpu_name": torch.cuda.get_device_name(0),
+            "vram_gb": vram_gb,
+            "compute_dtype": "bfloat16" if torch.cuda.is_bf16_supported() else "float16",
+            "quantization": "4bit" if should_default_to_4bit() else "none",
+            "recommended_model": recommended_model,
+            "recommended_max_tokens": recommended_max_tokens,
+            "warning": "Low VRAM (<4GB); using smallest model." if vram_gb < 4 else None,
+        }
+
+    if device == "mps":
+        recommended_model, recommended_max_tokens = _recommended_runtime_for_vram(None)
+        return {
+            "device": "mps",
+            "gpu_name": "Apple Silicon GPU",
+            "vram_gb": None,
+            "compute_dtype": "float16",
+            "quantization": "none",
+            "recommended_model": recommended_model,
+            "recommended_max_tokens": recommended_max_tokens,
+            "warning": None,
+        }
+
+    recommended_model, recommended_max_tokens = _recommended_runtime_for_vram(None)
+    return {
+        "device": "cpu",
+        "gpu_name": None,
+        "vram_gb": None,
+        "compute_dtype": "float32",
+        "quantization": "none",
+        "recommended_model": recommended_model,
+        "recommended_max_tokens": recommended_max_tokens,
+        "warning": "No GPU detected; inference will be slow.",
+    }
+
+
 def should_show_windows_4bit_disabled_banner(
     load_in_4bit: bool,
     load_in_4bit_was_set: bool,
-    system_name: str | None = None,
+    system_name: str | None = None,  # no longer used; kept for backward compatibility
 ) -> bool:
-    resolved_system_name = platform.system() if system_name is None else system_name
-    return resolved_system_name == "Windows" and not load_in_4bit and not load_in_4bit_was_set
+    """Return True when 4-bit is off by default and no CUDA GPU is detected."""
+    if load_in_4bit or load_in_4bit_was_set:
+        return False
+    return detect_device() == "cpu"
 
 
 def log_runtime_mode(
@@ -100,8 +199,9 @@ def log_runtime_mode(
     if should_show_windows_4bit_disabled_banner(load_in_4bit, load_in_4bit_was_set):
         logger.warning(WINDOWS_4BIT_DISABLED_MESSAGE)
 
-    mode_name = "4-bit QLoRA" if load_in_4bit else "full-precision LoRA"
-    logger.info("Runtime mode: %s", mode_name)
+    device = detect_device()
+    mode_name = "4-bit QLoRA" if load_in_4bit else "full-precision"
+    logger.info("Device: %s | Runtime mode: %s", device.upper(), mode_name)
 
 
 def str_to_bool(value: str | bool) -> bool:
@@ -342,13 +442,14 @@ def render_training_record(
 def get_compute_dtype():
     import torch
 
-    if not torch.cuda.is_available():
-        return torch.float32
-
-    if torch.cuda.is_bf16_supported():
-        return torch.bfloat16
-
-    return torch.float16
+    device = detect_device()
+    if device == "cuda":
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+        return torch.float16
+    if device == "mps":
+        return torch.float16
+    return torch.float32
 
 
 def build_bnb_config(compute_dtype):
@@ -367,12 +468,8 @@ def get_model_input_device(model):
 
 
 def should_default_to_4bit() -> bool:
-    try:
-        import torch
-    except ModuleNotFoundError:
-        return False
-
-    return torch.cuda.is_available() and platform.system() != "Windows"
+    # bitsandbytes >= 0.43 supports Windows CUDA; no OS exclusion needed
+    return detect_device() == "cuda"
 
 
 def get_runtime_preset_names() -> list[str]:
@@ -442,13 +539,16 @@ def load_model_and_tokenizer(
 
     tokenizer = load_tokenizer(tokenizer_source, model_revision=tokenizer_revision)
 
-    if torch.cuda.is_available():
+    device = detect_device()
+    if device == "cuda":
         if use_4bit:
             model_kwargs["quantization_config"] = build_bnb_config(compute_dtype)
         else:
             model_kwargs["torch_dtype"] = compute_dtype
-
         model_kwargs["device_map"] = "auto"
+    elif device == "mps":
+        model_kwargs["torch_dtype"] = compute_dtype  # float16
+        model_kwargs["device_map"] = {"": "mps"}
     else:
         model_kwargs["torch_dtype"] = torch.float32
 

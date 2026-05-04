@@ -441,9 +441,9 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "eval_set": args.eval_set,
         "base_model": args.base_model,
-        "adapter_path": None
-        if args.no_adapter or args.adapter_path is None
-        else str(args.adapter_path),
+        "adapter_path": (
+            None if args.no_adapter or args.adapter_path is None else str(args.adapter_path)
+        ),
         "case_counts": {
             "chat": len(chat_cases),
             "mail": len(mail_cases),

@@ -28,11 +28,11 @@
   --text-4: #8A93A3;
 
   /* Accent (cyan default) */
-  --accent-fg:    #67e8f9;
+  --accent-fg:    #7dd3fc;
   --accent-solid: #22d3ee;
-  --accent-soft:  rgba(34,211,238,.14);
-  --accent-ring:  rgba(34,211,238,.45);
-  --accent-glow:  rgba(34,211,238,.18);
+  --accent-soft:  rgba(34,211,238,.18);
+  --accent-ring:  rgba(34,211,238,.58);
+  --accent-glow:  rgba(34,211,238,.24);
 
   /* Status */
   --ok-fg: #6ee7b7; --ok-bg: rgba(16,185,129,.12); --ok-bd: rgba(16,185,129,.32);

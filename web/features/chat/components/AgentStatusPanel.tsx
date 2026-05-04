@@ -2,8 +2,16 @@
 
 import { memo, useEffect, useState } from "react";
 
+import { createBrowserApiClient } from "@/lib/api";
 import { formatPublishedAt } from "@/lib/format";
-import type { AgentStep, GmailStatus, SourceItem, StepUpdate } from "@/lib/types";
+import type {
+  AgentStep,
+  ChatStreamMode,
+  GmailStatus,
+  HardwareInfo,
+  SourceItem,
+  StepUpdate,
+} from "@/lib/types";
 
 import {
   IconChevron,
@@ -19,6 +27,8 @@ interface AgentStatusPanelProps {
   agentSteps: AgentStep[];
   sources: SourceItem[];
   isStreaming: boolean;
+  activeMode: ChatStreamMode | null;
+  hasError: boolean;
   gmailStatus: GmailStatus | null;
   gmailActionPending: boolean;
   systemPromptOverride: string;
@@ -31,10 +41,10 @@ interface AgentStatusPanelProps {
 }
 
 const STATUS_COLOR: Record<StepUpdate["status"], { dot: string; label: string }> = {
-  pending:  { dot: "bg-text-4",                     label: "text-text-4" },
-  active:   { dot: "bg-accent-fg animate-om-pulse", label: "text-text" },
-  complete: { dot: "bg-ok-fg",                      label: "text-text-2" },
-  error:    { dot: "bg-err-fg",                     label: "text-err-fg" },
+  pending: { dot: "bg-text-4", label: "text-text-4" },
+  active: { dot: "bg-accent-fg animate-om-pulse", label: "text-text" },
+  complete: { dot: "bg-ok-fg", label: "text-text-2" },
+  error: { dot: "bg-err-fg", label: "text-err-fg" },
 };
 
 function AgentStatusPanelImpl({
@@ -42,6 +52,8 @@ function AgentStatusPanelImpl({
   agentSteps,
   sources,
   isStreaming,
+  activeMode,
+  hasError,
   gmailStatus,
   gmailActionPending,
   systemPromptOverride,
@@ -53,6 +65,7 @@ function AgentStatusPanelImpl({
   onClose,
 }: AgentStatusPanelProps) {
   const [tab, setTab] = useState<"runtime" | "sources">("runtime");
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -63,9 +76,37 @@ function AgentStatusPanelImpl({
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
+  useEffect(() => {
+    let ignore = false;
+
+    createBrowserApiClient()
+      .fetchSystemInfo()
+      .then((systemInfo) => {
+        if (!ignore) {
+          setHardware(systemInfo);
+        }
+      })
+      .catch(() => {
+        // Runtime details are best-effort; keep the panel usable if detection fails.
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
   if (!open) return null;
 
   const activeStep = steps.find((step) => step.status === "active");
+  const statusLabel = hasError
+    ? "Error"
+    : isStreaming
+      ? activeMode === "agent"
+        ? activeStep?.label ?? "Agent reading"
+        : activeStep?.label ?? "Generating"
+      : steps.length === 0
+        ? "Ready"
+        : "Trace ready";
 
   return (
     <>
@@ -80,21 +121,32 @@ function AgentStatusPanelImpl({
         aria-label="Runtime panel"
         className="om-scroll fixed inset-y-0 right-0 z-30 flex w-[min(380px,92vw)] flex-col overflow-y-auto border-l border-line bg-bg-rail shadow-pop xl:sticky xl:top-0 xl:h-screen xl:w-full xl:shadow-none"
       >
-        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
-          <div>
-            <div className="om-meta">Runtime</div>
-            <h2 className="mt-0.5 text-[13.5px] font-semibold tracking-tight text-text">
-              {isStreaming ? activeStep?.label ?? "Working…" : steps.length === 0 ? "Idle" : "Trace ready"}
-            </h2>
+        <header className="border-b border-line px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="om-meta">Runtime</div>
+              <h2 className="mt-0.5 text-[13.5px] font-semibold tracking-tight text-text">
+                {statusLabel}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label="Hide runtime panel"
+              className="om-icon-btn om-focus"
+            >
+              <IconChevron size={16} />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label="Hide runtime panel"
-            className="om-icon-btn om-focus"
-          >
-            <IconChevron size={16} />
-          </button>
+          <div className="mt-3 rounded-xl border border-accent-ring bg-accent-soft px-3 py-2 shadow-[0_0_28px_var(--accent-glow)]">
+            <div className="flex items-center gap-2 text-[12px] font-semibold text-accent-fg">
+              <span className="h-2 w-2 rounded-full bg-accent-fg shadow-[0_0_12px_var(--accent-fg)]" />
+              vLLM local stack
+            </div>
+            <div className="mt-1 font-mono text-[10.5px] text-text-3">
+              Qwen2.5 1.5B + LoRA · 1024 ctx · 256 output
+            </div>
+          </div>
         </header>
 
         <div className="flex border-b border-line px-4 pt-2">
@@ -137,11 +189,27 @@ function AgentStatusPanelImpl({
 
         <div className="border-t border-line px-4 py-3">
           <div className="om-meta mb-2">Inference</div>
+          {hardware?.warning && (
+            <div className="mb-2 rounded-md border border-warn-bd bg-warn-bg px-2.5 py-2 text-[11px] leading-relaxed text-warn-fg">
+              {hardware.warning}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-text-2">
-            <Stat label="Backend" value="llama.cpp · q4" />
-            <Stat label="Context" value="4 096 tok" />
-            <Stat label="Memory" value="22.4 GB" />
-            <Stat label="Speed" value="38 tok/s" />
+            <Stat label="Backend" value="vLLM" />
+            <Stat label="Context" value="1024 tokens" />
+            <Stat label="Max output" value="256 tokens" />
+            {hardware ? (
+              <>
+                <Stat label="Hardware" value={hardware.gpu_name ?? "CPU only"} />
+                <Stat label="VRAM" value={hardware.vram_gb != null ? `${hardware.vram_gb} GB` : "—"} />
+                <Stat label="Dtype" value={hardware.compute_dtype} />
+                <Stat label="Quant" value={hardware.quantization === "4bit" ? "4-bit" : "none"} />
+                <Stat label="Model" value={hardware.recommended_model} />
+              </>
+            ) : (
+              <Stat label="Hardware" value="Detecting…" />
+            )}
+            <Stat label="Mode" value={activeMode === "agent" ? "Mail agent" : "Chat"} />
           </div>
           <button type="button" className="om-btn om-btn-ghost mt-3 w-full justify-center">
             <IconSliders size={13} /> Inference settings
@@ -225,7 +293,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-line bg-bg-raised px-2.5 py-2">
       <div className="text-[10px] uppercase tracking-wider text-text-4">{label}</div>
-      <div className="mt-0.5 text-[12px] text-text">{value}</div>
+      <div className="mt-0.5 break-words text-[12px] text-text">{value}</div>
     </div>
   );
 }
@@ -272,7 +340,7 @@ function RuntimeTrace({
           <IconCpu size={14} />
         </div>
         <p className="text-[11.5px] leading-relaxed text-text-3">
-          Send a message to see runtime steps — retrieval, tool calls, and token generation.
+          Send a message to see runtime steps: context, tool calls, and token generation.
         </p>
       </div>
     );
@@ -303,7 +371,7 @@ function RuntimeTrace({
       })}
       {isStreaming && (
         <li className="relative pl-1 pt-1">
-          <span className="font-mono text-[10.5px] text-text-3">↳ streaming…</span>
+          <span className="font-mono text-[10.5px] text-text-3">streaming...</span>
         </li>
       )}
     </ol>

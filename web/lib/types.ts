@@ -110,6 +110,17 @@ export interface AgentStep {
   error: string | null;
 }
 
+export interface HardwareInfo {
+  device: "cuda" | "mps" | "cpu";
+  gpu_name: string | null;
+  vram_gb: number | null;
+  compute_dtype: "float16" | "bfloat16" | "float32";
+  quantization: "4bit" | "none";
+  recommended_model: string;
+  recommended_max_tokens: number;
+  warning: string | null;
+}
+
 export type StreamEvent =
   | {
       type: "message_start";

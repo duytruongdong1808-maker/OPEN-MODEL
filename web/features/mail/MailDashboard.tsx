@@ -147,6 +147,19 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
     }
   }, [apiClient]);
 
+  const handleNewMailConversation = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(MAIL_CONVERSATION_STORAGE_KEY);
+    }
+    setChatMessages([]);
+    setMessageModes({});
+    setLiveSteps([]);
+    setAgentSteps([]);
+    setLastPrompt(null);
+    setLastAssistantMessageId(null);
+    void ensureMailConversation();
+  }, [ensureMailConversation]);
+
   const selectMessage = useCallback((uid: string) => {
     setSelectedUid(uid);
     setMobileInboxOpen(false);
@@ -415,9 +428,11 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
           <MessageThread
             canRetry={Boolean(lastPrompt)}
             isLoading={loadingChat}
+            longChatRecommended={false}
             liveSteps={liveSteps}
             messageModes={messageModes}
             messages={chatMessages}
+            onNewConversation={handleNewMailConversation}
             onPromptSelect={handlePromptSelect}
             onRetry={handleRetry}
             title={selectedSummary?.subject ? `Mail: ${selectedSummary.subject}` : conversationTitle}
@@ -435,12 +450,15 @@ export function MailDashboard({ googleConfigured, apiClient: injectedApiClient }
         <Composer
           draft={draft}
           disabled={!connected || loadingChat}
+          effectiveMode="agent"
           isStreaming={isStreaming}
           canRetry={Boolean(lastPrompt)}
           onDraftChange={setDraft}
+          onModeChange={() => undefined}
           onSend={handleSend}
           onStop={stopStreaming}
           onRetry={handleRetry}
+          selectedMode="agent"
         />
       </section>
 

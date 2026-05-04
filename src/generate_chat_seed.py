@@ -194,9 +194,11 @@ def build_chat_seed_rows() -> list[dict[str, str]]:
         prompt, output, language = refusal_pairs[i % len(refusal_pairs)]
         rows.append(
             row(
-                "Từ chối yêu cầu nguy hiểm và gợi ý hướng an toàn."
-                if language == "vi"
-                else "Refuse the unsafe request and offer a safe alternative.",
+                (
+                    "Từ chối yêu cầu nguy hiểm và gợi ý hướng an toàn."
+                    if language == "vi"
+                    else "Refuse the unsafe request and offer a safe alternative."
+                ),
                 prompt,
                 output,
                 language=language,

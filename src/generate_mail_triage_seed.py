@@ -1383,9 +1383,11 @@ def rows_from_record(record: GoldTriageRecord) -> list[dict[str, str]]:
             "instruction": BLOCKER_RULE_INSTRUCTIONS[language],
             "input": format_blocker_rule_input(record),
             "output": full_triage_output,
-            "task_variant": "required_blocker_schema"
-            if record_has_blocker_action(record)
-            else "conditional_blocker_schema",
+            "task_variant": (
+                "required_blocker_schema"
+                if record_has_blocker_action(record)
+                else "conditional_blocker_schema"
+            ),
             **base_metadata,
         },
         {
