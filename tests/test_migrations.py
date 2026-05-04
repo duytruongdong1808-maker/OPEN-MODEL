@@ -31,6 +31,7 @@ def test_sqlite_migrations_apply_from_scratch(tmp_path: Path, monkeypatch) -> No
         "message_sources",
         "gmail_credentials",
         "audit_log",
+        "mail_triage_feedback",
     }.issubset(set(inspector.get_table_names()))
 
 
@@ -46,6 +47,7 @@ def test_postgres_migrations_apply_from_scratch(postgres_container: str, monkeyp
             "conversations",
             "gmail_credentials",
             "audit_log",
+            "mail_triage_feedback",
         ]:
             connection.execute(sa.text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
 
@@ -58,6 +60,7 @@ def test_postgres_migrations_apply_from_scratch(postgres_container: str, monkeyp
         "message_sources",
         "gmail_credentials",
         "audit_log",
+        "mail_triage_feedback",
     }.issubset(set(inspector.get_table_names()))
     audit_columns = {column["name"]: column for column in inspector.get_columns("audit_log")}
     assert "JSONB" in str(audit_columns["detail_json"]["type"]).upper()
