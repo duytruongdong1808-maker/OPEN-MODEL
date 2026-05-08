@@ -7,6 +7,7 @@ from src.agent.loop import (
     AgentLoop,
     build_tools_prompt,
     parse_model_command,
+    _prefers_english,
 )
 from src.server.runtime import GenerationStream
 from src.tools.registry import ToolSpec
@@ -333,3 +334,9 @@ async def test_read_only_mail_agent_normalizes_unread_prompt_to_latest_unread() 
     assert "Mình" in result.answer
     assert "MÃ¬nh" not in result.answer
     assert result.steps[1].arguments == {"limit": 1, "unread_only": True}
+
+
+def test_prefers_english_with_langdetect() -> None:
+    assert _prefers_english("Please summarize the latest emails in my inbox") is True
+    assert _prefers_english("Bạn có thể đọc mail chưa đọc mới nhất cho tôi không") is False
+    assert _prefers_english("read mail") is True

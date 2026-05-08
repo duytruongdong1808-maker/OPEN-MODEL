@@ -15,6 +15,7 @@ class ToolSpec(BaseModel):
     params_schema: dict[str, Any]
     returns_schema: dict[str, Any]
     handler: ToolCallable
+    timeout: float | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -27,7 +28,9 @@ def register_tool(spec: ToolSpec) -> ToolSpec:
     return spec
 
 
-def tool(name: str, description: str) -> Callable[[ToolCallable], ToolCallable]:
+def tool(
+    name: str, description: str, *, timeout: float | None = None
+) -> Callable[[ToolCallable], ToolCallable]:
     def decorator(handler: ToolCallable) -> ToolCallable:
         register_tool(
             ToolSpec(
@@ -36,6 +39,7 @@ def tool(name: str, description: str) -> Callable[[ToolCallable], ToolCallable]:
                 params_schema=_params_schema(handler, name),
                 returns_schema=_returns_schema(handler),
                 handler=handler,
+                timeout=timeout,
             )
         )
         return handler

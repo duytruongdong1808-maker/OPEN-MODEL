@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A supervised fine-tuning pipeline for small open-weight LLMs (defaulting to `Qwen/Qwen2.5-3B-Instruct`) combined with a full-stack web app for chat and mail triage. The repo has three main layers: a Python data/training pipeline (`src/`), a FastAPI backend with async DB and streaming inference (`src/server/`), and a Next.js frontend (`web/`).
+A supervised fine-tuning pipeline for small open-weight LLMs (defaulting to `Qwen/Qwen2.5-7B-Instruct`) combined with a full-stack web app for chat and mail triage. The repo has three main layers: a Python data/training pipeline (`src/`), a FastAPI backend with async DB and streaming inference (`src/server/`), and a Next.js frontend (`web/`).
 
 ## Commands
 
@@ -45,6 +45,20 @@ python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
 python src/merge_adapter.py
 python src/eval.py --eval_path data/eval/mail_triage_gold.jsonl
 python src/chat.py   # terminal REPL
+```
+
+### Data labeling
+```powershell
+# Autonomous LLM labeling — local vLLM (default):
+$env:OPEN_MODEL_VLLM_URL="http://localhost:8001/v1"
+python scripts/label_emails_auto.py
+
+# Optional: external OpenAI-compatible endpoint:
+# $env:LABEL_API_BASE="https://api.openai.com/v1"; $env:LABEL_API_KEY="sk-..."; $env:LABEL_MODEL="gpt-4o-mini"
+# python scripts/label_emails_auto.py
+
+# Validate output:
+python scripts/validate_labels.py
 ```
 
 ## Architecture

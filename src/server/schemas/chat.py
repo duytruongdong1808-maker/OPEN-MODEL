@@ -40,7 +40,7 @@ class ChatStreamRequest(BaseModel):
     message: str = Field(min_length=1)
     system_prompt: str | None = None
     mode: str = Field(default="chat")
-    max_steps: int = Field(default=5, ge=1, le=10)
+    max_steps: int = Field(default=10, ge=1, le=20)
     selected_email_uid: str | None = Field(default=None, min_length=1)
 
 

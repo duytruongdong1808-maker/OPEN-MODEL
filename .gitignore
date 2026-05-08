@@ -15,7 +15,15 @@ secrets/*
 !secrets/*.example
 
 .cache/
+.coverage
+
+# raw / derived data — large or personal, not committed
+data/raw/emails.jsonl
 data/raw/train.jsonl
+data/takeout-*.zip
+data/takeout_extracted/
+data/filtered/
+data/labeled/
 data/processed/*.jsonl
 data/processed/*.metadata.json
 

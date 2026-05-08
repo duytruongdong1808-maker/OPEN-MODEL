@@ -28,7 +28,7 @@ DEFAULT_CURATION_REPORT_PATH = CURATED_DATA_DIR / "curation_report.json"
 DEFAULT_CURATED_SEED_PATH = CURATED_DATA_DIR / "chat_vi_en_seed_curated.jsonl"
 DEFAULT_CURATED_MAIL_TRIAGE_SEED_PATH = CURATED_DATA_DIR / "mail_triage_vi_en_seed_curated.jsonl"
 DEFAULT_BUILT_DATASET_PATH = CURATED_DATA_DIR / "chat_core_vi_en_train.jsonl"
-DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 DEFAULT_BASE_MODEL_REVISION = None
 DEFAULT_SYSTEM_PROMPT = (
     "You are Open Model, a helpful and concise local assistant. "

@@ -54,7 +54,7 @@ except ImportError:
     )
 
 
-DEFAULT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "smoke.jsonl"
+DEFAULT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "mail_triage_gold.jsonl"
 
 
 def parse_expected_triage(row: dict[str, object], *, index: int, path: Path) -> ParsedTriage:

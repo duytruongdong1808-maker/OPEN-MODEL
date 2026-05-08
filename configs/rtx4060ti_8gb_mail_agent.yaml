@@ -1,8 +1,8 @@
-base_model: Qwen/Qwen2.5-3B-Instruct
+base_model: Qwen/Qwen2.5-7B-Instruct
 preset: rtx4060ti_8gb
 dataset_path: data/processed/train_sft_mail_agent_v1.jsonl
 val_dataset_path: data/processed/val_sft_mail_agent_v1.jsonl
-output_dir: outputs/qwen2.5_3b_lora_mail_agent_v1
+output_dir: outputs/qwen2.5_7b_lora_mail_agent_v1
 num_train_epochs: 2
 learning_rate: 5.0e-5
 per_device_train_batch_size: 1

@@ -32,7 +32,9 @@ async def get_email(user_id: str, uid: str) -> EmailMessage:
 
 
 @tool(
-    name="send_email", description="Send an email after safety checks, dry-run, and approval gates."
+    name="send_email",
+    description="Send an email after safety checks, dry-run, and approval gates.",
+    timeout=60.0,
 )
 async def send_email(
     to: list[str],
