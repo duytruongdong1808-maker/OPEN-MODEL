@@ -96,8 +96,8 @@ except ImportError:
     )
 
 
-DEFAULT_DATASET_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
-DEFAULT_VAL_DATASET_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
+DEFAULT_DATASET_PATH = ROOT_DIR / "data" / "processed" / "train_sft_gmail_real.jsonl"
+DEFAULT_VAL_DATASET_PATH = ROOT_DIR / "data" / "processed" / "val_sft_gmail_real.jsonl"
 DEFAULT_MAX_LENGTH = 512
 DEFAULT_REPORT_TO = "none"
 TRAIN_CONFIG_FIELDS = {

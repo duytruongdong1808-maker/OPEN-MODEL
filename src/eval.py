@@ -14,10 +14,10 @@ try:
     from .email_triage import ParsedTriage, score_triage_output
     from .utils import (
         DEFAULT_BASE_MODEL,
+        DEFAULT_GMAIL_REAL_EVAL_PATH,
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
         get_default_adapter_path,
@@ -35,10 +35,10 @@ except ImportError:
     from email_triage import ParsedTriage, score_triage_output
     from utils import (
         DEFAULT_BASE_MODEL,
+        DEFAULT_GMAIL_REAL_EVAL_PATH,
         DEFAULT_LOG_LEVEL,
         DEFAULT_RUNTIME_PRESET,
         LOG_LEVEL_NAMES,
-        ROOT_DIR,
         configure_logging,
         format_missing_dependency_error,
         get_default_adapter_path,
@@ -54,7 +54,7 @@ except ImportError:
     )
 
 
-DEFAULT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "mail_triage_gold.jsonl"
+DEFAULT_EVAL_PATH = DEFAULT_GMAIL_REAL_EVAL_PATH
 
 
 def parse_expected_triage(row: dict[str, object], *, index: int, path: Path) -> ParsedTriage:

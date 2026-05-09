@@ -57,24 +57,27 @@ open-model-v1/
       train_curated.jsonl
       review_candidates.jsonl
       chat_vi_en_seed_curated.jsonl
-      mail_triage_vi_en_seed_curated.jsonl
-      chat_core_vi_en_train.jsonl
+      gmail_real_labeled_curated.jsonl   # local, ignored
+      gmail_real_train.jsonl             # local, ignored
+    labeled/
+      emails_labeled.jsonl               # local, ignored
     raw/
       chat_vi_en_seed.jsonl
-      mail_triage_vi_en_seed.jsonl
       sample.jsonl
       train.jsonl
+    eval/
+      gmail_real_gold.jsonl              # local, ignored
     processed/
-      train_sft.jsonl
-      val_sft.jsonl
+      train_sft_gmail_real.jsonl         # local, ignored
+      val_sft_gmail_real.jsonl           # local, ignored
   docs/
     expected-loss-curve.svg
   src/
     __init__.py
+    build_gmail_real_dataset.py
     build_dataset.py
     curate_data.py
     download_sample_data.py
-    generate_mail_triage_seed.py
     prepare_data.py
     train_lora.py
     merge_adapter.py
@@ -162,7 +165,7 @@ Grafana runs on `http://localhost:3001`, Prometheus on `http://localhost:9090`, 
 On Windows, the most reliable way to run the training and inference scripts is to call the repo virtualenv interpreter directly:
 
 ```powershell
-.\.venv\Scripts\python.exe -u -X utf8 src\train_lora.py --config configs\rtx4060ti_8gb.yaml
+.\.venv\Scripts\python.exe -u -X utf8 src\train_lora.py --config configs\rtx4060ti_8gb_mail_agent.yaml
 ```
 
 The `-u` flag keeps logs unbuffered so startup and progress messages appear immediately. The training script also re-execs itself in UTF-8 mode on Windows when needed, but using `-X utf8` explicitly keeps the terminal behavior predictable.
@@ -180,11 +183,11 @@ python -c "import bitsandbytes; print(bitsandbytes.__version__)"
 Use the committed 8 GB config for smoke tests and full runs:
 
 ```bash
-python src/train_lora.py --config configs/rtx4060ti_8gb.yaml --max_steps 50
-python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
+python src/train_lora.py --config configs/rtx4060ti_8gb_mail_agent.yaml --max_steps 50
+python src/train_lora.py --config configs/rtx4060ti_8gb_mail_agent.yaml
 ```
 
-If the 7B run still hits CUDA OOM, lower `max_length` from `768` to `512` in `configs/rtx4060ti_8gb.yaml` and keep `per_device_train_batch_size=1`.
+If the 7B run still hits CUDA OOM, lower `max_length` from `768` to `512` in `configs/rtx4060ti_8gb_mail_agent.yaml` and keep `per_device_train_batch_size=1`.
 
 The training/eval scripts default Hugging Face caches to the repo-local `.cache/` directory. If the repo lives at `/mnt/d/OPEN-MODEL`, model and dataset cache files go under `/mnt/d/OPEN-MODEL/.cache/` instead of filling the WSL filesystem on `C:`.
 
@@ -202,7 +205,7 @@ On Windows PowerShell, the equivalent is:
 .\.venv\Scripts\python.exe -X utf8 src\download_sample_data.py
 ```
 
-By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, `data/raw/chat_vi_en_seed.jsonl` contains 310 bilingual seed examples for chatbox-core behavior, and `data/raw/mail_triage_vi_en_seed.jsonl` contains 3,600 clean email-triage seed samples generated from gold triage records. The mail seed is English-first, covers ops/support/billing/product/sales/internal/admin scenarios, includes mixed-language cases, and standardizes priority values to `high|medium|low`.
+By default this downloads 1,000 rows from `databricks/databricks-dolly-15k` and normalizes them into the repo's raw-data schema. The original three hand-written examples now live at `data/raw/sample.jsonl` for smoke tests, and `data/raw/chat_vi_en_seed.jsonl` contains bilingual seed examples for chatbox-core behavior.
 
 Put your raw source data in `data/raw/train.jsonl`. The new default workflow does not train from raw directly.
 
@@ -226,38 +229,28 @@ data/curated/review_candidates.jsonl
 data/curated/curation_report.json
 ```
 
-To regenerate the committed email-triage raw seed:
+Validate the manually reviewed Gmail labels, then convert them into local train and eval files:
 
 ```bash
-python src/generate_mail_triage_seed.py --total_rows 3000
+python scripts/validate_labels.py --input data/labeled/emails_labeled.jsonl
+python src/build_gmail_real_dataset.py
 ```
 
-`--total_rows` must be a positive multiple of `8`, because each gold record expands into summary, classify-only, action extraction, action-only, deadline-only, draft-reply, thread-summary, and full-triage tasks.
+`data/labeled/`, `data/curated/gmail_real_*`, `data/eval/gmail_real_*`, and processed Gmail-real datasets are ignored because they contain personal or derived Gmail content.
 
-Then curate it:
-
-```bash
-python src/curate_data.py \
-  --input_path data/raw/mail_triage_vi_en_seed.jsonl \
-  --output_path data/curated/mail_triage_vi_en_seed_curated.jsonl \
-  --review_path data/curated/mail_triage_vi_en_seed_review.jsonl \
-  --report_path data/curated/mail_triage_vi_en_seed_report.json \
-  --source seed_mail_triage_vi_en
-```
-
-Then build the final chat-core dataset:
+Then build the final mixed dataset:
 
 ```bash
-python src/build_dataset.py
+python src/build_dataset.py --target_profile gmail_real_v1
 ```
 
 This writes:
 
 ```text
-data/curated/chat_core_vi_en_train.jsonl
+data/curated/gmail_real_train.jsonl
 ```
 
-By default the builder now mixes the general curated train set, the bilingual chat seed, and the email-triage seed with the `chat_balanced_with_mail` profile. That profile targets 30% Vietnamese general chat, 25% English general chat, 25% English mail, 10% Vietnamese mail, and 10% mixed utility rows.
+By default the builder mixes the real Gmail labeled dataset with a small amount of general/safety chat data using the `gmail_real_v1` profile: 85% Gmail-real rows and 15% general/safety rows.
 
 Then prepare the SFT dataset:
 
@@ -268,11 +261,11 @@ python src/prepare_data.py
 This writes:
 
 ```text
-data/processed/train_sft.jsonl
-data/processed/val_sft.jsonl
+data/processed/train_sft_gmail_real.jsonl
+data/processed/val_sft_gmail_real.jsonl
 ```
 
-The curated files keep the original fields plus metadata such as `task_type`, `language`, `quality_score`, `flags`, `source`, and `action`. The built dataset balances Vietnamese, English, and mixed-language chat-core tasks with deterministic sampling. The processed files then add model-ready `prompt` and `completion` fields built with the base model tokenizer. Validation splitting is deterministic by hash and defaults to `--val_ratio 0.05`.
+The curated files keep the original fields plus metadata such as `task_type`, `language`, `quality_score`, `flags`, `source`, and `action`. The built dataset uses deterministic sampling and marks real Gmail rows with `source=gmail_real_labeled`. The processed files then add model-ready `prompt` and `completion` fields built with the base model tokenizer. Validation splitting is deterministic by hash and defaults to `--val_ratio 0.05`.
 
 If you only want a tiny smoke test on the hand-written examples:
 
@@ -295,6 +288,8 @@ End-to-end PowerShell example:
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 src\download_sample_data.py
 .\.venv\Scripts\python.exe -X utf8 src\curate_data.py
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_labels.py --input data\labeled\emails_labeled.jsonl
+.\.venv\Scripts\python.exe -X utf8 src\build_gmail_real_dataset.py
 .\.venv\Scripts\python.exe -X utf8 src\build_dataset.py
 .\.venv\Scripts\python.exe -X utf8 src\prepare_data.py
 ```
@@ -310,19 +305,19 @@ python src/train_lora.py
 If you want a committed YAML to describe the run:
 
 ```bash
-python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
+python src/train_lora.py --config configs/rtx4060ti_8gb_mail_agent.yaml
 ```
 
 Recommended Windows PowerShell command:
 
 ```powershell
-.\.venv\Scripts\python.exe -u -X utf8 src\train_lora.py --config configs\rtx4060ti_8gb.yaml
+.\.venv\Scripts\python.exe -u -X utf8 src\train_lora.py --config configs\rtx4060ti_8gb_mail_agent.yaml
 ```
 
 CLI arguments still override the file:
 
 ```bash
-python src/train_lora.py --config configs/rtx4060ti_8gb.yaml --learning_rate 5e-5
+python src/train_lora.py --config configs/rtx4060ti_8gb_mail_agent.yaml --learning_rate 5e-5
 ```
 
 This will:
@@ -333,12 +328,12 @@ This will:
 - default to `max_length=768` for the 8 GB preset
 - use 4-bit QLoRA in the committed RTX 4060 Ti config
 - train LoRA adapters
-- evaluate on `data/processed/val_sft.jsonl` every `save_steps`
+- evaluate on `data/processed/val_sft_gmail_real.jsonl` every `save_steps`
 - save checkpoints under `outputs/`
 - save the final adapter to:
 
 ```text
-outputs/qwen2.5_7b_lora_v1/final_adapter
+outputs/qwen2.5_7b_lora_gmail_real_v1/final_adapter
 ```
 
 Preset for your current GPU target:
@@ -352,7 +347,7 @@ This preset is tuned for `Qwen/Qwen2.5-7B-Instruct` QLoRA on GPUs like the RTX 4
 - `max_length=768`
 - `per_device_train_batch_size=1`
 - `gradient_accumulation_steps=16`
-- `load_in_4bit=true` when using `configs/rtx4060ti_8gb.yaml`
+- `load_in_4bit=true` when using `configs/rtx4060ti_8gb_mail_agent.yaml`
 - `gradient_checkpointing=true`
 
 Example with a few explicit overrides:
@@ -401,7 +396,7 @@ python src/train_lora.py --report_to tensorboard
 python src/train_lora.py --report_to wandb
 ```
 
-If `data/processed/val_sft.jsonl` is missing or empty, training skips evaluation automatically. That keeps `data/raw/sample.jsonl` usable for quick smoke tests.
+If `data/processed/val_sft_gmail_real.jsonl` is missing or empty, training skips evaluation automatically. That keeps `data/raw/sample.jsonl` usable for quick smoke tests.
 
 If you switch to a gated base model, log in first:
 
@@ -507,10 +502,10 @@ This loads the base model plus the saved adapter and prints a few sample generat
 Like training, 4-bit loading turns on by default when CUDA is available.
 Evaluation also accepts `--seed` and `--model_revision` for reproducible sampling against the pinned base model snapshot.
 
-For the field-level gold evaluation set used by the mail-triage workflow:
+For the field-level gold evaluation set used by the real Gmail workflow:
 
 ```bash
-python src/eval.py --eval_path data/eval/mail_triage_gold.jsonl
+python src/eval.py --eval_path data/eval/gmail_real_gold.jsonl
 ```
 
 When the eval file includes `expected` fields, the script now reports parse success plus normalized matches for summary, priority, action items, and deadlines.
@@ -530,10 +525,10 @@ python src/eval.py --adapter_path outputs/qwen2.5_3b_lora_v2/final_adapter
 For the metric-first comparison flow, keep each adapter output separate and compare JSON reports:
 
 ```bash
-python scripts/eval_quality.py --base Qwen/Qwen2.5-1.5B-Instruct --adapter outputs/qwen2.5_1.5b_mail_triage_lora_v4/final_adapter --eval-set both --output outputs/evaluations/qwen25_1p5b_mail_triage_v4/eval_qwen25_1p5b_mail_triage_v4.json
+python scripts/eval_quality.py --base Qwen/Qwen2.5-7B-Instruct --adapter outputs/qwen2.5_7b_lora_gmail_real_v1/final_adapter --eval-set both --output outputs/evaluations/qwen25_7b_gmail_real_v1/eval_qwen25_7b_gmail_real_v1.json
 python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v1/final_adapter --eval-set both --output outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json
 python scripts/eval_quality.py --base Qwen/Qwen2.5-3B-Instruct --adapter outputs/qwen2.5_3b_lora_v2/final_adapter --eval-set both --output outputs/evaluations/qwen25_3b_lora_v2/eval_qwen25_3b_lora_v2.json
-python scripts/compare_eval.py outputs/evaluations/qwen25_1p5b_mail_triage_v4/eval_qwen25_1p5b_mail_triage_v4.json outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json --output outputs/comparisons/compare_1p5b_vs_3b_v1.md
+python scripts/compare_eval.py outputs/evaluations/qwen25_7b_gmail_real_v1/eval_qwen25_7b_gmail_real_v1.json outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json --output outputs/comparisons/compare_gmail_real_v1_vs_3b_v1.md
 python scripts/compare_eval.py outputs/evaluations/qwen25_3b_lora_v1/eval_qwen25_3b_lora_v1.json outputs/evaluations/qwen25_3b_lora_v2/eval_qwen25_3b_lora_v2.json --output outputs/comparisons/compare_3b_v1_vs_3b_v2.md
 ```
 

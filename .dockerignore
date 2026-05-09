@@ -24,4 +24,11 @@ web/coverage
 web/*.tsbuildinfo
 web/.codex-logs/
 data/processed
+data/raw/emails.jsonl
 data/raw/train.jsonl
+data/takeout-*.zip
+data/takeout_extracted
+data/filtered
+data/labeled
+data/curated/gmail_real_*.jsonl
+data/eval/gmail_real_*.jsonl

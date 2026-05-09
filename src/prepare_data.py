@@ -41,8 +41,8 @@ except ImportError:
 
 
 DEFAULT_INPUT_PATH = DEFAULT_BUILT_DATASET_PATH
-DEFAULT_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "train_sft.jsonl"
-DEFAULT_VAL_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "val_sft.jsonl"
+DEFAULT_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "train_sft_gmail_real.jsonl"
+DEFAULT_VAL_OUTPUT_PATH = ROOT_DIR / "data" / "processed" / "val_sft_gmail_real.jsonl"
 
 
 def validate_val_split(value: str) -> float:

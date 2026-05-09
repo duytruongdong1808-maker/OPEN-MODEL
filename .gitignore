@@ -24,8 +24,12 @@ data/takeout-*.zip
 data/takeout_extracted/
 data/filtered/
 data/labeled/
+data/curated/gmail_real_*.jsonl
+data/eval/gmail_real_*.jsonl
 data/processed/*.jsonl
 data/processed/*.metadata.json
+data/processed/*gmail_real*.jsonl
+data/processed/*gmail_real*.metadata.json
 
 outputs/*
 !outputs/app/

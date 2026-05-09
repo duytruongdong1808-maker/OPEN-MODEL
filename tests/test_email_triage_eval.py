@@ -7,6 +7,7 @@ from src.email_triage import (
     score_triage_output,
 )
 from src.eval import load_eval_prompts
+from src.utils import write_jsonl
 
 
 def test_parse_full_triage_output_handles_english_and_none_values() -> None:
@@ -261,10 +262,31 @@ def test_score_triage_output_rejects_action_missing_owner_entity() -> None:
     assert score.action_items_match is False
 
 
-def test_load_eval_prompts_parses_gold_eval_rows() -> None:
-    prompts = load_eval_prompts("data/eval/mail_triage_gold.jsonl")
+def test_load_eval_prompts_parses_gold_eval_rows(tmp_path) -> None:
+    eval_path = tmp_path / "gmail_real_gold.jsonl"
+    write_jsonl(
+        eval_path,
+        [
+            {
+                "uid": "gmail-1",
+                "instruction": "Read this real Gmail message and return a triage block.",
+                "input": "Subject: Login alert\n\nPlease review this account login.",
+                "expected": {
+                    "summary": "The message alerts the user about a new account login.",
+                    "priority": "high",
+                    "action_items": ["Review account activity"],
+                    "deadlines": ["None"],
+                },
+                "source": "gmail_real_labeled",
+                "domain": "account/security",
+                "language": "en",
+            }
+        ],
+    )
+
+    prompts = load_eval_prompts(eval_path)
 
     assert prompts
     first = prompts[0]
     assert isinstance(first["expected"], ParsedTriage)
-    assert first["domain"] in {"ops", "support", "billing", "product", "sales", "internal", "admin"}
+    assert first["domain"] == "account/security"

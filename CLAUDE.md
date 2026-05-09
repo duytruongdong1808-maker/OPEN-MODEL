@@ -15,7 +15,7 @@ pytest -q                                    # all Python tests
 pytest -q --cov=src --cov-fail-under=70     # match CI coverage gate
 pytest tests/test_api.py::test_name -v      # single test
 OPEN_MODEL_SKIP_MODEL_LOAD=true pytest -q   # skip heavy model loads
-pytest -q -m postgres                        # requires OPEN_MODEL_DATABASE_URL
+pytest -q -m postgres                       # requires OPEN_MODEL_DATABASE_URL
 ruff check . && ruff format --check . && black --check .
 alembic upgrade head
 .\.venv\Scripts\python.exe -m uvicorn src.server.app:app --reload
@@ -39,42 +39,33 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```bash
 python src/download_sample_data.py
 python src/curate_data.py
+python scripts/validate_labels.py --input data/labeled/emails_labeled.jsonl
+python src/build_gmail_real_dataset.py
 python src/build_dataset.py
 python src/prepare_data.py
-python src/train_lora.py --config configs/rtx4060ti_8gb.yaml
+python src/train_lora.py --config configs/rtx4060ti_8gb_mail_agent.yaml
 python src/merge_adapter.py
-python src/eval.py --eval_path data/eval/mail_triage_gold.jsonl
+python src/eval.py --eval_path data/eval/gmail_real_gold.jsonl
 python src/chat.py   # terminal REPL
 ```
 
 ### Data labeling
-```powershell
-# Autonomous LLM labeling — local vLLM (default):
-$env:OPEN_MODEL_VLLM_URL="http://localhost:8001/v1"
-python scripts/label_emails_auto.py
-
-# Optional: external OpenAI-compatible endpoint:
-# $env:LABEL_API_BASE="https://api.openai.com/v1"; $env:LABEL_API_KEY="sk-..."; $env:LABEL_MODEL="gpt-4o-mini"
-# python scripts/label_emails_auto.py
-
-# Validate output:
-python scripts/validate_labels.py
-```
+The canonical local mail source is `data/labeled/emails_labeled.jsonl`, a manually reviewed set of 198 real Gmail records. Keep `data/labeled/`, `data/filtered/`, and derived `gmail_real_*` files local and ignored; validate labels with `python scripts/validate_labels.py --input data/labeled/emails_labeled.jsonl`.
 
 ## Architecture
 
 ### Data pipeline (`src/`)
-Linear stages: raw JSONL → `curate_data.py` (adds `task_type`, `language`, `quality_score`, `flags`, `source`, `action`) → `build_dataset.py` (balances multilingual datasets) → `prepare_data.py` (tokenizes to SFT format with `prompt`/`completion` fields).
+Linear stages: raw/general JSONL -> `curate_data.py` (adds `task_type`, `language`, `quality_score`, `flags`, `source`, `action`) plus real Gmail labels -> `build_gmail_real_dataset.py` (creates `source=gmail_real_labeled` train/eval rows) -> `build_dataset.py` (defaults to `gmail_real_v1`, 85% real Gmail and 15% general/safety) -> `prepare_data.py` (tokenizes to SFT format with `prompt`/`completion` fields).
 
 ### Model training (`src/train_lora.py`, `src/merge_adapter.py`)
 LoRA/QLoRA via `peft` + `trl`, with `bitsandbytes` for 4-bit quantization. Config presets in `configs/` (RTX 4060 Ti 8 GB, A100 40 GB). Outputs checkpoints and a final adapter that can be merged back into the base model.
 
 ### FastAPI backend (`src/server/`)
-- **Inference** — `src/server/inference/local.py` (in-process transformers) and `vllm.py` (OpenAI-compatible GPU server)
-- **Agent loop** — `src/agent/loop.py` drives agentic tool use; schemas in `src/agent/`
-- **Email tools** — `src/tools/`: Gmail OAuth, async IMAP (`aioimaplib`), async SMTP (`aiosmtplib`), send ledger
-- **Database** — SQLAlchemy async (SQLite dev / PostgreSQL prod); tables: conversations, messages, message_sources, gmail_credentials, audit_log, send_ledger; migrations in `alembic/`
-- **Observability** — Prometheus metrics, OpenTelemetry tracing, Sentry; dashboards in `observability/`
+- **Inference** - `src/server/inference/local.py` (in-process transformers) and `vllm.py` (OpenAI-compatible GPU server)
+- **Agent loop** - `src/agent/loop.py` drives agentic tool use; schemas in `src/agent/`
+- **Email tools** - `src/tools/`: Gmail OAuth, async IMAP (`aioimaplib`), async SMTP (`aiosmtplib`), send ledger
+- **Database** - SQLAlchemy async (SQLite dev / PostgreSQL prod); tables: conversations, messages, message_sources, gmail_credentials, audit_log, send_ledger; migrations in `alembic/`
+- **Observability** - Prometheus metrics, OpenTelemetry tracing, Sentry; dashboards in `observability/`
 
 ### Next.js frontend (`web/`)
 - App router; domain features under `web/features/chat` and `web/features/mail`
@@ -84,7 +75,7 @@ LoRA/QLoRA via `peft` + `trl`, with `bitsandbytes` for 4-bit quantization. Confi
 
 ## Testing notes
 
-- Use `OPEN_MODEL_SKIP_MODEL_LOAD=true` for tests that don't need the model loaded — required for CI speed
+- Use `OPEN_MODEL_SKIP_MODEL_LOAD=true` for tests that do not need the model loaded, required for CI speed
 - Mark tests needing a real Postgres instance with `@pytest.mark.postgres`; mark external-service tests with `@pytest.mark.integration`
 - Backend CI gate is 70% coverage (`--cov-fail-under=70`)
 
@@ -92,4 +83,4 @@ LoRA/QLoRA via `peft` + `trl`, with `bitsandbytes` for 4-bit quantization. Confi
 
 - Python 3.11, Black + Ruff, 100-char line length (`pyproject.toml`), snake_case modules/functions/variables, PascalCase classes
 - TypeScript/React, PascalCase components (e.g. `ChatShell.tsx`), domain code under `web/features/<domain>`
-- Do not commit real secrets or `.env` values — use `.env.example` and `secrets/*.example`; pre-commit and CI run Gitleaks
+- Do not commit real secrets or `.env` values; use `.env.example` and `secrets/*.example`; pre-commit and CI run Gitleaks

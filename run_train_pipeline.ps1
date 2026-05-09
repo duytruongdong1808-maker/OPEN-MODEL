@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
-    [string]$ConfigPath = "configs\rtx4060ti_8gb.yaml",
-    [int]$MailRows = 1000,
+    [string]$ConfigPath = "configs\rtx4060ti_8gb_mail_agent.yaml",
     [string]$LogLevel = "INFO",
     [switch]$ForceDownloadSampleData,
     [switch]$SkipTrain,
@@ -72,12 +71,11 @@ if ($shouldDownloadSampleData) {
 }
 
 Invoke-PythonStep `
-    -StepName "Generating bilingual mail triage raw seed" `
+    -StepName "Validating labeled real Gmail records" `
     -Arguments @(
         "-X", "utf8",
-        "src/generate_mail_triage_seed.py",
-        "--total_rows", $MailRows.ToString(),
-        "--output_path", "data/raw/mail_triage_vi_en_seed.jsonl"
+        "scripts/validate_labels.py",
+        "--input", "data/labeled/emails_labeled.jsonl"
     )
 
 Invoke-PythonStep `
@@ -93,23 +91,23 @@ Invoke-PythonStep `
     )
 
 Invoke-PythonStep `
-    -StepName "Curating mail triage seed" `
+    -StepName "Building real Gmail train and eval datasets" `
     -Arguments @(
         "-X", "utf8",
-        "src/curate_data.py",
-        "--input_path", "data/raw/mail_triage_vi_en_seed.jsonl",
-        "--output_path", "data/curated/mail_triage_vi_en_seed_curated.jsonl",
-        "--review_path", "data/curated/mail_triage_vi_en_seed_review.jsonl",
-        "--report_path", "data/curated/mail_triage_vi_en_seed_report.json",
-        "--source", "seed_mail_triage_vi_en",
+        "src/build_gmail_real_dataset.py",
+        "--input_path", "data/labeled/emails_labeled.jsonl",
+        "--output_path", "data/curated/gmail_real_labeled_curated.jsonl",
+        "--eval_output_path", "data/eval/gmail_real_gold.jsonl",
         "--log_level", $LogLevel
     )
 
 Invoke-PythonStep `
-    -StepName "Building mixed chat and mail training dataset" `
+    -StepName "Building mixed chat and real Gmail training dataset" `
     -Arguments @(
         "-X", "utf8",
         "src/build_dataset.py",
+        "--target_profile", "gmail_real_v1",
+        "--output_path", "data/curated/gmail_real_train.jsonl",
         "--log_level", $LogLevel
     )
 
@@ -118,6 +116,9 @@ Invoke-PythonStep `
     -Arguments @(
         "-X", "utf8",
         "src/prepare_data.py",
+        "--input_path", "data/curated/gmail_real_train.jsonl",
+        "--output_path", "data/processed/train_sft_gmail_real.jsonl",
+        "--val_output_path", "data/processed/val_sft_gmail_real.jsonl",
         "--log_level", $LogLevel
     )
 

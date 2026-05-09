@@ -21,6 +21,7 @@ from src.email_triage import score_triage_output  # noqa: E402
 from src.eval import parse_expected_triage  # noqa: E402
 from src.utils import (  # noqa: E402
     DEFAULT_BASE_MODEL,
+    DEFAULT_GMAIL_REAL_EVAL_PATH,
     DEFAULT_SYSTEM_PROMPT,
     generate_response,
     load_model_and_tokenizer,
@@ -30,7 +31,7 @@ from src.utils import (  # noqa: E402
 )
 
 DEFAULT_CHAT_EVAL_PATH = ROOT_DIR / "data" / "eval" / "chat_quality_gold.jsonl"
-DEFAULT_MAIL_EVAL_PATH = ROOT_DIR / "data" / "eval" / "mail_triage_gold.jsonl"
+DEFAULT_MAIL_EVAL_PATH = DEFAULT_GMAIL_REAL_EVAL_PATH
 DEFAULT_EVAL_REPORT_PATH = ROOT_DIR / "outputs" / "evaluations" / "eval_report" / "eval_report.json"
 
 
