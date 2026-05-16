@@ -303,16 +303,41 @@ def summarize_mail_results(results: list[CaseResult]) -> dict[str, Any]:
     return aggregate
 
 
-def run_chat_eval(cases: list[ChatEvalCase], infer) -> list[CaseResult]:
-    return [
-        score_chat_output(case, infer(case.prompt, ""), index=index)
-        for index, case in enumerate(cases, 1)
-    ]
+def select_cases(cases: list[Any], *, offset: int, limit: int | None) -> list[Any]:
+    if offset < 0:
+        raise ValueError("--offset must be >= 0.")
+    if limit is not None and limit < 1:
+        raise ValueError("--limit must be >= 1 when set.")
+    end = None if limit is None else offset + limit
+    return cases[offset:end]
 
 
-def run_mail_eval(cases: list[dict[str, Any]], infer) -> list[CaseResult]:
+def run_chat_eval(
+    cases: list[ChatEvalCase],
+    infer,
+    *,
+    start_index: int = 1,
+    on_result=None,
+) -> list[CaseResult]:
     results: list[CaseResult] = []
-    for index, case in enumerate(cases, 1):
+    for offset, case in enumerate(cases):
+        result = score_chat_output(case, infer(case.prompt, ""), index=start_index + offset)
+        results.append(result)
+        if on_result is not None:
+            on_result(results)
+    return results
+
+
+def run_mail_eval(
+    cases: list[dict[str, Any]],
+    infer,
+    *,
+    start_index: int = 1,
+    on_result=None,
+) -> list[CaseResult]:
+    results: list[CaseResult] = []
+    for offset, case in enumerate(cases):
+        index = start_index + offset
         output = infer(case["instruction"], case["input"])
         score = score_triage_output(expected=case["expected"], actual_text=output)
         metrics = {
@@ -333,7 +358,50 @@ def run_mail_eval(cases: list[dict[str, Any]], infer) -> list[CaseResult]:
                 metrics=metrics,
             )
         )
+        if on_result is not None:
+            on_result(results)
     return results
+
+
+def build_report(
+    *,
+    args: argparse.Namespace,
+    chat_cases: list[ChatEvalCase],
+    mail_cases: list[dict[str, Any]],
+    chat_results: list[CaseResult],
+    mail_results: list[CaseResult],
+    total_chat_cases: int,
+    total_mail_cases: int,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "eval_set": args.eval_set,
+        "base_model": args.base_model,
+        "adapter_path": (
+            None if args.no_adapter or args.adapter_path is None else str(args.adapter_path)
+        ),
+        "selection": {
+            "offset": args.offset,
+            "limit": args.limit,
+            "total_chat_cases": total_chat_cases,
+            "total_mail_cases": total_mail_cases,
+        },
+        "case_counts": {
+            "chat": len(chat_cases),
+            "mail": len(mail_cases),
+            "chat_scored": len(chat_results),
+            "mail_scored": len(mail_results),
+        },
+        "metrics": {},
+        "results": {},
+    }
+    if args.eval_set in {"chat", "both"}:
+        report["metrics"]["chat"] = summarize_case_results(chat_results)
+        report["results"]["chat"] = [asdict(result) for result in chat_results]
+    if args.eval_set in {"mail", "both"}:
+        report["metrics"]["mail"] = summarize_mail_results(mail_results)
+        report["results"]["mail"] = [asdict(result) for result in mail_results]
+    return report
 
 
 def write_report(report: dict[str, Any], output_path: Path) -> None:
@@ -360,6 +428,14 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
             f"chat={case_counts.get('chat', 0)}, mail={case_counts.get('mail', 0)}, "
             f"chat_scored={case_counts.get('chat_scored', 0)}, "
             f"mail_scored={case_counts.get('mail_scored', 0)}"
+        )
+    selection = report.get("selection", {})
+    if isinstance(selection, dict):
+        lines.append(
+            "- Selection: "
+            f"offset={selection.get('offset', 0)}, limit={selection.get('limit')}, "
+            f"total_chat={selection.get('total_chat_cases', 0)}, "
+            f"total_mail={selection.get('total_mail_cases', 0)}"
         )
     lines.extend(["", "| Section | Total | Score |", "|---|---:|---:|"])
     if "chat" in report["metrics"]:
@@ -395,6 +471,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--load-in-4bit", type=str_to_bool, default=None)
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Start evaluating at this case index.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Evaluate at most this many cases.",
+    )
     parser.add_argument("--no-adapter", action="store_true")
     parser.add_argument(
         "--no-inference",
@@ -406,11 +494,35 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    chat_cases = load_chat_eval(args.chat_path) if args.eval_set in {"chat", "both"} else []
-    mail_cases = load_mail_eval(args.mail_path) if args.eval_set in {"mail", "both"} else []
+    all_chat_cases = load_chat_eval(args.chat_path) if args.eval_set in {"chat", "both"} else []
+    all_mail_cases = load_mail_eval(args.mail_path) if args.eval_set in {"mail", "both"} else []
+    chat_cases = select_cases(all_chat_cases, offset=args.offset, limit=args.limit)
+    mail_cases = select_cases(all_mail_cases, offset=args.offset, limit=args.limit)
 
     chat_results: list[CaseResult] = []
     mail_results: list[CaseResult] = []
+
+    def save_progress(
+        *,
+        current_chat_results: list[CaseResult] | None = None,
+        current_mail_results: list[CaseResult] | None = None,
+    ) -> None:
+        write_report(
+            build_report(
+                args=args,
+                chat_cases=chat_cases,
+                mail_cases=mail_cases,
+                chat_results=(
+                    current_chat_results if current_chat_results is not None else chat_results
+                ),
+                mail_results=(
+                    current_mail_results if current_mail_results is not None else mail_results
+                ),
+                total_chat_cases=len(all_chat_cases),
+                total_mail_cases=len(all_mail_cases),
+            ),
+            args.output,
+        )
 
     if not args.no_inference:
         load_in_4bit = should_default_to_4bit() if args.load_in_4bit is None else args.load_in_4bit
@@ -435,32 +547,22 @@ def main() -> int:
                 top_p=args.top_p,
             )
 
-        chat_results = run_chat_eval(chat_cases, infer) if chat_cases else []
-        mail_results = run_mail_eval(mail_cases, infer) if mail_cases else []
+        if chat_cases:
+            chat_results = run_chat_eval(
+                chat_cases,
+                infer,
+                start_index=args.offset + 1,
+                on_result=lambda results: save_progress(current_chat_results=results),
+            )
+        if mail_cases:
+            mail_results = run_mail_eval(
+                mail_cases,
+                infer,
+                start_index=args.offset + 1,
+                on_result=lambda results: save_progress(current_mail_results=results),
+            )
 
-    report: dict[str, Any] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "eval_set": args.eval_set,
-        "base_model": args.base_model,
-        "adapter_path": (
-            None if args.no_adapter or args.adapter_path is None else str(args.adapter_path)
-        ),
-        "case_counts": {
-            "chat": len(chat_cases),
-            "mail": len(mail_cases),
-            "chat_scored": len(chat_results),
-            "mail_scored": len(mail_results),
-        },
-        "metrics": {},
-        "results": {},
-    }
-    if args.eval_set in {"chat", "both"}:
-        report["metrics"]["chat"] = summarize_case_results(chat_results)
-        report["results"]["chat"] = [asdict(result) for result in chat_results]
-    if args.eval_set in {"mail", "both"}:
-        report["metrics"]["mail"] = summarize_mail_results(mail_results)
-        report["results"]["mail"] = [asdict(result) for result in mail_results]
-    write_report(report, args.output)
+    save_progress()
     print(f"Wrote {args.output}")
     print(f"Wrote {args.output.with_suffix('.md')}")
     return 0

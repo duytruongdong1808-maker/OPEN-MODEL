@@ -53,3 +53,6 @@ web/.sentryclirc
 
 .ipynb_checkpoints/
 .DS_Store
+
+# trained adapter artifacts — too large for git
+kaggle_adapter/

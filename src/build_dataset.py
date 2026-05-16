@@ -56,6 +56,13 @@ TARGET_PROFILES = {
         "gmail_real": 0.85,
         "general_safety": 0.15,
     },
+    "gmail_real_v2": {
+        "gmail_priority_high": 0.15,
+        "gmail_priority_medium": 0.15,
+        "gmail_priority_low": 0.15,
+        "gmail_real_other": 0.40,
+        "general_safety": 0.15,
+    },
 }
 
 
@@ -169,6 +176,23 @@ def is_general_safety(row: dict[str, Any]) -> bool:
     return category in GENERAL_SAFETY_CATEGORIES or task_type in CORE_CHAT_TASK_TYPES
 
 
+def extract_priority_label(row: dict[str, Any]) -> str | None:
+    if not is_gmail_real(row):
+        return None
+    task_variant = row.get("task_variant")
+    output = str(row.get("output", "")).strip()
+    if task_variant == "real_priority":
+        priority = output.lower()
+        return priority if priority in {"high", "medium", "low"} else None
+    if task_variant != "real_full_triage":
+        return None
+    for line in output.splitlines():
+        if line.lower().startswith("priority:"):
+            priority = line.split(":", 1)[1].strip().lower()
+            return priority if priority in {"high", "medium", "low"} else None
+    return None
+
+
 def distribute_counts(total_rows: int, profile: dict[str, float]) -> dict[str, int]:
     counts = {bucket: int(total_rows * ratio) for bucket, ratio in profile.items()}
     assigned = sum(counts.values())
@@ -222,6 +246,27 @@ def build_profile_buckets(
     if target_profile == "gmail_real_v1":
         return {
             "gmail_real": [row for row in keep_rows if is_gmail_real(row)],
+            "general_safety": [row for row in keep_rows if is_general_safety(row)],
+        }
+    if target_profile == "gmail_real_v2":
+        priority_by_label = {
+            "high": [],
+            "medium": [],
+            "low": [],
+        }
+        gmail_real_other = []
+        for row in keep_rows:
+            priority = extract_priority_label(row)
+            if priority is None:
+                if is_gmail_real(row):
+                    gmail_real_other.append(row)
+                continue
+            priority_by_label[priority].append(row)
+        return {
+            "gmail_priority_high": priority_by_label["high"],
+            "gmail_priority_medium": priority_by_label["medium"],
+            "gmail_priority_low": priority_by_label["low"],
+            "gmail_real_other": gmail_real_other,
             "general_safety": [row for row in keep_rows if is_general_safety(row)],
         }
 
