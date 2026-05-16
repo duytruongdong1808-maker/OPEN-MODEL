@@ -9,9 +9,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = (
-    PROJECT_ROOT / "data" / "takeout_extracted" / "Takeout" / "Mail" / "all_mail.mbox"
-)
+DEFAULT_INPUT = PROJECT_ROOT / "data" / "takeout_extracted" / "Takeout" / "Mail" / "all_mail.mbox"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "raw" / "emails.jsonl"
 
 
@@ -117,8 +115,12 @@ def parse_message(index, message):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Parse a Gmail Takeout MBOX into JSONL.")
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Path to input MBOX file.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Path to output JSONL file.")
+    parser.add_argument(
+        "--input", type=Path, default=DEFAULT_INPUT, help="Path to input MBOX file."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT, help="Path to output JSONL file."
+    )
     return parser.parse_args()
 
 

@@ -67,7 +67,9 @@ def make_labeled_email(
             "category": category,
             "priority": priority,
             "summary": "The message alerts the user about a new account login.",
-            "action_items": action_items if action_items is not None else ["Review account activity"],
+            "action_items": action_items
+            if action_items is not None
+            else ["Review account activity"],
             "deadlines": deadlines if deadlines is not None else ["09:00 today"],
             "language": language,
         },
@@ -79,9 +81,15 @@ def test_normalize_text_fixes_common_mojibake_and_whitespace() -> None:
 
 
 def test_classify_task_type_handles_core_chat_variants() -> None:
-    assert classify_task_type("Rewrite this note to sound more professional.", "", "x") == TASK_TYPE_REWRITE
+    assert (
+        classify_task_type("Rewrite this note to sound more professional.", "", "x")
+        == TASK_TYPE_REWRITE
+    )
     assert classify_task_type("Summarize the note in one sentence.", "", "x") == TASK_TYPE_SUMMARIZE
-    assert classify_task_type("Classify these items into two groups.", "", "x") == TASK_TYPE_CLASSIFICATION
+    assert (
+        classify_task_type("Classify these items into two groups.", "", "x")
+        == TASK_TYPE_CLASSIFICATION
+    )
     assert classify_task_type("Answer briefly and clearly.", "What is LoRA?", "x") == TASK_TYPE_QA
 
 
@@ -99,7 +107,9 @@ def test_detect_language_distinguishes_vi_en_and_mixed() -> None:
 
 
 def test_classify_task_type_handles_email_triage_variants() -> None:
-    assert classify_task_type("Summarize this email in one sentence.", "", "x") == TASK_TYPE_SUMMARIZE
+    assert (
+        classify_task_type("Summarize this email in one sentence.", "", "x") == TASK_TYPE_SUMMARIZE
+    )
     assert (
         classify_task_type("Classify the priority of this email as high, medium, or low.", "", "x")
         == TASK_TYPE_CLASSIFICATION

@@ -16,7 +16,7 @@
   "dependencies": {
     "@sentry/nextjs": "^10.50.0",
     "ioredis": "^5.10.1",
-    "next": "^15.0.0",
+    "next": "^15.5.18",
     "next-auth": "^5.0.0-beta.31",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -41,5 +41,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
+  },
+  "overrides": {
+    "fast-uri": "3.1.2"
   }
 }

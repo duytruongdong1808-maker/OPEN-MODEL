@@ -525,7 +525,12 @@ def _find_repeated_successful_tool_result(
     steps: list[AgentStep], tool_name: str, arguments: dict[str, Any]
 ) -> Any | None:
     for step in reversed(steps):
-        if step.kind == "tool" and step.status == "ok" and step.tool_name == tool_name and step.result is not None:
+        if (
+            step.kind == "tool"
+            and step.status == "ok"
+            and step.tool_name == tool_name
+            and step.result is not None
+        ):
             if step.arguments == arguments:
                 return step.result
             if step.arguments is not None and set(step.arguments.keys()) == set(arguments.keys()):
