@@ -27,7 +27,10 @@ LABEL org.opencontainers.image.source="https://github.com/duytruongdong1808-make
 # The Next.js standalone server runs `node server.js` directly - npm and npx are
 # never invoked at runtime. Their bundled copy of picomatch ships a known ReDoS
 # CVE, so strip the entire npm install from the runner image.
-RUN rm -rf /usr/local/lib/node_modules/npm \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 RUN groupadd --system --gid 10001 web \

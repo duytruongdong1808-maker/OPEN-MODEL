@@ -30,6 +30,7 @@ LABEL org.opencontainers.image.source="https://github.com/duytruongdong1808-make
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
